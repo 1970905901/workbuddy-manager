@@ -345,3 +345,59 @@ class ChangelogIsUserFacingTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class NoConflictMarkersTest(unittest.TestCase):
+    """任何文件里都不许留下合并冲突标记。
+
+    为什么值得一条守卫：CHANGELOG.md 的冲突标记**不报错、也不影响解析**——
+    它只是被解析器当成普通文本忽略掉，于是带着 `<<<<<<< HEAD` 的更新日志会被
+    CI 抽成 Release 正文、也会出现在应用内的「更新日志」页（真发生过：
+    2026-09-27 为 v1.0.73 发版前才发现，标记和**重复的一整段条目**都已经提交）。
+    这类问题只有人眼看才会发现，所以钉成机械检查。
+    """
+
+    ROOT = Path(__file__).resolve().parents[2]
+    # 扫描范围：会被用户看到的文本（文档、代码、脚本、i18n），跳过依赖与产物
+    SKIP_DIRS = {'node_modules', '.git', 'out', '.next', '__pycache__',
+                 '.shots-account-groups', '.shots-dash-states', '.shots-dash-groups',
+                 '.shots-state-honesty', '.login-shots', '.shots-upstreams-ui',
+                 '.dash-states', '.dash-groups', '.state-honesty', '.login-poll',
+                 '.account-groups', '.pack-test'}
+    SUFFIXES = {'.md', '.py', '.ts', '.tsx', '.mjs', '.js', '.json', '.yml', '.yaml',
+                '.sh', '.cmd', '.ps1', '.txt', '.example', '.toml', '.cfg', '.ini'}
+
+    def _files(self) -> list[Path]:
+        out: list[Path] = []
+        for p in self.ROOT.rglob('*'):
+            if not p.is_file() or p.suffix not in self.SUFFIXES:
+                continue
+            parts = set(p.parts)
+            if parts & self.SKIP_DIRS or any(part.startswith('.') and part != '.github'
+                                             for part in p.relative_to(self.ROOT).parts[:-1]):
+                continue
+            out.append(p)
+        return out
+
+    def test_scan_found_files(self) -> None:
+        files = self._files()
+        self.assertGreater(len(files), 100, f'只扫到 {len(files)} 个文本文件，扫描逻辑可能失效')
+
+    def test_no_merge_conflict_markers(self) -> None:
+        # 用拼接构造，免得这条守卫自己的源码里出现「行首七个尖括号」被自己抓到
+        marks = ('<' * 7 + ' ', '>' * 7 + ' ', '=' * 7)
+        offenders: list[str] = []
+        for p in self._files():
+            try:
+                text = p.read_text(encoding='utf-8')
+            except (UnicodeDecodeError, OSError):
+                continue
+            for i, line in enumerate(text.splitlines(), 1):
+                s = line.rstrip()
+                if s.startswith(marks[0]) or s.startswith(marks[1]) or s == marks[2]:
+                    offenders.append(f'{p.relative_to(self.ROOT)}:{i}: {s[:40]}')
+        self.assertEqual(
+            offenders, [],
+            '这些文件里残留了合并冲突标记（用户会看到，且解析器不会报错）：\n  '
+            + '\n  '.join(offenders),
+        )

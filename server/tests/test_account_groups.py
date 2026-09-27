@@ -511,3 +511,50 @@ class MoveFilenameTraversalTest(_GroupCase):
         self.assertTrue(victim.is_file(), '目录之外的文件被动过')
         self.assertEqual(victim.read_text(encoding='utf-8'), '{}')
 
+
+
+class SharedInstanceHintTest(unittest.TestCase):
+    """与默认分组同址的分组，界面必须**就地说明**账号为什么一直「未加载」。
+
+    用户反馈（issue #94 问题 1）：把账号移动到新分组后，切过去看见的状态是
+    「未加载」，在该组里重新扫码加的号也一样。这不是故障，而是这种分组的必然
+    结果 —— 上游只读它自己那份账号目录，面板把文件放进这一组，上游根本不会加载。
+    界面若不解释，用户只会反复扫码、反复重试（报告者就是这么做的）。
+
+    这里用源码级断言钉住「解释确实存在」，因为要真浏览器才跑得出的行为测试
+    成本高：横幅本身在验收脚本里看得到（dev/verify_account_groups.mjs）。
+    """
+
+    PAGE = (Path(__file__).resolve().parents[2] / 'web' / 'app' / '(main)'
+            / 'accounts' / 'page.tsx')
+
+    def test_page_detects_a_shared_instance(self) -> None:
+        src = self.PAGE.read_text(encoding='utf-8')
+        self.assertIn('sharedInstance', src, '账号页没有检测「与默认分组同址」')
+        # 只看地址：api_key 留空时后端本就沿用默认那把（见 upstreamsvc.forward_api_key），
+        # 所以「地址相同」= 同一套实例，判据不能更宽也不能更窄。
+        self.assertRegex(src, r'base_url[^\n]*===|=== [^\n]*base_url',
+                         '判据没有比较 base_url —— 同址才是同一套实例')
+        self.assertIn("g.is_default", src, '没有拿默认分组的地址做基准')
+
+    def test_hint_is_rendered_with_its_own_copy(self) -> None:
+        src = self.PAGE.read_text(encoding='utf-8')
+        # 必须挂在条件上**真的渲染**：只断言「文件里有这句话」是空转的 ——
+        # 把条件改成 `false &&` 时文案仍在文件里，界面上却一个像素都没有。
+        self.assertRegex(
+            src,
+            r"\{sharedInstance && \([\s\S]{0,900}?t\('accounts\.sharedInstanceTitle'\)"
+            r"[\s\S]{0,900}?t\('accounts\.sharedInstanceHint'\)"
+            r"[\s\S]{0,900}?t\('accounts\.sharedInstanceAction'\)",
+            '横幅没有挂在 sharedInstance 条件下（或三段文案不在一处）—— '
+            '文案在文件里但不渲染，等于没提示',
+        )
+
+    def test_copy_exists_in_every_locale(self) -> None:
+        import json
+        loc = Path(__file__).resolve().parents[2] / 'web' / 'lib' / 'i18n' / 'locales'
+        for f in sorted(loc.glob('*.json')):
+            data = json.loads(f.read_text(encoding='utf-8'))
+            for key in ('sharedInstanceTitle', 'sharedInstanceHint', 'sharedInstanceAction'):
+                self.assertIn(key, data.get('accounts', {}),
+                              f'{f.name} 缺 accounts.{key}')

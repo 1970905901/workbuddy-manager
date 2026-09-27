@@ -105,7 +105,8 @@ const passAuth = (route) => AUTH_PATHS.some((p) => route.request().url().include
 await intercept(async (route) => {
   if (passAuth(route)) { await route.continue(); return; }
   await new Promise((r) => setTimeout(r, 4000));
-  await route.continue();
+  // 切场景/导航后这条 route 可能已被处理：忽略这种竞态，别让整个验收脚本崩掉
+  await route.continue().catch(() => {});
 });
 await page.goto(`${BASE}/dashboard`, {waitUntil: 'commit'});
 await page.waitForTimeout(1500);        // 此刻数据还没回来
@@ -115,8 +116,13 @@ step(slowLoading.skeletons > 10, '慢：加载期显示骨架（与真实版面�
      `骨架条数=${slowLoading.skeletons}`);
 step(!slowLoading.noAccounts, '慢：**加载期不出现「暂无账号」**（本次要修的那句谎话）',
      slowLoading.brief);
-await page.waitForTimeout(6000);        // 等数据到齐
-const slowDone = await snapshot();
+// 等数据到齐：首页按分组扇出（先取分组清单，再逐组取账号与状态），
+// 每个接口延迟 4 秒时是**两轮**往返，固定等待不再够用 —— 轮询到骨架归零。
+let slowDone = await snapshot();
+for (let i = 0; i < 20 && slowDone.skeletons > 0; i++) {
+  await page.waitForTimeout(1000);
+  slowDone = await snapshot();
+}
 step(slowDone.skeletons === 0 && !slowDone.noAccounts && slowDone.hasNumber,
      '慢：数据到位后骨架归零、内容出现', `骨架=${slowDone.skeletons}`);
 

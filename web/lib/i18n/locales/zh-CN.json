@@ -379,7 +379,10 @@
     "groupDelete": "删除分组",
     "groupDeleteTitle": "删除分组「{name}」",
     "groupDeleteDesc": "只删除面板里的分组记录——账号目录与文件不会被删除。分组里还有账号、或有密钥绑着它时会拒绝删除（提示里会给出数量，先处理再删）。",
-    "groupDeleted": "已删除分组"
+    "groupDeleted": "已删除分组",
+    "sharedInstanceTitle": "这一组和默认分组共用同一套上游实例",
+    "sharedInstanceHint": "这一组的账号文件由面板单独管理，而上游只读默认分组的账号目录——所以放进这一组的账号（包括在这里新扫码加的）都会一直显示「未加载」，转发与签到也不会用到它们。要真正把账号池分开，请在服务器上再部署一套 workbuddy2api，再把这一组的「上游地址」改成那套实例。",
+    "sharedInstanceAction": "去「设置 → 上游」改地址"
   },
   "keys": {
     "title": "API 密钥",

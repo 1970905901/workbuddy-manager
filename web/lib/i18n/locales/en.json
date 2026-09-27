@@ -403,7 +403,10 @@
     "groupDelete": "Delete group",
     "groupDeleteTitle": "Delete group \"{name}\"",
     "groupDeleteDesc": "Only the group record in this panel is deleted — the account directory and its files stay. Deletion is refused while the group still has accounts or bound keys (the error tells you how many; clear them first).",
-    "groupDeleted": "Group deleted"
+    "groupDeleted": "Group deleted",
+    "sharedInstanceTitle": "This group shares the same upstream instance as the default group",
+    "sharedInstanceHint": "This group’s account files are managed by the panel on their own, but the upstream only reads the default group’s directory — so any account placed here (including ones you add by QR in this group) will keep showing “not loaded”, and will not be used for forwarding or check-in. To truly separate the pools, deploy a second workbuddy2api instance on your server and point this group’s upstream URL at it.",
+    "sharedInstanceAction": "Change the URL in Settings → Upstreams"
   },
   "keys": {
     "title": "API keys",

@@ -20,6 +20,7 @@ import {
   Sparkles,
   StickyNote,
   FolderInput,
+  TriangleAlert,
 } from 'lucide-react';
 import {useHeartbeat} from '@/lib/use-heartbeat';
 import {notify} from '@/lib/toast';
@@ -229,6 +230,28 @@ export default function AccountsPage() {
    * 「未加载」，用户看到自相矛盾的面板）。
    */
   const merged = useMemo(() => mergePoolStatus(accounts, upstream), [accounts, upstream]);
+
+  /**
+   * 当前分组是不是和默认分组**共用同一套上游实例**（地址相同）。
+   *
+   * 用户反馈（issue #94）：把账号「移动到分组」之后，切到那一组看，账号一律显示
+   * 「未加载」——在那组里新扫码加的号也一样。这不是加载失败，而是这种分组的必然
+   * 结果：面板把账号文件放进了这一组的目录，而**上游只读默认分组的账号目录**，
+   * 所以那些号根本不在池子里：转发选不中、签到也不行。
+   *
+   * 判定只看地址：地址相同 = 同一套实例（api_key 留空时后端本就沿用默认那把，
+   * 见 upstreamsvc.forward_api_key）。要真正分开账号池得在服务器上再部署一套
+   * workbuddy2api —— 面板不替用户改部署，但必须**在这里把原因说清楚**，
+   * 否则「未加载」看起来像坏了，用户会一直重扫码、重试。
+   */
+  const sharedInstance = useMemo(() => {
+    if (groupId == null) return false;             // 默认分组自己不算
+    const cur = groups.find((g) => g.id === groupId);
+    const def = groups.find((g) => g.is_default);
+    if (!cur || !def) return false;
+    const addr = String(cur.base_url || '').trim();
+    return addr !== '' && addr === String(def.base_url || '').trim();
+  }, [groupId, groups]);
 
   /**
    * 按当前版本过滤。
@@ -953,6 +976,23 @@ export default function AccountsPage() {
         <p className="px-1 text-[11px] leading-4 text-muted-foreground">
           {t('accounts.groupNoDir', {name: groupInfo.name})}
         </p>
+      )}
+
+      {/* 分组和默认分组共用一套上游实例 → 这一组的账号不会被加载。不解释的话，
+          「未加载」看起来像坏了：用户会反复重扫码、重试（issue #94）。 */}
+      {sharedInstance && (
+        <div className="flex items-start gap-2.5 rounded-2xl bg-amber-500/10 px-3.5 py-3 ring-1 ring-amber-500/20">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <div className="min-w-0 space-y-1">
+            <div className="text-xs font-medium">{t('accounts.sharedInstanceTitle')}</div>
+            <p className="text-[11px] leading-4 text-muted-foreground">
+              {t('accounts.sharedInstanceHint')}
+            </p>
+            <Link href="/settings" className="inline-block text-[11px] text-blue-500 hover:underline">
+              {t('accounts.sharedInstanceAction')}
+            </Link>
+          </div>
+        </div>
       )}
 
       <section className="overflow-hidden rounded-[20px] bg-muted">

@@ -116,6 +116,16 @@ text = await bodyText();
 step(text.includes('甲组'), '新分组出现在切换条里（保存后自动切到甲组）');
 step(!text.includes('默认号'), '甲组列表读的是它自己的目录——现在是空的，看不见默认分组的账号');
 
+// ★ 此刻甲组与默认分组**同址**（后面才把它指到第二套实例）：这种分组的上游不会
+//   去读它的账号目录，所以里面的号一律显示「未加载」。界面必须把原因说出来，
+//   否则用户只会反复扫码、反复重试（issue #94 问题 1 的真实经过）。
+step(text.includes('共用同一套上游实例'),
+     '同址分组会就地说明账号为什么不会被加载（issue #94 问题 1）',
+     '横幅文案没出现');
+step(/设置 → 上游|Settings → Upstreams/.test(text),
+     '提示里给出下一步：去「设置 → 上游」把地址换成独立实例');
+await page.screenshot({path: path.join(OUT, '02b-shared-instance.png'), fullPage: true});
+
 // ②b 到「设置 → 上游」把甲组指到第二套实例（顺手核对「只填名称」带出的默认值）
 await page.goto(`${BASE}/settings`, {waitUntil: 'load'});
 await page.waitForTimeout(2500);
@@ -142,6 +152,8 @@ await page.waitForTimeout(2500);
 text = await bodyText();
 step(text.includes('甲组号'), '甲组换指第二套实例后，列出它自己目录的账号');
 step(!text.includes('默认号'), '甲组列表里看不到默认分组的账号');
+step(!text.includes('共用同一套上游实例'),
+     '换成独立实例后，那条提示会自动消失（它只在同址时成立）');
 step(/在线/.test(text), '甲组号显示「在线」——状态来自该分组自己的上游实例',
      text.split('\n').find((l) => l.includes('甲组号')) || '');
 await page.screenshot({path: path.join(OUT, '03-group-tab.png'), fullPage: true});

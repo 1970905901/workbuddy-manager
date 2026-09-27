@@ -40,6 +40,15 @@
  * S 对模型中心是**正向**断言（要找得到模型行），因此 fixture 的上游必须给出
  * 非空模型清单：目录为空时「暂无模型」是如实的空态，只断言「错误态消失了」的话，
  * 「页面根本没恢复」与「恢复了但确实没有模型」长得一样，这条断言就没有判别力。
+ *
+ * 批次 3（P1-3 / P1-4）：
+ *   P 日志页筛选 → 改完即生效：下拉改完**不点任何按钮**就重查；文本输入 4 个字符
+ *                  只发 **1** 次请求（400ms 防抖）；「重置」清空全部筛选且只重取一次
+ *   Q 账号页     → 4 组状态摆在明面上（不再只靠 hover）；筛不到时说「没有匹配的账号」
+ *                  并给「清除筛选」；切到没有账号的版本时说「国际版没有账号」而**不是**
+ *                  「暂无账号」（账号在池子里，只是版本不对）
+ *
+ * P 的判据是**请求次数**（见下面 `hits`），因为「筛选生效了吗」在界面上看不出来。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -121,6 +130,15 @@ if (!/dashboard/.test(page.url())) {
 //              8=设置页配置挂（主数据） 9=只设置页用户列表挂
 //             10=账号池挂 11=只上游状态挂 12=模型目录挂 13=红包列表挂 14=三页都延迟
 const MODE = {value: 0};
+
+/**
+ * 每个接口被打了多少次（键是 `/api/` 之后、去掉查询串的那一段）。
+ *
+ * 「筛选改完生效了吗」「防抖有没有生效」这两件事的判据都是**请求次数**——在界面上
+ * 看不出来（列表看起来一样，只是内容不同）。所以计数放在拦截器里，失败的那次也算。
+ */
+const hits = {};
+
 await page.route('**/api/**', async (route) => {
   const url = route.request().url();
   const fail = (code = 500) => route.fulfill({
@@ -129,6 +147,10 @@ await page.route('**/api/**', async (route) => {
   // 路径要钉到结尾（`(\?|$)`）：`/api/accounts` 是 `/api/accounts-xxx` 的前缀，
   // 宽松匹配会在将来加接口时悄悄多拦一个。
   const is = (p) => new RegExp(`/api/${p}(\\?|$)`).test(url);
+  {
+    const path = url.split('?')[0].split('/api/').pop();
+    hits[path] = (hits[path] ?? 0) + 1;
+  }
   if (MODE.value === 1 && /\/api\/security/.test(url)) return fail();
   if (MODE.value === 2 && /\/api\/security\?|config/.test(url)
       && /\/api\/security/.test(url)) return fail();
@@ -443,6 +465,115 @@ await page.reload({waitUntil: 'load'});
 await page.waitForTimeout(3000);
 text = await bodyText();
 step(!/数据加载失败/.test(text), '恢复后红包页正常');
+
+// ══ 日志页筛选：改完即生效（批次 3 修 P1-4）══════════════════════════
+//
+// 这一段的判据是**请求次数**，不是页面上的一句话——「筛选改完生效了吗」在界面上
+// 看不出来（列表看起来一样，只是内容不同）。所以先记一份每个接口被打了多少次。
+console.log('\n日志页筛选（批次 3：同一排控件不再有两种脾气）');
+MODE.value = 0;
+await page.goto(`${BASE}/logs`, {waitUntil: 'load'});
+await page.waitForTimeout(3500);
+const logsHits = () => hits.logs ?? 0;
+
+step((await page.getByRole('button', {name: '重置'}).count()) > 0,
+     '按钮从「查询」换成了「重置」（改完即生效，再留一个查询按钮只会把同一份查询再打一次）');
+
+// ① 下拉类：改完立刻重查，**不用点任何按钮**
+{
+  const before = logsHits();
+  // ⚠️ 必须把范围限在筛选区（`section`）里再数：页面顶部还有一个语言选择器，
+  // 它是**第 0 个** combobox。按全页 `.nth(2)` 会点到「密钥」而不是「状态」——
+  // 而失败的样子特别误导：那个菜单能正常打开，只是里面没有「失败」这个选项，
+  // 于是断言在「等一个不存在的选项」上超时，看起来像下拉坏了。
+  await page.locator('section [data-slot=select-trigger]').nth(2).click();   // 状态
+  await page.getByRole('option', {name: '失败'}).click();
+  await page.waitForTimeout(1500);
+  step(logsHits() > before,
+       '改状态筛选后立刻重查（原来只在「查询」按钮里生效，且在第 1 页时点了没反应）',
+       `请求数 ${before} → ${logsHits()}`);
+}
+
+// ② 文本类：输入 4 个字符只发 1 次请求（400ms 防抖）。
+//    这里必须逐字符输入：`fill()` 一次就填完，只产生一个 input 事件，
+//    测不出防抖——那样这条断言是**空转**的（不防抖也会通过）。
+{
+  const box = page.locator('section input').nth(0);          // 模型
+  const before = logsHits();
+  await box.pressSequentially('kimi', {delay: 40});
+  // 先确认字符真的进去了：若上一步的菜单没关干净，Radix 的焦点陷阱会把按键
+  // 吃在浮层里，输入框仍是空的 —— 那时「只发了 1 次请求」会因为「压根没输入」
+  // 而通过，断言变成空转。
+  step((await box.inputValue()) === 'kimi', '关键词真的输进了输入框',
+       `输入框里是 ${JSON.stringify(await box.inputValue())}`);
+  await page.waitForTimeout(1500);
+  const delta = logsHits() - before;
+  step(delta === 1, '文本筛选输入 4 个字符只发 1 次请求（400ms 防抖）',
+       `请求数 +${delta}（不防抖会是 +4）`);
+}
+
+// ③ 重置：一键清掉全部筛选，且只重取一次
+{
+  const box = page.locator('section input').nth(0);
+  const before = logsHits();
+  await page.getByRole('button', {name: '重置'}).click();
+  await page.waitForTimeout(1200);
+  step((await box.inputValue()) === '', '「重置」清掉了输入框里的关键词');
+  step(logsHits() - before === 1,
+       '重置只重取一次（文本类若走防抖计时器，会先按「旧文本 + 新下拉」查一次、再查一次）',
+       `请求数 +${logsHits() - before}`);
+}
+await page.screenshot({path: `${OUT}/13-logs-filters.png`, fullPage: true});
+
+// ══ 账号管理检索与状态分组（批次 3 修 P1-3）══════════════════════════
+console.log('\n账号管理检索与状态分组（批次 3）');
+MODE.value = 0;
+await page.goto(`${BASE}/accounts`, {waitUntil: 'load'});
+await page.waitForTimeout(3500);
+text = await bodyText();
+// 4 组状态**摆在明面上**：原先 9 档只挂在徽章的 hover 提示里，移动端没有 hover，
+// 等于状态信息不可见。
+step(['可用', '需处理', '冷却中', '已停用'].every((s) => text.includes(s)),
+     '4 组状态筛选摆在明面上（不再只靠悬浮提示）');
+
+// 状态筛选**真的在筛**：fixture 里只有一个「可用」的账号，点「需处理」必然筛空。
+// 这条比「按钮在不在」有用得多——四个按钮都加上去而列表仍然渲染全量，是最容易
+// 「看起来做完、其实没用」的形态（源码层那条断言盯的就是这个）。
+await page.getByRole('button', {name: '需处理'}).click();
+await page.waitForTimeout(800);
+text = await bodyText();
+step(/没有匹配的账号/.test(text),
+     '按状态筛空时说「没有匹配的账号」（状态筛选真的在筛，不是装饰）');
+step(!/暂无账号/.test(text), '不说「暂无账号」（账号在池子里，只是被筛选挡住了）');
+step(/清除筛选/.test(text), '给了「清除筛选」的出口（不用自己回忆刚才改了什么）');
+await page.screenshot({path: `${OUT}/14-accounts-no-match.png`, fullPage: true});
+
+await page.getByRole('button', {name: '清除筛选'}).click();
+await page.waitForTimeout(800);
+text = await bodyText();
+step(!/没有匹配的账号/.test(text), '清除筛选后账号回来（正常态没被搞坏）');
+
+// 搜索一个必然不存在的关键词：同上，但走的是搜索那条路
+await page.locator('input[placeholder*="搜索昵称"]').fill('zzz-不存在的账号');
+await page.waitForTimeout(800);
+text = await bodyText();
+step(/没有匹配的账号/.test(text), '搜不到时说「没有匹配的账号」');
+step(!/暂无账号/.test(text), '不说「暂无账号」（搜索词不匹配 ≠ 没有账号）');
+await page.getByRole('button', {name: '清除筛选'}).click();
+await page.waitForTimeout(800);
+
+// 切到国际版：池子里只有国内版账号 → 这是**版本**筛空，不是「一个账号都没有」
+await page.getByRole('tab', {name: '国际版'}).first().click();
+await page.waitForTimeout(1500);
+text = await bodyText();
+step(/国际版没有账号/.test(text),
+     '切到没有账号的版本时如实说「国际版没有账号」（原来这里说「暂无账号」，读起来像号池是空的）');
+step(!/暂无账号/.test(text), '不说「暂无账号」（账号就在池子里，只是不属于这个版本）');
+await page.screenshot({path: `${OUT}/15-accounts-realm-empty.png`, fullPage: true});
+
+// 切回国内版：后面的断言与人工复看都默认是国内版
+await page.getByRole('tab', {name: '国内版'}).first().click();
+await page.waitForTimeout(800);
 
 step(errors.length === 0, '全程没有未捕获的前端异常', errors.slice(0, 2).join(' | '));
 

@@ -26,6 +26,20 @@
  *                内置默认值，渲染出来等于把「默认值」说成「你现在的配置」
  *   L 只用户列表挂 → 表单照常；用户 Tab **不**说「暂无管理用户」，其余内容仍在
  *   M 恢复     → 设置页正常
+ *
+ * 账号管理 / 模型中心 / 红包（批次 1 收尾三页）：
+ *   N 慢加载   → 三页都出骨架，**不**出现「暂无账号 / 暂无模型 / 暂无红包」
+ *   O 账号池挂  → 整页错误态 + 重试；**不**说「暂无账号」；
+ *                **分组切换条必须仍在**（它不依赖账号池，用户得能切回默认分组自救）
+ *   P 只上游状态挂 → 列表照常渲染；账号状态标「未知」；顶部有「上游状态没取到」说明；
+ *                    **不**升级成整页错误（这一条是 P0-2：原来 `upRes` 失败无 else，完全无声）
+ *   Q 模型目录挂 → 整页错误态 + 重试；**不**说「暂无模型」
+ *   R 红包列表挂 → 整页错误态 + 重试；**不**说「暂无红包」
+ *   S 恢复     → 三页都正常
+ *
+ * S 对模型中心是**正向**断言（要找得到模型行），因此 fixture 的上游必须给出
+ * 非空模型清单：目录为空时「暂无模型」是如实的空态，只断言「错误态消失了」的话，
+ * 「页面根本没恢复」与「恢复了但确实没有模型」长得一样，这条断言就没有判别力。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -105,12 +119,16 @@ if (!/dashboard/.test(page.url())) {
 // 运行时开关：0=全放行 1=安全页全挂 2=只 config 挂 3=签到记录延迟 4=签到记录 500
 //              5=密钥+上游全挂 6=只密钥列表挂 7=只上游列表挂
 //              8=设置页配置挂（主数据） 9=只设置页用户列表挂
+//             10=账号池挂 11=只上游状态挂 12=模型目录挂 13=红包列表挂 14=三页都延迟
 const MODE = {value: 0};
 await page.route('**/api/**', async (route) => {
   const url = route.request().url();
   const fail = (code = 500) => route.fulfill({
     status: code, contentType: 'application/json',
     body: JSON.stringify({detail: '模拟后端故障'})});
+  // 路径要钉到结尾（`(\?|$)`）：`/api/accounts` 是 `/api/accounts-xxx` 的前缀，
+  // 宽松匹配会在将来加接口时悄悄多拦一个。
+  const is = (p) => new RegExp(`/api/${p}(\\?|$)`).test(url);
   if (MODE.value === 1 && /\/api\/security/.test(url)) return fail();
   if (MODE.value === 2 && /\/api\/security\?|config/.test(url)
       && /\/api\/security/.test(url)) return fail();
@@ -126,6 +144,14 @@ await page.route('**/api/**', async (route) => {
   // 设置页：主数据是配置（那张表单就是它的副本）；用户列表是另一个 Tab 的配件
   if (MODE.value === 8 && /\/api\/settings\/upstream/.test(url)) return fail();
   if (MODE.value === 9 && /\/api\/users/.test(url)) return fail();
+  // 账号页：主数据是账号池（`/api/accounts`）；上游状态是另一个 hook（`/api/status`）
+  if (MODE.value === 10 && is('accounts')) return fail();
+  if (MODE.value === 11 && is('status')) return fail();
+  if (MODE.value === 12 && is('model-catalog')) return fail();
+  if (MODE.value === 13 && is('red-packets')) return fail();
+  if (MODE.value === 14 && (is('accounts') || is('model-catalog') || is('red-packets'))) {
+    await new Promise((r) => setTimeout(r, 3500));
+  }
   return route.continue();
 });
 
@@ -264,6 +290,16 @@ step(!/请检查网络连接或后端服务是否正常/.test(text), '仍然不�
 step(phaseErrors().length === 0, '这一步没有前端异常', phaseErrors().join(' | '));
 await page.screenshot({path: `${OUT}/08-keys-upstreams-failed.png`, fullPage: true});
 
+// 恢复要**回到这一页**再断言。原来这一步只写「reload 当前页」——它跟在最后一节
+// 后面，于是后面的批次往脚本末尾追加新页面时，这条「恢复后……」就会在**别的页面**
+// 上求值：`/settings` 上当然找不到「暂无 API 密钥」，断言恒真、形同没有。
+MODE.value = 0;
+await page.goto(`${BASE}/keys`, {waitUntil: 'load'});
+await page.waitForTimeout(3000);
+text = await bodyText();
+step(/暂无 API 密钥/.test(text) && !/数据加载失败/.test(text),
+     '恢复后回到正常的空列表');
+
 // ══ 设置页 ══════════════════════════════════════════════════════════
 console.log('\n设置页（批次 1 收尾：配置没取到时不拿默认值冒充）');
 MODE.value = 8;
@@ -297,13 +333,116 @@ step(!/暂无管理用户/.test(text),
 await page.screenshot({path: `${OUT}/10-settings-users-failed.png`, fullPage: true});
 
 MODE.value = 0;
+await page.goto(`${BASE}/settings`, {waitUntil: 'load'});
+await page.waitForTimeout(3000);
+text = await bodyText();
+step((await settingsTabs()) > 0 && !/数据加载失败/.test(text),
+     '恢复后设置页正常');
+
+// ══ 加载期：三页都要出骨架，且都不能先摆空态 ═══════════════════════
+// 骨架的选择器用 `[data-slot=skeleton]`（ui/skeleton.tsx 上的稳定标记），
+// 不用 `.animate-pulse`：后者页面上别的地方也可能用（如按钮图标在转圈）。
+console.log('\n批次 1 收尾三页（加载期）');
+MODE.value = 14;                       // 三页的接口都延迟 3.5s
+const skeletonCount = () => page.locator('[data-slot=skeleton]').count();
+
+await page.goto(`${BASE}/accounts`, {waitUntil: 'load'});
+await page.waitForTimeout(1200);       // 数据还在路上
+text = await bodyText();
+step(!/暂无账号/.test(text), '账号管理：加载期不说「暂无账号」（看起来像号池是空的）',
+     (text.match(/暂无[^\n]{0,10}/) || ['（无）'])[0]);
+step((await skeletonCount()) > 0, '账号管理：加载期渲染骨架',
+     `骨架条数：${await skeletonCount()}`);
+await page.screenshot({path: `${OUT}/11-accounts-loading.png`, fullPage: true});
+
+await page.goto(`${BASE}/models`, {waitUntil: 'load'});
+await page.waitForTimeout(1200);
+text = await bodyText();
+step(!/暂无模型/.test(text), '模型中心：加载期不说「暂无模型」');
+step((await skeletonCount()) > 0, '模型中心：加载期渲染骨架',
+     `骨架条数：${await skeletonCount()}`);
+await page.screenshot({path: `${OUT}/12-models-loading.png`, fullPage: true});
+
+await page.goto(`${BASE}/red-packets`, {waitUntil: 'load'});
+await page.waitForTimeout(1200);
+text = await bodyText();
+step(!/还没有红包/.test(text), '红包：加载期不说「还没有红包」');
+step((await skeletonCount()) > 0, '红包：加载期渲染骨架',
+     `骨架条数：${await skeletonCount()}`);
+await page.screenshot({path: `${OUT}/13-redpackets-loading.png`, fullPage: true});
+
+// ══ 账号管理：主数据挂 / 只配件挂 ══════════════════════════════════
+console.log('\n账号管理（批次 1 收尾：账号池取不到时不拿空列表冒充）');
+/** 分组切换条上的按钮。**它不依赖账号池**，所以账号池挂掉时它必须还在 */
+const groupChips = () => page.locator('button').filter({hasText: '默认分组'}).count();
+
+MODE.value = 10;
+await page.goto(`${BASE}/accounts`, {waitUntil: 'load'});
+await page.waitForTimeout(3500);
+text = await bodyText();
+step(/数据加载失败/.test(text), '账号池取不到时给整页错误态');
+step(/重试/.test(text), '错误态里有「重试」');
+step(!/暂无账号/.test(text), '不说「暂无账号」');
+step((await groupChips()) > 0,
+     '分组切换条仍在（账号池挂了也得能切回默认分组自救，所以守卫不能早返回整页）',
+     `「默认分组」按钮数：${await groupChips()}`);
+await page.screenshot({path: `${OUT}/14-accounts-pool-failed.png`, fullPage: true});
+
+// 只把上游状态打挂：账号列表是好的，必须照常渲染。这一条同时是 P0-2 的回归
+// ——原实现 `if (upRes.status === 'fulfilled')` 后面**没有 else**，上游状态挂了
+// 界面上一点痕迹都没有，每个号的状态看起来还跟正常一样。
+MODE.value = 11;
+await page.reload({waitUntil: 'load'});
+await page.waitForTimeout(3500);
+text = await bodyText();
+step(!/数据加载失败/.test(text), '只上游状态挂 → 不升级成整页错误（账号列表照常）');
+step(/上游状态没取到/.test(text), '顶部如实说明「上游状态没取到」（原来这里是完全无声的）');
+step(/状态未知/.test(text), '账号状态标成「未知」而不是「未加载」');
+step(!/暂无账号/.test(text), '也不落进「暂无账号」');
+await page.screenshot({path: `${OUT}/15-accounts-status-failed.png`, fullPage: true});
+
+MODE.value = 0;
 await page.reload({waitUntil: 'load'});
 await page.waitForTimeout(3000);
 text = await bodyText();
-step(/暂无 API 密钥/.test(text) && !/数据加载失败/.test(text),
-     '恢复后回到正常的空列表');
-step((await settingsTabs()) > 0 && !/数据加载失败/.test(text),
-     '恢复后设置页正常');
+step(!/数据加载失败/.test(text) && !/上游状态没取到/.test(text) && !/暂无账号/.test(text),
+     '恢复后账号页正常');
+
+// ══ 模型中心 ══════════════════════════════════════════════════════
+console.log('\n模型中心（批次 1 收尾）');
+MODE.value = 12;
+await page.goto(`${BASE}/models`, {waitUntil: 'load'});
+await page.waitForTimeout(3500);
+text = await bodyText();
+step(/数据加载失败/.test(text), '模型目录取不到时给整页错误态');
+step(/重试/.test(text), '错误态里有「重试」');
+step(!/暂无模型/.test(text), '不说「暂无模型」（那等于说腾讯那边没有可用模型）');
+step(!/没有匹配/.test(text), '也不落进「没有匹配的模型」（筛选结果为空的前提是清单已取到）');
+await page.screenshot({path: `${OUT}/16-models-failed.png`, fullPage: true});
+
+MODE.value = 0;
+await page.reload({waitUntil: 'load'});
+await page.waitForTimeout(3000);
+text = await bodyText();
+step(!/数据加载失败/.test(text) && /glm-5\.2/.test(text),
+     '恢复后模型中心正常（模型行真的渲染出来，不只是错误态消失）');
+
+// ══ 红包 ══════════════════════════════════════════════════════════
+console.log('\n红包（批次 1 收尾）');
+MODE.value = 13;
+await page.goto(`${BASE}/red-packets`, {waitUntil: 'load'});
+await page.waitForTimeout(3500);
+text = await bodyText();
+step(/数据加载失败/.test(text), '红包列表取不到时给整页错误态');
+step(/重试/.test(text), '错误态里有「重试」');
+step(!/还没有红包/.test(text), '不说「还没有红包」（那等于说红包发完了 / 被清了）');
+await page.screenshot({path: `${OUT}/17-redpackets-failed.png`, fullPage: true});
+
+MODE.value = 0;
+await page.reload({waitUntil: 'load'});
+await page.waitForTimeout(3000);
+text = await bodyText();
+step(!/数据加载失败/.test(text), '恢复后红包页正常');
 
 step(errors.length === 0, '全程没有未捕获的前端异常', errors.slice(0, 2).join(' | '));
 

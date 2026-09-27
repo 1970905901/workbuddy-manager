@@ -66,7 +66,16 @@ class Upstream(BaseHTTPRequestHandler):
                                       'credits': 1000}],
                         'realm_totals': {'cn': {'total': 1}, 'global': {'total': 0}}})
         elif path == '/v1/models':
-            self._json({'object': 'list', 'data': []})
+            # **不能返回空清单**：模型中心那组断言里，「恢复后」这一条要能区分
+            # 「页面真的把列表渲染出来了」与「页面仍然什么都没有」。目录为空时
+            # 恢复后显示「暂无模型」是**如实**的，断言就退化成只看错误态消没消失，
+            # 判别力全丢了。这里给两条国内版条目（管理端的回退路径按 `cn:` 前缀
+            # 挑版本，见 server/services/modelcatalog.py 的 `_belongs`）。
+            self._json({'object': 'list', 'data': [
+                {'id': 'cn:glm-5.2', 'context_length': 131072, 'max_output_tokens': 8192},
+                {'id': 'cn:hunyuan-turbos', 'context_length': 262144,
+                 'max_output_tokens': 16384},
+            ]})
         else:
             self._json({'error': 'not found'}, 404)
 

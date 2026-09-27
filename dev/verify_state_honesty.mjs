@@ -10,6 +10,16 @@
  *   D 慢加载   → 有骨架、**不**出现「暂无签到记录 / 暂无自动任务记录」
  *   E 签到记录挂 → 该面板说「签到记录加载失败」，**不**出现「共 0 条」，另一块照常
  *   F 恢复     → 两块内容与页脚都回来
+ *
+ * 密钥页（PR #100）：
+ *   G 全挂     → 整页「数据加载失败」+ 重试；**不**出现「暂无 API 密钥」
+ *   H 只密钥列表挂 → 顶部「部分数据加载失败」，**不**出现「暂无 API 密钥」
+ *                    （手上这份列表不知道有没有，就不能说「没有」）
+ *   I 只上游列表挂 → 顶部「部分数据加载失败」，空列表**照常**说「暂无 API 密钥」
+ *                    （这一份确实取到了、确实为空。用它反过来证明 H 用的判据是
+ *                     「**这一份**失败了」，而不是「有任一份失败」——后者会把一个
+ *                     正常的空列表也藏起来）
+ *   J 恢复     → 回到正常的空列表
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -54,18 +64,40 @@ const step = (ok, label, detail = '') => {
 fs.mkdirSync(OUT, {recursive: true});
 const chromium = await loadPlaywright();
 const browser = await chromium.launch({executablePath: chromiumExecutable()});
-const ctx = await browser.newContext({viewport: {width: 1400, height: 1000}});
+// 断言全是中文文案，所以语言必须钉死：应用的 detectLocale() 会读 navigator.languages，
+// 在浏览器语言不是中文的机器上，下面每一条正向断言都会失败——而页面其实完全正常。
+// 更坏的是负向断言（「不许出现『暂无规则』」这类）照样是绿的，于是整份报告看起来像
+// 「应用坏了」，方向完全错。钉住之后在哪台机器上跑结果都一样。
+const ctx = await browser.newContext({viewport: {width: 1400, height: 1000}, locale: 'zh-CN'});
 const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 
 await page.goto(`${BASE}/login`, {waitUntil: 'domcontentloaded'});
+// 等表单真的被 React 接管再填。dev 冷编译时 hydration 会晚于首次输入：那时 fill
+// 只改了 DOM，React 的受控 state 仍是空的，提交上去就是**空密码**。这个坑的表现
+// 特别误导——登录失败后每一页都被弹回登录页，于是正向断言全红、负向断言全绿。
+// React 会给它接管过的 DOM 节点挂一个 `__react*` 内部键，可当作 hydration 信号。
+await page.waitForFunction(() => {
+  const el = document.querySelector('#password');
+  return !!el && Object.keys(el).some((k) => k.startsWith('__react'));
+}, null, {timeout: 20000}).catch(() => {});
 await page.fill('#username', 'admin');
 await page.fill('#password', PASS);
 await Promise.all([page.waitForURL(/dashboard/).catch(() => {}),
                    page.click('button[type=submit]')]);
 
+// 没登录成功就立刻退出，别往下跑。后面三十多条断言都是「页面上应该有这句话」，
+// 而未登录时每一页都会被弹回登录页 —— 于是正向断言全红、负向断言（「不许出现
+// 『暂无规则』」这类）反而全绿，整份报告看起来像「应用坏了」，方向完全错。
+if (!/dashboard/.test(page.url())) {
+  console.error(`✗ 登录没成功（当前停在 ${page.url()}）——后面的断言没有意义，直接退出`);
+  await browser.close();
+  process.exit(1);
+}
+
 // 运行时开关：0=全放行 1=安全页全挂 2=只 config 挂 3=签到记录延迟 4=签到记录 500
+//              5=密钥+上游全挂 6=只密钥列表挂 7=只上游列表挂
 const MODE = {value: 0};
 await page.route('**/api/**', async (route) => {
   const url = route.request().url();
@@ -79,6 +111,11 @@ await page.route('**/api/**', async (route) => {
     await new Promise((r) => setTimeout(r, 3500));
   }
   if (MODE.value === 4 && /\/api\/checkin-logs/.test(url)) return fail();
+  // 结尾用 (\?|$) 锚住：`/api/keys/import/status` 这类子路径是另一份数据
+  // （弹窗打开时才探测的配件），不该被这里的「列表挂了」一起打掉。
+  if (MODE.value === 5 && /\/api\/(keys|upstreams)(\?|$)/.test(url)) return fail();
+  if (MODE.value === 6 && /\/api\/keys(\?|$)/.test(url)) return fail();
+  if (MODE.value === 7 && /\/api\/upstreams(\?|$)/.test(url)) return fail();
   return route.continue();
 });
 
@@ -165,6 +202,64 @@ await page.waitForTimeout(3500);
 text = await bodyText();
 step(!/加载失败/.test(text) && /共 2 条/.test(text) && /共 1 条/.test(text),
      '恢复后两块内容与页脚都回来');
+
+// ══ 密钥页 ══════════════════════════════════════════════════════════
+console.log('\n密钥页（PR #100）');
+MODE.value = 5;
+await page.goto(`${BASE}/keys`, {waitUntil: 'load'});
+await page.waitForTimeout(3500);
+text = await bodyText();
+step(/数据加载失败/.test(text), '全部取不到时给整页错误态');
+step(/重试/.test(text), '错误态里有「重试」');
+// 这一句是这一页最要紧的一条：密钥是**凭据**，说「暂无 API 密钥」读起来是
+// 「我的密钥被删了」，用户会顺手点旁边的「新建密钥」重建一个 —— 于是建出重复密钥，
+// 而重复密钥会让「按密钥限额 / 按密钥统计用量」全都对不上。
+step(!/暂无 API 密钥/.test(text),
+     '不许说「暂无 API 密钥」（那是「确实没有」，而事实是不知道有没有）',
+     (text.match(/暂无[^\n]{0,12}/) || ['（无）'])[0]);
+step(phaseErrors().length === 0, '这一步没有前端异常', phaseErrors().join(' | '));
+await page.screenshot({path: `${OUT}/06-keys-all-failed.png`, fullPage: true});
+
+MODE.value = 6;
+await page.reload({waitUntil: 'load'});
+await page.waitForTimeout(3500);
+text = await bodyText();
+step(/部分数据加载失败/.test(text), '只密钥列表没取到时，顶部给常驻提示');
+step(!/请检查网络连接或后端服务是否正常/.test(text),
+     '上游列表取到了 → 不升级成整页错误（只有顶部那条常驻提示）');
+step(!/暂无 API 密钥/.test(text),
+     '列表这一份没取到 → 不说「暂无 API 密钥」',
+     (text.match(/暂无[^\n]{0,12}/) || ['（无）'])[0]);
+// 同一句谎话的另一半：空状态挡住了，tab 上却还挂着「普通密钥 · 0」——列表取不到时
+// `keys` 就是空的，那个 0 没有依据，读起来仍是「一个密钥都没有」。（任务记录页的
+// 「共 0 条」是同一处，PR #97 才补上。）
+step(!/普通密钥 · 0/.test(text),
+     'tab 上的数字也一起收起来（否则等于说「一个密钥都没有」）',
+     (text.match(/普通密钥[^\n]{0,8}/) || ['（无）'])[0]);
+step(phaseErrors().length === 0, '这一步没有前端异常', phaseErrors().join(' | '));
+await page.screenshot({path: `${OUT}/07-keys-list-failed.png`, fullPage: true});
+
+MODE.value = 7;
+await page.reload({waitUntil: 'load'});
+await page.waitForTimeout(3500);
+text = await bodyText();
+step(/部分数据加载失败/.test(text), '只上游列表没取到时，同样给常驻提示');
+step(/暂无 API 密钥/.test(text),
+     '密钥列表这一份**取到了且确实为空** → 照常显示空态（判据是「这一份失败没」，'
+     + '不是「有任一份失败」）');
+step(/普通密钥 · 0/.test(text),
+     '数字也照常显示 0 —— 这一份确实取到了、确实为空，那个 0 是如实的',
+     (text.match(/普通密钥[^\n]{0,8}/) || ['（无）'])[0]);
+step(!/请检查网络连接或后端服务是否正常/.test(text), '仍然不升级成整页错误');
+step(phaseErrors().length === 0, '这一步没有前端异常', phaseErrors().join(' | '));
+await page.screenshot({path: `${OUT}/08-keys-upstreams-failed.png`, fullPage: true});
+
+MODE.value = 0;
+await page.reload({waitUntil: 'load'});
+await page.waitForTimeout(3000);
+text = await bodyText();
+step(/暂无 API 密钥/.test(text) && !/数据加载失败/.test(text),
+     '恢复后回到正常的空列表');
 
 step(errors.length === 0, '全程没有未捕获的前端异常', errors.slice(0, 2).join(' | '));
 

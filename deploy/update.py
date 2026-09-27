@@ -1224,6 +1224,13 @@ def restart_service(rep: Reporter) -> None:
         rep.log('  用新代码重新启动。若长时间未恢复，请在宿主机执行：')
         rep.log('  docker compose restart workbuddy-manager）')
         return
+    if os.name == 'nt':
+        # Windows 原生部署（deploy/windows-native）：没有 systemd，也不该在这里
+        # 报一次「systemctl 重启失败」——那时新代码其实已经就位，用户看到的却是一次
+        # 失败的更新（还可能去查一个 Windows 上根本不存在的服务）。如实说明怎么做。
+        rep.log('Windows 原生部署：新代码已就位。请关闭当前面板窗口，'
+                '重新执行启动脚本（start-workbuddy-manager.cmd）。')
+        return
     rc, _ = run(['systemctl', 'restart', SERVICE_NAME], rep=rep, check=False)
     if rc != 0:
         raise RuntimeError(f'重启服务失败（systemctl 返回 {rc}），请手动执行 systemctl status {SERVICE_NAME}')

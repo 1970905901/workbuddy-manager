@@ -30,6 +30,7 @@ import tempfile
 import threading
 import unittest
 import urllib.error
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
@@ -333,3 +334,45 @@ class ChildStdioEncoding(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RestartStepOnWindows(unittest.TestCase):
+    """Windows 原生部署：新代码就位后**不许**去调 systemctl，也不能报失败。
+
+    现场（本批用户反馈的连带问题）：文件替换成功后，收尾去 `systemctl restart` ——
+    Windows 上根本没有这个命令，于是整个更新被判失败（用户看到的是一次失败，
+    实际新代码已经装好），而报错还叫他去查一个不存在的服务。
+
+    这里用「注入一个会记录的假 run」来验：Windows 分支不许调用它，且不许抛错。
+    """
+
+    def _run_restart(self, *, in_container: bool, nt: bool) -> tuple[str, list]:
+        calls: list[tuple] = []
+
+        def fake_run(cmd, **kwargs):     # noqa: ANN001
+            calls.append(tuple(cmd))
+            return 0, ''
+
+        class Rep:
+            lines: list[str] = []
+
+            def log(self, msg, level='info'):
+                Rep.lines.append(str(msg))
+
+        with mock.patch.object(worker, 'in_container', lambda: in_container), \
+             mock.patch.object(worker, 'run', fake_run), \
+             mock.patch.object(worker.os, 'name', 'nt' if nt else 'posix'):
+            worker.restart_service(Rep())
+        return ' '.join(Rep.lines), calls
+
+    def test_windows_does_not_call_systemctl(self) -> None:
+        text, calls = self._run_restart(in_container=False, nt=True)
+        self.assertEqual(calls, [], 'Windows 上不该去调 systemctl（那里没有这个命令）')
+        self.assertIn('重新执行启动脚本', text,
+                      '没有告诉 Windows 用户「新代码已就位，重启面板即可」')
+
+    def test_posix_still_restarts_via_systemd(self) -> None:
+        text, calls = self._run_restart(in_container=False, nt=False)
+        self.assertEqual(calls, [('systemctl', 'restart', worker.SERVICE_NAME)],
+                         'POSIX 分支被改坏了：不再走 systemctl')
+        self.assertIn('已重启', text)

@@ -201,8 +201,10 @@ export default function SecurityPage() {
     try {
       await securityApi.saveConfig(next);
       notify.ok(t('security.configSaved'));
-      await reload();
-      setOptimistic(null);
+      // 刷新**成功**才撤乐观值：写入已被服务端接受，若这一次刷新失败还把显示退回
+      // 旧值，开关会跳回原态——用户以为没保存上，其实只是列表没刷上（顶部那条
+      // 常驻提示已经在说明这件事）。
+      if (await reload()) setOptimistic(null);
     } catch (e) {
       setOptimistic(null);
       notify.err(errText(e));

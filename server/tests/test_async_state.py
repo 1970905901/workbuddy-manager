@@ -384,6 +384,14 @@ class SecurityPageHonestyTest(unittest.TestCase):
             'saveConfig 在等刷新落地**之前**就撤掉了乐观值——那一刻 values.config '
             '还是旧值，开关会跳回去，用户以为没点到',
         )
+        # 撤乐观值必须是**刷新成功**才做（维护者复核补）：写操作已经落库，这一次
+        # 刷新失败就把显示退回旧值，开关照样跳回去、用户照样以为没保存上——只不
+        # 过触发条件从「撤早了」换成了「刷新失败」。两种形态都要防。
+        self.assertRegex(
+            body, r'if\s*\(\s*await\s+reload\(\)\s*\)',
+            'saveConfig 无条件撤掉乐观值：刷新失败时开关会跳回旧值，'
+            '而写入其实已经成功（顶部常驻提示已说明列表没刷上）',
+        )
 
 
 if __name__ == '__main__':

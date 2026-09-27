@@ -165,6 +165,48 @@ class LoadChangelogTest(unittest.TestCase):
             self.assertFalse(data['path'].endswith(str(Path('server') / 'CHANGELOG.md')))
 
 
+class ChangelogOrderTest(unittest.TestCase):
+    """段落顺序：版本必须**从新到旧**，且 [未发布] 只能有一个、排在最前。
+
+    这是 v1.0.72 发版后发现的问题：文件里当时存在**两个** `## [未发布]` 段落，
+    发版时把下面那个改成了 `## [1.0.72]`，于是 1.0.72 落在了 1.0.71 后面 ——
+    界面「更新日志」页按文件顺序渲染，用户看到的最新版本排在旧版本下面。
+    顺序错了不会有任何报错，只会让每一个人看到的列表都是乱的，所以钉一条。
+    """
+
+    ROOT_CHANGELOG = Path(__file__).resolve().parents[2] / 'CHANGELOG.md'
+
+    @staticmethod
+    def _key(version: str) -> tuple[int, ...]:
+        return tuple(int(x) for x in re.findall(r'\d+', version))
+
+    def _headings(self) -> list[str]:
+        text = self.ROOT_CHANGELOG.read_text(encoding='utf-8')
+        return re.findall(r'^## \[([^\]]+)\]', text, re.M)
+
+    def test_versions_are_newest_first(self) -> None:
+        heads = self._headings()
+        self.assertGreater(len(heads), 50, f'只解析到 {len(heads)} 个版本段落，解析可能失效')
+        released = [h for h in heads if h not in ('未发布', 'Unreleased')]
+        keys = [self._key(v) for v in released]
+        self.assertEqual(
+            keys, sorted(keys, reverse=True),
+            '版本段落没有按从新到旧排列，界面上的更新日志会顺序错乱：'
+            + ', '.join(released[:6]),
+        )
+
+    def test_only_one_unreleased_section_and_it_is_first(self) -> None:
+        heads = self._headings()
+        unreleased = [i for i, h in enumerate(heads) if h in ('未发布', 'Unreleased')]
+        self.assertLessEqual(
+            len(unreleased), 1,
+            f'有 {len(unreleased)} 个「未发布」段落 —— 发版时很容易改错那一个'
+            f'（v1.0.72 就是这么排到 1.0.71 后面的）',
+        )
+        if unreleased:
+            self.assertEqual(unreleased[0], 0, '「未发布」段落必须排在最前面')
+
+
 class ChangelogIsUserFacingTest(unittest.TestCase):
     """更新日志必须**面向用户**，不能写内部实现细节。
 

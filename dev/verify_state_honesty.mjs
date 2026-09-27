@@ -20,6 +20,12 @@
  *                     「**这一份**失败了」，而不是「有任一份失败」——后者会把一个
  *                     正常的空列表也藏起来）
  *   J 恢复     → 回到正常的空列表
+ *
+ * 设置页（批次 1 收尾）：
+ *   K 配置挂   → 整页「数据加载失败」+ 重试；**一个 Tab 都不渲染** —— 那张表单填的是
+ *                内置默认值，渲染出来等于把「默认值」说成「你现在的配置」
+ *   L 只用户列表挂 → 表单照常；用户 Tab **不**说「暂无管理用户」，其余内容仍在
+ *   M 恢复     → 设置页正常
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -98,6 +104,7 @@ if (!/dashboard/.test(page.url())) {
 
 // 运行时开关：0=全放行 1=安全页全挂 2=只 config 挂 3=签到记录延迟 4=签到记录 500
 //              5=密钥+上游全挂 6=只密钥列表挂 7=只上游列表挂
+//              8=设置页配置挂（主数据） 9=只设置页用户列表挂
 const MODE = {value: 0};
 await page.route('**/api/**', async (route) => {
   const url = route.request().url();
@@ -116,6 +123,9 @@ await page.route('**/api/**', async (route) => {
   if (MODE.value === 5 && /\/api\/(keys|upstreams)(\?|$)/.test(url)) return fail();
   if (MODE.value === 6 && /\/api\/keys(\?|$)/.test(url)) return fail();
   if (MODE.value === 7 && /\/api\/upstreams(\?|$)/.test(url)) return fail();
+  // 设置页：主数据是配置（那张表单就是它的副本）；用户列表是另一个 Tab 的配件
+  if (MODE.value === 8 && /\/api\/settings\/upstream/.test(url)) return fail();
+  if (MODE.value === 9 && /\/api\/users/.test(url)) return fail();
   return route.continue();
 });
 
@@ -254,12 +264,46 @@ step(!/请检查网络连接或后端服务是否正常/.test(text), '仍然不�
 step(phaseErrors().length === 0, '这一步没有前端异常', phaseErrors().join(' | '));
 await page.screenshot({path: `${OUT}/08-keys-upstreams-failed.png`, fullPage: true});
 
+// ══ 设置页 ══════════════════════════════════════════════════════════
+console.log('\n设置页（批次 1 收尾：配置没取到时不拿默认值冒充）');
+MODE.value = 8;
+await page.goto(`${BASE}/settings`, {waitUntil: 'load'});
+await page.waitForTimeout(3500);
+text = await bodyText();
+step(/数据加载失败/.test(text), '配置取不到时给整页错误态');
+step(/重试/.test(text), '错误态里有「重试」');
+// 判据用**文本**而不是 `[role=tab]` 计数：页面底部那张「菜单栏引导」提示卡自己
+// 也带 2 个 role=tab（圆点指示器与箭头），按计数会把它算进来，永远不为 0。
+const settingsTabs = () => page.locator('[role=tab]').filter({hasText: '上游配置'}).count();
+step((await settingsTabs()) === 0,
+     '一个 Tab 都不渲染（那张表单填的是内置默认值，不是「你现在的配置」）',
+     `「上游配置」Tab 数：${await settingsTabs()}`);
+step(!/暂无管理用户/.test(text), '不许说「暂无管理用户」');
+await page.screenshot({path: `${OUT}/09-settings-all-failed.png`, fullPage: true});
+
+MODE.value = 9;
+await page.reload({waitUntil: 'load'});
+await page.waitForTimeout(3500);
+text = await bodyText();
+step((await settingsTabs()) > 0,
+     '配置取到了 → 表单照常渲染（正常态没被搞坏）');
+step(!/数据加载失败/.test(text), '只有用户列表挂 → 不升级成整页错误');
+await page.locator('[role=tab]').filter({hasText: '管理用户'}).click().catch(() => {});
+await page.waitForTimeout(800);
+text = await bodyText();
+step(!/暂无管理用户/.test(text),
+     '用户列表挂了：不说「暂无管理用户」（那等于说系统里一个账号都没有）',
+     (text.match(/暂无[^\n]{0,12}/) || ['（无）'])[0]);
+await page.screenshot({path: `${OUT}/10-settings-users-failed.png`, fullPage: true});
+
 MODE.value = 0;
 await page.reload({waitUntil: 'load'});
 await page.waitForTimeout(3000);
 text = await bodyText();
 step(/暂无 API 密钥/.test(text) && !/数据加载失败/.test(text),
      '恢复后回到正常的空列表');
+step((await settingsTabs()) > 0 && !/数据加载失败/.test(text),
+     '恢复后设置页正常');
 
 step(errors.length === 0, '全程没有未捕获的前端异常', errors.slice(0, 2).join(' | '));
 

@@ -2,11 +2,12 @@
 
 # WorkBuddy Manager
 
-**Web console for Tencent CodeBuddy account pools · OpenAI-compatible reverse proxy**
+**Management console for Tencent CodeBuddy account pools · OpenAI-compatible gateway**
 
-A web frontend for [`workbuddy2api`](https://github.com/Sliverkiss/workbuddy2api):
-bulk account onboarding via QR code, automatic daily check-in, API key distribution,
-IP access control, request logs and usage stats — all in one panel.
+A web console for [`workbuddy2api`](https://github.com/Sliverkiss/workbuddy2api):
+bulk QR onboarding, scheduled check-in and token keep-alive, per-group API key
+distribution, IP and model allowlists, request logs and usage analytics; installs and
+updates come from a signed release package.
 
 > The upstream workbuddy2api source **ships inside this project's release package**
 > (MIT). Existing deployments are unaffected — for reinstall/migration, see the

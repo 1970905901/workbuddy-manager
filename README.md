@@ -4,8 +4,9 @@
 
 **腾讯 CodeBuddy 账号池管理控制台 · OpenAI 兼容反代网关**
 
-一套给 [`workbuddy2api`](https://github.com/Sliverkiss/workbuddy2api) 配套的 Web 管理端：
-扫码批量纳管账号、自动签到、密钥分发、IP 管控、调用日志与用量统计，一个面板全搞定。
+面向 [`workbuddy2api`](https://github.com/Sliverkiss/workbuddy2api) 的 Web 管理端：
+扫码批量纳管账号、定时签到与 token 保活、密钥分组分发、IP 与模型白名单、调用日志与
+用量统计；安装与更新走带签名校验的发布包。
 
 > 上游 workbuddy2api 的源码**随本项目的发布包一起分发**（MIT）。
 > 已部署的不受影响；重装 / 迁移时怎么取得源码，见

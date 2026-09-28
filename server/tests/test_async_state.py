@@ -39,6 +39,7 @@ _LOGS = _MAIN / 'logs' / 'page.tsx'
 _STATS = _MAIN / 'stats' / 'page.tsx'
 _SECURITY = _MAIN / 'security' / 'page.tsx'
 _TASKS = _MAIN / 'tasks' / 'page.tsx'
+_KEYS = _MAIN / 'keys' / 'page.tsx'
 _NODE = shutil.which('node')
 
 # 接入状态系统的页面 → 它们在「数据还没到」时会说的那些谎话。
@@ -71,6 +72,10 @@ _PAGES_WITH_LIES = {
         "t('tasks.checkinEmpty')",        # 「暂无签到记录」——等于说「你没签过到」
         "t('tasks.noTaskRecords')",       # 「暂无自动任务记录」——等于说采集器没跑过
         "t('tasks.rawLogNote')",          # 上游原始日志的「这里没有记录不代表没执行」
+    ],
+    'keys/page.tsx': [
+        "t('keys.emptyTitle')",           # 「暂无 API 密钥」——在讲凭据的页面上，
+                                          # 这句读起来是「我的密钥被删了」，用户会顺手重建
     ],
 }
 
@@ -506,6 +511,77 @@ class TasksPageHonestyTest(unittest.TestCase):
                 code, rf'totalUnknown=\{{{key}Failed\s*&&\s*!{var}\.length\}}',
                 f'任务记录页的 {key} 面板页脚没有在取数失败时收起来——会显示「共 0 条」，'
                 '等于告诉用户「确实一条都没有」',
+            )
+
+
+class KeysPageHonestyTest(unittest.TestCase):
+    """密钥页「宁可说不知道，也不说没有」的不变式。
+
+    这一页讲的是**凭据**，所以「暂无 API 密钥」比别的页面更危险。它不像「暂无日志」
+    那样只是少了个列表——用户看到这几个字的第一反应是「我的密钥被删了」，第二反应
+    是顺着旁边的「新建密钥」按钮重建一个。于是**建出重复密钥**，而重复密钥会让
+    「按密钥限额」「按密钥统计用量」全都对不上，用户还很难联想到是这一步造成的。
+
+    这正是 2026-09-16 那次修复要防的事（`keys.createdButRefreshFailed`：创建成功、
+    列表却没刷新出来时必须说清「已经建好了，别重复建」）——只不过那次堵的是
+    **写之后**那个门，这里堵的是**打开页面时**那个门。同一句谎话有两个入口。
+    """
+
+    def test_not_loaded_is_not_the_same_as_empty(self) -> None:
+        """列表没取到时不得说「暂无 API 密钥」。
+
+        两条防线，对应两种进入方式：
+
+        1. **首屏那一次就失败**：`isInitialFailed` → 整页错误态 + 重试，内容区
+           根本不渲染。这一条的**顺序**由
+           `test_pages_guard_before_rendering_empty_states` 钉住。
+        2. **之前取到过、这次刷新失败**：`isInitialFailed` 为假（`hasData` 还是真的），
+           但 `errors` 里有 `keys`——手上这份列表可能已经旧了，这时说「你没有密钥」
+           同样没有依据。`keysFailed` 就是为这一种留的。
+
+        为什么是 `keysFailed` 而不是 `partialFailed`：`partialFailed` 的语义是
+        「任一字段失败」。上游列表挂掉时密钥列表本身是好的，那种情况**应该**照常
+        显示「暂无密钥」；用 `partialFailed` 会把一个正常的空列表也藏起来，
+        用户反而以为页面坏了。
+        """
+        code = _code(_KEYS)
+        self.assertRegex(
+            code, r"keysFailed\s*=\s*'keys'\s*in\s*errors",
+            '密钥页没有从 errors 里算出 keysFailed——「没取到」与「确实为空」就分不开了',
+        )
+        at = code.find("t('keys.emptyTitle')")
+        self.assertGreaterEqual(at, 0, '找不到「暂无密钥」这句，断言前提不成立')
+        # 只看这句话**近旁**的条件：全文搜 `!keysFailed` 的话，把它挪到别处
+        # （比如某个跟列表无关的分支上）也会通过，等于没断言。
+        near = code[max(0, at - 400):at]
+        self.assertIn(
+            '!keysFailed', near,
+            '密钥页的空状态没有按 keysFailed 收窄——刷新失败时会显示成「暂无 API 密钥」，'
+            '用户会以为密钥被删了，并顺手重建出重复密钥',
+        )
+
+    def test_failed_list_does_not_render_a_count(self) -> None:
+        """列表没取到时，两个 tab 上的数字也要一起收起来。
+
+        这是同一句谎话的另一半，也是最容易漏的一半：空状态已经被挡掉了，tab 上却
+        还挂着「普通密钥 · 0」——列表取不到时 `keys` 就是空的，那个 0 没有依据，
+        读起来仍然是「一个密钥都没有」。任务记录页的「共 0 条」正是同一处
+        （PR #97 才补上），只是换了个位置。
+
+        判据同样是 `keysFailed`（**这一份**失败没）而不是 `partialFailed`
+        （有任一份失败没）：上游列表挂掉时密钥列表是好的、确实为空，那两个 0 是
+        如实的，必须照常显示——真实浏览器验收里正好用这一对反过来验证判据。
+
+        ⚠️ 窗口只能开得很窄（60 字符）。第一版写成 160，结果把守卫从 tabNormal 上
+        摘掉、测试**照样绿**：`!keysFailed` 在 160 字外属于**另一个** tab，正则够得着
+        它。这正是「守卫在别处也能通过」那类空转，靠变异测试才露出来。
+        """
+        code = _code(_KEYS)
+        for key in ('tabNormal', 'tabPacket'):
+            self.assertRegex(
+                code, rf"t\('keys\.{key}'\)[\s\S]{{0,60}}?!keysFailed",
+                f'密钥页 {key} 的数字没有按 keysFailed 收起来——列表没取到时它会显示'
+                '「· 0」，等于说「一个密钥都没有」',
             )
 
 

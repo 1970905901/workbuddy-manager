@@ -57,6 +57,13 @@
  *   ③ 气泡  → 有明确关闭按钮；点页面别处也能关；关过之后刷新不再出现
  *   ④ 停靠  → 悬浮时长按拖动**能**移动（正对照），固定底部时**完全**不动，
  *              并回到默认位（水平居中 + 贴底）；刷新后仍是固定
+ *   ⑤ 子路由（P1-2）→ 设置页 7 个 Tab 变成 `/settings/<tab>`：`/settings` 换地址到
+ *              第一个 Tab；深链 `/settings/models` 的**导航项与内容都是「模型映射」**；
+ *              点导航项是一次真实导航（地址栏变、后退键能回上一个 Tab）；
+ *              而**切 Tab 不重新拉配置**（取数在外壳 layout 上，不随子路由重挂载）。
+ *              最后一条的判据是**请求次数**——「偷偷重取」在界面上看不出来（骨架可能
+ *              只闪几毫秒），并配一条正对照：真刷新**必须**重取，否则「没重取」可能
+ *              只是计数器坏了。
  *
  * ④ 的「能移动」是**正对照**，不能省：只断言「固定时拖不动」的话，一个从来就
  * 拖不动的底栏同样会通过——断言恒真。③ 的「关过之后不再出现」也必须先证明
@@ -342,9 +349,11 @@ await page.waitForTimeout(3500);
 text = await bodyText();
 step(/数据加载失败/.test(text), '配置取不到时给整页错误态');
 step(/重试/.test(text), '错误态里有「重试」');
-// 判据用**文本**而不是 `[role=tab]` 计数：页面底部那张「菜单栏引导」提示卡自己
-// 也带 2 个 role=tab（圆点指示器与箭头），按计数会把它算进来，永远不为 0。
-const settingsTabs = () => page.locator('[role=tab]').filter({hasText: '上游配置'}).count();
+// 判据用**文本**而不是数元素：二级导航在错误态里整条不渲染（那张表单填的是内置
+// 默认值，不是「你现在的配置」），所以这里数的是「有没有『上游配置』这一项」。
+// 批次 4 起导航项从 `TabsTrigger`（button）换成了 `<Link>`，标记也随之换成
+// `data-slot=section-tab`——继续数 `[role=tab]` 会恒为 0，这条断言就变成了空转。
+const settingsTabs = () => page.locator('[data-slot=section-tab]').filter({hasText: '上游配置'}).count();
 step((await settingsTabs()) === 0,
      '一个 Tab 都不渲染（那张表单填的是内置默认值，不是「你现在的配置」）',
      `「上游配置」Tab 数：${await settingsTabs()}`);
@@ -356,9 +365,12 @@ await page.reload({waitUntil: 'load'});
 await page.waitForTimeout(3500);
 text = await bodyText();
 step((await settingsTabs()) > 0,
-     '配置取到了 → 表单照常渲染（正常态没被搞坏）');
+     '配置取到了 → 表单照常渲染（正常态没被搞坏）',
+     // 失败时要能一眼看出「是没渲染」还是「渲染在别的地址上」——只报 true/false 的话
+     // 这两种情况长得一样，而处置方式完全不同。
+     `${page.url()}；二级导航项数：${await page.locator('[data-slot=section-tab]').count()}`);
 step(!/数据加载失败/.test(text), '只有用户列表挂 → 不升级成整页错误');
-await page.locator('[role=tab]').filter({hasText: '管理用户'}).click().catch(() => {});
+await page.locator('[data-slot=section-tab]').filter({hasText: '管理用户'}).click().catch(() => {});
 await page.waitForTimeout(800);
 text = await bodyText();
 step(!/暂无管理用户/.test(text),
@@ -780,6 +792,73 @@ await page.keyboard.press('Escape');
 await page.waitForTimeout(500);
 await page.evaluate(() => localStorage.removeItem('workbuddy-manager:dock-position-v2'));
 step(true, '（收尾）已还原成悬浮并清掉底栏坐标，脚本可重复跑');
+
+// ══ 设置页子路由（批次 4 修 P1-2）══════════════════════════════════
+//
+// 这一段的判据分三类，每类都能在界面上「看起来正常」而实际坏掉：
+//   · 地址栏有没有跟着变（`TabsTrigger` 版本：不变，分享出去的链接永远落到第一个 Tab）；
+//   · 导航项与内容是不是同一件事（算错了就变成「地址是 models、内容是 users」）；
+//   · 切 Tab 有没有偷偷重取数据（取数从 layout 掉回 page 就会每切一次闪一次骨架，
+//     还会丢掉没保存的编辑——功能全在，只是变卡）。
+// 最后一类的判据是**请求次数**，因为骨架可能只闪几毫秒，截图与文本都抓不到。
+console.log('\n设置页子路由（批次 4：7 个 Tab 变成可寻址子路由）');
+MODE.value = 0;
+
+const sectionTabs = page.locator('[data-slot=section-tab]');
+const activeTab = page.locator('[data-slot=section-tab][data-active=true]');
+/** 取不到当前项时返回「（当前项数：n）」而不是抛异常——失败信息要指向真正的问题 */
+const activeTabText = async () => {
+  const n = await activeTab.count();
+  return n === 1 ? (await activeTab.innerText()).trim() : `（当前项数：${n}）`;
+};
+
+await page.goto(`${BASE}/settings`, {waitUntil: 'load'});
+await page.waitForTimeout(3000);
+step((await sectionTabs.count()) === 7, '二级导航有 7 项',
+     `实际 ${await sectionTabs.count()}`);
+step(/\/settings\/upstream\/?$/.test(page.url()),
+     '/settings 把地址换成第一个 Tab 的规范路径', page.url());
+step((await activeTabText()).includes('上游配置'), '当前项是「上游配置」',
+     await activeTabText());
+await page.screenshot({path: `${OUT}/22-settings-subroute.png`, fullPage: true});
+
+// 深链：直接落到第 2 个 Tab。这一步同时证明「当前 Tab 不是组件内部状态」——
+// 内部状态的版本（`defaultValue`）无论从哪个地址进来都只会是第一个 Tab。
+await page.goto(`${BASE}/settings/models`, {waitUntil: 'load'});
+await page.waitForTimeout(3000);
+text = await bodyText();
+step((await activeTabText()).includes('模型映射'),
+     '深链 /settings/models 的当前项是「模型映射」', await activeTabText());
+step(/新增模型别名/.test(text),
+     '深链落到的**内容**也是「模型映射」那一块（导航与内容没说两套）');
+step(!/多上游（账号池分组）/.test(text),
+     '没有把「上游配置」那块也渲染出来（一次只挂一个面板）');
+
+const cfgHitsBefore = hits['settings/upstream'] ?? 0;
+await sectionTabs.filter({hasText: '关于'}).click();
+await page.waitForTimeout(1500);
+step(/\/settings\/about\/?$/.test(page.url()),
+     '点导航项是一次**真实导航**（地址栏跟着变）', page.url());
+step((await activeTabText()).includes('关于'), '当前项跟着变成「关于」',
+     await activeTabText());
+step((hits['settings/upstream'] ?? 0) === cfgHitsBefore,
+     '切 Tab **没有**重新拉配置（取数在外壳上，不随子路由重挂载）',
+     `/api/settings/upstream 次数：${cfgHitsBefore} → ${hits['settings/upstream'] ?? 0}`);
+
+await page.goBack({waitUntil: 'load'});
+await page.waitForTimeout(1500);
+step(/\/settings\/models\/?$/.test(page.url()),
+     '后退回到上一个 Tab（每个 Tab 都是一条历史记录）', page.url());
+
+// 正对照：真刷新**必须**重取。少了它，「没重取」可能只是计数器没工作。
+const cfgHitsBeforeReload = hits['settings/upstream'] ?? 0;
+await page.reload({waitUntil: 'load'});
+await page.waitForTimeout(3000);
+step((hits['settings/upstream'] ?? 0) > cfgHitsBeforeReload,
+     '（正对照）真刷新会重新拉配置 —— 所以上一条的「没重取」不是计数器坏了',
+     `/api/settings/upstream 次数：${cfgHitsBeforeReload} → ${hits['settings/upstream'] ?? 0}`);
+step(/\/settings\/models\/?$/.test(page.url()),
+     '刷新后仍停在同一个 Tab（地址就是状态，不需要额外记忆）', page.url());
 
 step(errors.length === 0, '全程没有未捕获的前端异常', errors.slice(0, 2).join(' | '));
 

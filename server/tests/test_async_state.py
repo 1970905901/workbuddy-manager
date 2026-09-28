@@ -80,6 +80,17 @@ _PAGES_WITH_LIES = {
     'settings/page.tsx': [
         "t('settings.usersEmpty')",       # 「暂无管理用户」——等于说系统里一个账号都没有
     ],
+    'accounts/page.tsx': [
+        "t('accounts.tableEmpty')",       # 窄屏列表的「暂无账号」
+        "t('accounts.emptyTitle')",       # 「暂无账号」——等于说号池是空的
+    ],
+    'models/page.tsx': [
+        "t('models.noModels')",           # 「暂无模型」——等于说腾讯那边没有可用模型
+        "t('models.noMatch')",            # 「没有匹配的模型」——筛选结果是空的，前提是清单已经取到
+    ],
+    'red-packets/page.tsx': [
+        "t('redPacket.empty')",           # 「暂无红包」——等于说红包发完了/被清了
+    ],
 }
 
 # 「首屏守卫」的判据写法**不唯一**，取决于主数据是不是页面的全部数据：

@@ -36,6 +36,9 @@
     "forbidden": "権限がありません：現在のアカウントではこの操作を実行できません"
   },
   "nav": {
+    "groupOverview": "概要",
+    "groupOps": "運用",
+    "groupGovernance": "ガバナンス",
     "dashboard": "ダッシュボード",
     "accounts": "アカウント",
     "tasks": "タスク",
@@ -73,6 +76,9 @@
     "poolOverview": "アカウントプール概要",
     "managedAccounts": "管理中のアカウント",
     "systemSettings": "システム設定",
+    "dockLabel": "ドックの位置",
+    "dockFloating": "フローティング（ドラッグ可）",
+    "dockPinned": "下部に固定",
     "quickLinks": "クイックリンク",
     "uiReference": "UI リファレンス",
     "community": "LINUX DO コミュニティ",
@@ -98,6 +104,8 @@
   },
   "dock": {
     "tipTitle": "メニューバーの案内",
+    "tipDismiss": "了解",
+    "tipNext": "次へ",
     "desktop1": "メニューバーはここに移動しました。空白部分を長押しするとドラッグで位置を変更できます。",
     "desktop2": "右から2番目のボタンで、Tencent アカウントを QR コードですばやく追加できます。",
     "desktop3": "一番右のボタンで、個人設定とアカウント情報を開けます。",

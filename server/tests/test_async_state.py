@@ -77,7 +77,22 @@ _PAGES_WITH_LIES = {
         "t('keys.emptyTitle')",           # 「暂无 API 密钥」——在讲凭据的页面上，
                                           # 这句读起来是「我的密钥被删了」，用户会顺手重建
     ],
+    'settings/page.tsx': [
+        "t('settings.usersEmpty')",       # 「暂无管理用户」——等于说系统里一个账号都没有
+    ],
 }
+
+# 「首屏守卫」的判据写法**不唯一**，取决于主数据是不是页面的全部数据：
+#   · dashboard / logs / stats / playground / security / tasks —— 页面上要的那几份
+#     就是全部，一份都没到就不该渲染，于是直接用 useAsyncAll 的
+#     `isInitialFailed || isInitialLoading`；
+#   · settings —— 主数据只有 `cfg` 一份（模型映射、用户各自渲染在自己的 Tab 里），
+#     它没到就不能渲染那张配置表单，判据是 `if (!cfg)`。
+# 两者表达的是同一件事（主数据没就绪就不往下渲染），所以这里接受任一写法。
+_GUARD_MARKERS = (
+    'isInitialFailed || isInitialLoading',
+    'if (!cfg)',
+)
 
 # 只跑 .mjs，不碰 .ts —— Node 的 type stripping 从 22.6 起才有
 _MIN_MAJOR = 22
@@ -265,7 +280,10 @@ class AsyncStateInvariantTest(unittest.TestCase):
         for rel, lies in _PAGES_WITH_LIES.items():
             with self.subTest(page=rel):
                 code = _code(_MAIN / rel)
-                guard = code.find('isInitialFailed || isInitialLoading')
+                # 取各候选写法里**最早**出现的位置：文件里可能同时出现两种（例如
+                # settings 的注释里提到过另一种），取最早的那个才是真正的守卫。
+                hits = [i for i in (code.find(m) for m in _GUARD_MARKERS) if i >= 0]
+                guard = min(hits) if hits else -1
                 self.assertGreaterEqual(guard, 0, f'{rel} 没有首屏守卫（骨架/错误分支）')
                 self.assertIn('LoadError', code, f'{rel} 没有把加载失败显示出来')
                 for lie in lies:

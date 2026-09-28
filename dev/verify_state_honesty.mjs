@@ -64,6 +64,12 @@
  *              最后一条的判据是**请求次数**——「偷偷重取」在界面上看不出来（骨架可能
  *              只闪几毫秒），并配一条正对照：真刷新**必须**重取，否则「没重取」可能
  *              只是计数器坏了。
+ *   ⑥ 底栏 11 → 8 + 页内二级导航（P1-1 的另一半）→ 底栏**只剩 8 个页面入口**，被吸收的
+ *              三页（任务记录 / 红包 / 聊天测试台）不在其中；但这三页**都还在**，
+ *              而且从它们所属的那一页（账号 / 密钥 / 模型）点一下 Tab 就能到，
+ *              高亮也跟着走，后退键能回来。
+ *              这一段要防的是「少了一个入口」与「那一页没了」在界面上长得一样
+ *              ——都只是「找不到了」。所以「底栏里没有」和「一步可达」必须**同时**断言。
  *
  * ④ 的「能移动」是**正对照**，不能省：只断言「固定时拖不动」的话，一个从来就
  * 拖不动的底栏同样会通过——断言恒真。③ 的「关过之后不再出现」也必须先证明
@@ -859,6 +865,62 @@ step((hits['settings/upstream'] ?? 0) > cfgHitsBeforeReload,
      `/api/settings/upstream 次数：${cfgHitsBeforeReload} → ${hits['settings/upstream'] ?? 0}`);
 step(/\/settings\/models\/?$/.test(page.url()),
      '刷新后仍停在同一个 Tab（地址就是状态，不需要额外记忆）', page.url());
+
+// ══ 底栏收敛到 8 项 + 页内二级导航（批次 4 ②）══════════════════════
+//
+// 这一批把底栏**目的地从 11 项收敛到 8 项**：任务记录 / 红包 / 聊天测试台不再各占
+// 一个入口，改成在「账号」/「密钥」/「模型」页里用页内二级导航切换（路径没变）。
+//
+// 判据必须**成对**出现：「底栏里没有」+「一步可达」。只断言前者的话，一个被误删的
+// 页面同样通过——在用户眼里「入口少了一个」和「这一页没了」长得一模一样，都只是
+// 「找不到了」。所以先证明底栏真的只剩 8 个，再逐个证明这三页都还在、都点得到。
+console.log('\n底栏收敛与页内二级导航（批次 4：11 → 8）');
+MODE.value = 0;
+
+await page.goto(`${BASE}/dashboard`, {waitUntil: 'load'});
+await page.waitForTimeout(2500);
+
+// `:visible` 不能省：手机端与桌面端两套渲染都在 DOM 里，只数 `a[href]` 会数到
+// 抽屉里那一份（数量翻倍，而且报出来的数字看着还挺像回事）。
+const dockHrefs = await page.locator('[data-slot=dock-root] a[href]:visible').evaluateAll(
+    (els) => els.map((el) => new URL(el.href).pathname.replace(/\/+$/, '')));
+const absorbed = ['/tasks', '/red-packets', '/playground'];
+
+step(dockHrefs.length === 8, '底栏只剩 8 个页面入口（原来是 11 个）',
+     `实际 ${dockHrefs.length} 个：${dockHrefs.join(' ')}`);
+step(absorbed.every((h) => !dockHrefs.includes(h)),
+     '被吸收的三页不再挂在底栏上',
+     `底栏里仍有：${absorbed.filter((h) => dockHrefs.includes(h)).join(' ')}`);
+step(['/accounts', '/keys', '/models'].every((h) => dockHrefs.includes(h)),
+     '三节的落点（账号 / 密钥 / 模型）都还在底栏上 —— 收敛不能把入口一起收掉',
+     `底栏：${dockHrefs.join(' ')}`);
+
+// 六页各自都要有二级导航，且高亮的是**自己**。高亮算错的表现是「地址是任务记录、
+// 高亮在账号」——页面完全正常，只有把两页并排看才发现。
+for (const [path_, label] of [['/accounts', '账号'], ['/tasks', '任务'],
+                              ['/keys', '密钥'], ['/red-packets', '红包'],
+                              ['/models', '模型'], ['/playground', '测试台']]) {
+  await page.goto(`${BASE}${path_}`, {waitUntil: 'load'});
+  await page.waitForTimeout(2200);
+  step((await sectionTabs.count()) === 2, `${path_} 顶部有 2 项二级导航`,
+       `实际 ${await sectionTabs.count()} 项`);
+  step((await activeTabText()) === label, `${path_} 高亮的是「${label}」`,
+       await activeTabText());
+}
+
+// 「一步可达」：从归属页点一下 Tab 就到被吸收的那一页，后退能回来。
+await page.goto(`${BASE}/accounts`, {waitUntil: 'load'});
+await page.waitForTimeout(2200);
+await page.screenshot({path: `${OUT}/23-section-tabs-accounts.png`, fullPage: true});
+await sectionTabs.filter({hasText: '任务'}).click();
+await page.waitForTimeout(1500);
+step(/\/tasks\/?$/.test(page.url()), '从「账号」点一下 Tab 就到「任务记录」', page.url());
+step((await activeTabText()) === '任务', '到了之后高亮跟着走', await activeTabText());
+await page.screenshot({path: `${OUT}/24-section-tabs-tasks.png`, fullPage: true});
+
+await page.goBack({waitUntil: 'load'});
+await page.waitForTimeout(1500);
+step(/\/accounts\/?$/.test(page.url()), '后退回到「账号」', page.url());
 
 step(errors.length === 0, '全程没有未捕获的前端异常', errors.slice(0, 2).join(' | '));
 

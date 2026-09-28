@@ -115,6 +115,19 @@
     "mobile3": "展開後，倒數第二個按鈕用於快速新增騰訊帳號。",
     "mobile4": "展開後，倒數第一個按鈕用於存取個人設定與帳戶資訊。"
   },
+  "palette": {
+    "title": "命令面板",
+    "desc": "輸入關鍵字，跳到任一頁面",
+    "placeholder": "搜尋頁面…",
+    "empty": "沒有符合的頁面",
+    "emptyHint": "試試「帳號」「紅包」，或直接輸入路徑",
+    "trigger": "搜尋",
+    "triggerHint": "開啟命令面板",
+    "hintMove": "選擇",
+    "hintOpen": "開啟",
+    "hintClose": "關閉",
+    "results": "共 {n} 項"
+  },
   "update": {
     "newVersion": "發現可更新的新版本",
     "notice": "{targets}　到「設定 → 系統更新」一鍵升級",
@@ -1140,6 +1153,12 @@
     "savedManualStep": "設定已儲存，但需要你手動一步",
     "saved": "設定已儲存",
     "applying": "正在自動套用到上游…",
+    "applyRunning": "正在套用設定…",
+    "applyRunningHint": "上游容器正在重啟，期間帳號相關的資料可能暫時讀不到。",
+    "applyOk": "設定已生效",
+    "applyFailed": "上游重載失敗",
+    "applyFailedHint": "設定已經寫入，但上游容器沒能重啟。請在主機上執行 docker compose restart wb2api 讓它生效。",
+    "applyDismiss": "關閉提示",
     "jsonInvalid": "JSON 格式有誤，請檢查括號與逗號",
     "jsonNotObject": "需要是一個 JSON 物件，例如 { \"checkin_hours\": [9, 21] }",
     "modelMapSaved": "模型映射已儲存",

@@ -303,12 +303,13 @@ class SettingsTabsInvariantTest(unittest.TestCase):
             code, r'active=\{settingsTabHref\(tab\)\}',
             '当前项不是由 tab 算出来的：高亮会停在某一项不动。',
         )
-        # 清单里的每一项都要有一条 label（漏一项就是那个 Tab 没有名字）
-        for tab in self.tabs:
-            self.assertIn(
-                f"{tab}: {{label: t(", code,
-                f'二级导航缺少 {tab} 的名字（TAB_META 里没有它）——那个 Tab 会渲染成空标签。',
-            )
+        # 标签键搬到了 `settings-tabs.ts`（命令面板也要用同一份）。外壳必须**从那里读**，
+        # 而不是自己再写一份——两份漂移时，命令面板里会有一个 Tab 显示裸键名。
+        self.assertIn(
+            't(SETTINGS_TAB_LABEL_KEYS[name])', code,
+            '外壳没有从 SETTINGS_TAB_LABEL_KEYS 取标签键 —— 它又自己抄了一份，'
+            '与命令面板（⌘K）用的那份迟早会漂移。',
+        )
 
     def test_index_redirects_to_the_default_tab(self) -> None:
         """`/settings` 要把地址换成默认 Tab 的规范路径。
@@ -373,19 +374,24 @@ class SettingsTabsInvariantTest(unittest.TestCase):
         界面上那一项直接显示裸键名 `settings.tabModel`，而所有「键集一致」类的
         断言照样全绿——因为 5 个语言包都没这个键，它们彼此是一致的。
 
-        键名不写死在测试里，而是从外壳的 `TAB_META` 里读出来：写死的话，改实现时
-        测试会跟着一起去断言那个错的副本。
+        键名不写死在测试里，而是从 `SETTINGS_TAB_LABEL_KEYS`（`settings-tabs.ts`）
+        里读出来：写死的话，改实现时测试会跟着一起去断言那个错的副本。
+
+        为什么读清单模块而不是外壳：标签键与清单本身是同一份数据的两面，都在
+        `settings-tabs.ts` 里（外壳与命令面板都从那里读）。留在外壳里的话，这里
+        读到的是「外壳那一份」，而命令面板用的是另一份——测试全绿，面板上却有一个
+        Tab 显示裸键名。
         """
-        code = _code(_LAYOUT)
-        start = code.index('const TAB_META')
-        end = code.index('const tabItems', start)
-        keys = re.findall(r"label: t\('([^']+)'\)", code[start:end])
+        code = _code(_PURE)
+        start = code.index('export const SETTINGS_TAB_LABEL_KEYS')
+        end = code.index('};', start)
+        keys = re.findall(r":\s*'([^']+)'", code[start:end])
         self.assertEqual(
             len(keys), _TAB_COUNT,
-            f'TAB_META 里读到 {len(keys)} 个标签键（期望 {_TAB_COUNT}）：{keys}',
+            f'SETTINGS_TAB_LABEL_KEYS 里读到 {len(keys)} 个标签键（期望 {_TAB_COUNT}）：{keys}',
         )
         self.assertEqual(len(set(keys)), len(keys),
-                         f'TAB_META 里有重复的标签键：{keys}')
+                         f'SETTINGS_TAB_LABEL_KEYS 里有重复的标签键：{keys}')
         self.assertTrue(_LOCALES.is_dir(), f'找不到语言包目录: {_LOCALES}')
         missing: list[str] = []
         for path in sorted(_LOCALES.glob('*.json')):

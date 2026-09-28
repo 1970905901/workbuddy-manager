@@ -278,6 +278,20 @@ export const accountApi = {
   taskRunStart: (mode: 'preview' | 'claim' | 'full', target = 'ALL', confirm = false) =>
     post<{ok: boolean; message: string}>('/api/task-run', {mode, target, confirm}),
   taskRunStop: () => post<{ok: boolean; message: string}>('/api/task-run/stop'),
+
+  /* ── 定时领奖配置：**后端有、前端有意不做 UI** ───────────────
+   * 这两个封装是**故意留着但没人调**的，不要当成「漏接线的死代码」删掉，
+   * 也不要顺手补一个入口——这是一次明确的决策，不是疏忽：
+   *
+   *   1. 定时领奖本身只跑幂等认领（不伪造行为），但它是**无人值守**的写操作：
+   *      用户设完就忘了，出了问题（上游限流、账号失效）没有任何人在场看到。
+   *   2. 设置页的「定时任务」区块走的是**上游配置**（`SCHEDULE_FIELDS`），
+   *      而这里走的是**管理端自己的调度器**——两套独立机制。界面只暴露前者时，
+   *      这层困惑不会被放大；**一旦补了入口，用户会看到两个都叫「定时」的东西**。
+   *      所以补入口之前必须先决定这两套是合并还是分层展示。
+   *
+   * 也就是说：入口的问题不是「没做」，是「还差一个前置决策」。详见
+   * `server/services/taskrun.py` 的 `get_schedule()` 与 UI-UX-ROADMAP 的 P1-8 / P1-9。 */
   taskClaimSchedule: () => get<{enabled: boolean; hours: number[]}>('/api/task-claim-schedule'),
   saveTaskClaimSchedule: (enabled: boolean, hours: number[]) =>
     put<{enabled: boolean; hours: number[]}>('/api/task-claim-schedule', {enabled, hours}),

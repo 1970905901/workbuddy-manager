@@ -74,6 +74,21 @@
  * ④ 的「能移动」是**正对照**，不能省：只断言「固定时拖不动」的话，一个从来就
  * 拖不动的底栏同样会通过——断言恒真。③ 的「关过之后不再出现」也必须先证明
  * 「重置之后真的又出现了」，否则「不出现」可能只是因为压根没显示过。
+ *
+ * 批次 5（P1-8 决策留白 + 上游重载状态 + ⌘K 命令面板）：
+ *   ⑦ 重载状态 → 闲时**没有**这条提示（正对照）；重载中出现「正在应用配置」；
+ *                **不刷新**地等它变成「已生效」（真实用法是页面没关的那一串）；
+ *                失败时明确说「重载失败」、给出宿主机重启命令、把上游原样输出带出来、
+ *                且**不说**「保存失败」（配置已经写入）；切到别的 Tab 后提示仍在
+ *                （它挂在设置页外壳上）。最后一类的判据是**请求次数**。
+ *   ⑧ ⌘K      → 按钮点得开、快捷键也按得开；空查询列全部 18 项；搜「红包」只剩红包
+ *                那一页（筛的是「命中的留下」）；多词是 AND 且归属提示也参与匹配；
+ *                搜不到时给出空状态；回车跳到搜出来的那一页并把面板关掉；
+ *                ↓ 换高亮后回车打开的是**高亮的那一条**（不是永远第一条）。
+ *
+ * ⑦ 的「已生效」不能靠刷新到达：判定要求 `last_at` 比挂载时读到的那一次更大，
+ * 刷新后基线就是新值，只会是闲——所以那一段是**同一页内**从「重载中」切过去的。
+ * ⑧ 的「搜红包只剩一条」不能只数条数：筛选逻辑写反时条数照样对，所以要核对 href。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -154,6 +169,7 @@ if (!/dashboard/.test(page.url())) {
 //              5=密钥+上游全挂 6=只密钥列表挂 7=只上游列表挂
 //              8=设置页配置挂（主数据） 9=只设置页用户列表挂
 //             10=账号池挂 11=只上游状态挂 12=模型目录挂 13=红包列表挂 14=三页都延迟
+//             15=上游重载中 16=上游重载失败 17=上游重载已生效 18=上游重载空闲（强制）
 const MODE = {value: 0};
 
 /**
@@ -198,6 +214,25 @@ await page.route('**/api/**', async (route) => {
   if (MODE.value === 13 && is('red-packets')) return fail();
   if (MODE.value === 14 && (is('accounts') || is('model-catalog') || is('red-packets'))) {
     await new Promise((r) => setTimeout(r, 3500));
+  }
+  // 上游重载状态（批次 5）：真实环境里要等一次真重启（分钟级）或让它真失败，
+  // 所以这里伪造响应。**18 是「强制空闲」**——正对照要用它，不能靠真后端的
+  // 初始状态（那取决于这台机器上有没有 docker、之前有没有失败过）。
+  if (MODE.value >= 15 && MODE.value <= 18 && is('upstream/reload-state')) {
+    const bodies = {
+      15: {running: true, pending: false, last_at: 0, last_ok: null,
+           last_message: '', restart_count: 0},
+      16: {running: false, pending: false, last_at: 0, last_ok: false,
+           last_message: 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock',
+           restart_count: 1},
+      17: {running: false, pending: false, last_at: 1800000000, last_ok: true,
+           last_message: '', restart_count: 1},
+      18: {running: false, pending: false, last_at: 0, last_ok: null,
+           last_message: '', restart_count: 0},
+    };
+    return route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify(bodies[MODE.value])});
   }
   return route.continue();
 });
@@ -921,6 +956,177 @@ await page.screenshot({path: `${OUT}/24-section-tabs-tasks.png`, fullPage: true}
 await page.goBack({waitUntil: 'load'});
 await page.waitForTimeout(1500);
 step(/\/accounts\/?$/.test(page.url()), '后退回到「账号」', page.url());
+
+// ══ 命令面板 ⌘K（批次 5 ③）════════════════════════════════════════
+//
+// 这一批给「11 个业务页 + 设置页 7 个 Tab」加了一条键盘入口。判据分三层，缺一层
+// 就有一种坏法能蒙过去：
+//
+//   1. **能打开**：按钮点得开、快捷键按得开。只测其中一个的话，另一个可能早就
+//      坏了而没人知道（快捷键尤其——它没有可见的失败面）。
+//   2. **搜得准**：空查询是全部 18 项；搜「红包」只剩一条，而且**就是**红包那一页。
+//      只数条数是不够的：筛选逻辑写反（命中留下没命中的）时条数照样对。
+//   3. **跳得对**：回车真的换路由，而且面板自己关掉（不关的话它会一直盖着新页面）。
+//
+// 顺带证明「面板里没有动作」：它整段只有导航，回车之后地址一定变成某个站内路径。
+console.log('\n命令面板 ⌘K（批次 5：可发现性与检索）');
+MODE.value = 0;
+
+const palette = page.locator('[data-slot=command-palette]');
+const paletteInput = page.locator('[data-slot=command-palette-input]');
+const paletteItems = page.locator('[data-slot=command-palette-item]');
+const paletteActive = page.locator('[data-slot=command-palette-item][aria-selected=true]');
+const itemHrefs = () => paletteItems.evaluateAll(
+    (els) => els.map((el) => el.getAttribute('data-href')));
+
+await page.goto(`${BASE}/dashboard`, {waitUntil: 'load'});
+await page.waitForTimeout(2500);
+
+// —— 1. 能打开（可见的按钮）——
+await page.locator('[data-slot=command-palette-trigger]').click();
+await page.waitForTimeout(600);
+step(await palette.isVisible(), '点右上角的「搜索」按钮能打开命令面板');
+step(await paletteInput.isVisible(), '打开后输入框就在，可以直接打字');
+
+// —— 2. 搜得准 ——
+// 空查询给全部：打开面板不该是一片空白（用户得先知道有什么才搜得动）。
+step((await paletteItems.count()) === 18,
+     '空查询列出全部 18 项（8 个底栏目的地 + 3 个被吸收的页面 + 7 个设置 Tab）',
+     `实际 ${await paletteItems.count()} 项`);
+
+// 快捷键。macOS 上是 ⌘K，其它平台是 Ctrl+K —— 与组件里的渲染判据同一套。
+await page.keyboard.press('Escape');
+await page.waitForTimeout(400);
+await page.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k');
+await page.waitForTimeout(600);
+step(await palette.isVisible(), '⌘K / Ctrl+K 也能打开（第二条路径，不能只有按钮）');
+
+await paletteInput.fill('红包');
+await page.waitForTimeout(500);
+const redPacketHrefs = await itemHrefs();
+step(redPacketHrefs.length === 1 && redPacketHrefs[0] === '/red-packets',
+     '搜「红包」只剩红包那一页（筛的是「命中的留下」，不是反过来）',
+     `实际 ${redPacketHrefs.length} 项：${redPacketHrefs.join(' ')}`);
+await page.screenshot({path: `${OUT}/25-command-palette-search.png`, fullPage: false});
+
+// 多词是 AND，且归属提示也参与匹配 —— 「设置 用户」这种最自然的组合必须搜得到。
+await paletteInput.fill('设置 用户');
+await page.waitForTimeout(500);
+const settingsUserHrefs = await itemHrefs();
+step(settingsUserHrefs.includes('/settings/users'),
+     '多词是 AND，且右侧的归属提示也参与匹配（「设置 用户」搜得到用户管理）',
+     `实际 ${settingsUserHrefs.join(' ')}`);
+
+// 搜不到就是空，且**说清楚**是空的（不能默默显示一个空框）。
+await paletteInput.fill('zzzzzz');
+await page.waitForTimeout(500);
+step((await paletteItems.count()) === 0, '搜不到时不显示任何条目',
+     `实际 ${await paletteItems.count()} 项`);
+step(await page.locator('[data-slot=command-palette-empty]').isVisible(),
+     '搜不到时给出明确的空状态（不是一片空白）');
+
+// —— 3. 跳得对 ——
+await paletteInput.fill('红包');
+await page.waitForTimeout(500);
+await page.keyboard.press('Enter');
+await page.waitForTimeout(1500);
+step(/\/red-packets\/?$/.test(page.url()), '回车跳到搜出来的那一页', page.url());
+step(!(await palette.isVisible().catch(() => false)),
+     '跳转后面板自己关掉（不关就会一直盖在新页面上）');
+
+// 键盘选：↓ 换高亮，回车打开的必须是**高亮的那一条**（不是永远第一条）。
+// 查询词取「模型」而不是「密钥」：后者只命中一条，↓ 会绕回自己，断言就退化成
+// 「高亮没变」——那种情况下这条测试是恒真的。
+await page.locator('[data-slot=command-palette-trigger]').click();
+await page.waitForTimeout(600);
+await paletteInput.fill('模型');
+await page.waitForTimeout(500);
+const firstHref = await paletteActive.getAttribute('data-href');
+await page.keyboard.press('ArrowDown');
+await page.waitForTimeout(300);
+const secondHref = await paletteActive.getAttribute('data-href');
+step(secondHref !== null && secondHref !== firstHref,
+     '↓ 能移动高亮（读屏软件靠 aria-activedescendant 播报，这条同时证明它在动）',
+     `${firstHref} → ${secondHref}`);
+await page.screenshot({path: `${OUT}/26-command-palette-keyboard.png`, fullPage: false});
+await page.keyboard.press('Enter');
+await page.waitForTimeout(1500);
+step(page.url().includes(secondHref.replace(/\/+$/, '')),
+     '回车打开的是**高亮的那一条**（不是永远第一条）', page.url());
+
+// ══ 上游重载状态（批次 5 ②）════════════════════════════════════════
+//
+// 这一段要防的是「保存完只有一句『正在应用配置』，然后没有下文」：重载失败时界面
+// 同样一片祥和，而配置其实**已经写进去了**，只是没生效。四档里只有一档该有提示，
+// 所以判据必须**成对**：先证明闲时没有它，再逐档证明该出现的那档出现了。
+//
+// 「已生效」这一档**不能靠刷新页面到达**：判定要求 `last_at` 比挂载时读到的那一次
+// 更大，所以刷新后基线就是新值，只会是闲。真实用法是「保存 → 重载中 → 重载完成」
+// 这一串**页面没关**的过程。所以这里也照着走：先置成重载中，**不刷新**地切到已生效。
+console.log('\n上游重载状态（批次 5：保存后能核对「到底成没成」）');
+const reloadNotice = page.locator('[data-slot=reload-notice]');
+/** 这条提示自己的文字。不读整页：整页里别处也可能有「正在」两个字，那样的断言没有判别力。 */
+const reloadNoticeText = async () =>
+  (await reloadNotice.count())
+    ? (await reloadNotice.first().innerText()).replace(/\s+/g, ' ').trim()
+    : '（没有这条提示）';
+
+// —— 正对照：闲时不该有这条提示 ——
+// 少了它，下面「出现了」可能只是因为这条提示**一直都在**。
+MODE.value = 18;
+await page.goto(`${BASE}/settings/upstream`, {waitUntil: 'load'});
+await page.waitForTimeout(2500);
+step((await reloadNotice.count()) === 0,
+     '（正对照）闲时没有这条提示 —— 否则「出现了」可能只是它一直在那儿',
+     await reloadNoticeText());
+
+// —— 重载中 ——
+MODE.value = 15;
+await page.goto(`${BASE}/settings/upstream`, {waitUntil: 'load'});
+await page.waitForTimeout(2500);
+step(await page.locator('[data-slot=reload-notice][data-phase=applying]').isVisible(),
+     '重载中显示「正在应用配置」', await reloadNoticeText());
+await page.screenshot({path: `${OUT}/27-reload-applying.png`, fullPage: false});
+
+// —— 重载完成（不刷新，靠轮询自己发现）——
+MODE.value = 17;
+await page.waitForTimeout(4000);
+step(await page.locator('[data-slot=reload-notice][data-phase=ok]').isVisible(),
+     '重载完成后面板自己变成「已生效」（靠轮询发现，不需要用户刷新）',
+     await reloadNoticeText());
+step(!/正在应用配置/.test(await reloadNoticeText()),
+     '变成「已生效」之后不再同时说「正在」', await reloadNoticeText());
+await page.screenshot({path: `${OUT}/28-reload-ok.png`, fullPage: false});
+
+// —— 重载失败 ——
+MODE.value = 16;
+await page.goto(`${BASE}/settings/upstream`, {waitUntil: 'load'});
+await page.waitForTimeout(2500);
+text = await bodyText();
+step(await page.locator('[data-slot=reload-notice][data-phase=failed]').isVisible(),
+     '重载失败时明确说「重载失败」', await reloadNoticeText());
+step(/docker compose restart/.test(text),
+     '失败提示给出可照做的下一步（宿主机重启命令），不是只说「失败了」');
+step(!/保存失败/.test(text),
+     '失败文案不说是「保存失败」—— 配置已经写入，失败的是让它生效的那一步');
+step(/Cannot connect to the Docker daemon/.test(text),
+     '把上游的原样输出带出来（那是唯一能定位问题的东西）');
+
+// 切 Tab 后提示还在：它挂在**设置页外壳**上，不随子路由重挂载。
+// 挂在「上游配置」这一个 Tab 里的话，用户切到别的 Tab 就再也看不到了 ——
+// 而重载失败影响的是整个面板，不只是那一页。
+await sectionTabs.filter({hasText: '管理用户'}).click();
+await page.waitForTimeout(1800);
+step(await page.locator('[data-slot=reload-notice][data-phase=failed]').isVisible(),
+     '切到别的 Tab 之后提示仍在（挂在设置页外壳上，不随子路由重挂载）',
+     `${page.url()} / ${await reloadNoticeText()}`);
+step((hits['upstream/reload-state'] ?? 0) >= 3,
+     '面板确实在轮询重载状态（判据是请求次数 —— 「有没有在问」在界面上看不出来）',
+     `/api/upstream/reload-state 次数：${hits['upstream/reload-state'] ?? 0}`);
+await page.screenshot({path: `${OUT}/29-reload-failed-other-tab.png`, fullPage: false});
+
+// —— 收尾：恢复放行 ——
+MODE.value = 0;
 
 step(errors.length === 0, '全程没有未捕获的前端异常', errors.slice(0, 2).join(' | '));
 

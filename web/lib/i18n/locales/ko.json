@@ -115,6 +115,19 @@
     "mobile3": "펼친 뒤 마지막에서 두 번째 버튼으로 Tencent 계정을 빠르게 추가할 수 있습니다.",
     "mobile4": "펼친 뒤 마지막 버튼으로 개인 설정과 계정 정보를 열 수 있습니다."
   },
+  "palette": {
+    "title": "명령 팔레트",
+    "desc": "키워드를 입력해 원하는 페이지로 이동합니다",
+    "placeholder": "페이지 검색…",
+    "empty": "일치하는 페이지가 없습니다",
+    "emptyHint": "「계정」「빨간 봉투」를 입력하거나 경로를 직접 입력해 보세요",
+    "trigger": "검색",
+    "triggerHint": "명령 팔레트 열기",
+    "hintMove": "선택",
+    "hintOpen": "열기",
+    "hintClose": "닫기",
+    "results": "총 {n}개"
+  },
   "update": {
     "newVersion": "새 버전이 있습니다",
     "notice": "{targets} — 설정 → 시스템 업데이트에서 바로 업그레이드할 수 있습니다",
@@ -1140,6 +1153,12 @@
     "savedManualStep": "설정을 저장했지만 수동으로 한 단계가 필요합니다",
     "saved": "설정을 저장했습니다",
     "applying": "업스트림에 자동 적용 중…",
+    "applyRunning": "설정을 적용하는 중…",
+    "applyRunningHint": "업스트림 컨테이너를 재시작하는 중입니다. 그동안 계정 관련 데이터를 잠시 읽지 못할 수 있습니다.",
+    "applyOk": "설정이 적용되었습니다",
+    "applyFailed": "업스트림 다시 불러오기 실패",
+    "applyFailedHint": "설정은 저장되었지만 업스트림 컨테이너를 재시작하지 못했습니다. 호스트에서 docker compose restart wb2api 를 실행해 적용하세요.",
+    "applyDismiss": "닫기",
     "jsonInvalid": "JSON 형식이 올바르지 않습니다. 괄호와 쉼표를 확인하세요",
     "jsonNotObject": "JSON 객체여야 합니다. 예: { \"checkin_hours\": [9, 21] }",
     "modelMapSaved": "모델 매핑을 저장했습니다",

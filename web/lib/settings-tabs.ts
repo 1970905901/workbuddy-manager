@@ -40,6 +40,26 @@ export function settingsTabHref(tab: SettingsTab): string {
 }
 
 /**
+ * 每个 Tab 的**标签键**。
+ *
+ * 与 `SETTINGS_TABS` 放在一起而不是留在外壳里，理由和清单本身一样：Tab 的名字
+ * 有**两处**要读——外壳渲染导航、命令面板（⌘K）把它当作目的地列出来。留在外壳
+ * 里的话，命令面板就得另抄一份「哪个 Tab 叫什么」，而漏抄一处的表现是「面板里
+ * 那个条目显示裸键名」或者「少了某个 Tab」——两处都不报错。
+ *
+ * 图标仍然留在外壳（那是 JSX，进不来这个零依赖模块）。
+ */
+export const SETTINGS_TAB_LABEL_KEYS: Record<SettingsTab, string> = {
+  upstream: 'settings.tabUpstream',
+  models: 'settings.tabModels',
+  users: 'settings.tabUsers',
+  tokens: 'settings.tabTokens',
+  system: 'settings.tabSystem',
+  changelog: 'settings.tabChangelog',
+  about: 'settings.tabAbout',
+};
+
+/**
  * 从 `usePathname()` 的值里解析出当前 Tab。
  *
  * **不 import `BASE_PATH` 的原因**（子路径部署下这条路必须仍然成立）：

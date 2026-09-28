@@ -115,6 +115,19 @@
     "mobile3": "展开后，倒数第二个按钮用于快速添加腾讯账号。",
     "mobile4": "展开后，倒数第一个按钮用于访问个人设置与账户信息。"
   },
+  "palette": {
+    "title": "命令面板",
+    "desc": "输入关键字，跳转到任意页面",
+    "placeholder": "搜索页面…",
+    "empty": "没有匹配的页面",
+    "emptyHint": "试试「账号」「红包」，或直接输入路径",
+    "trigger": "搜索",
+    "triggerHint": "打开命令面板",
+    "hintMove": "选择",
+    "hintOpen": "打开",
+    "hintClose": "关闭",
+    "results": "共 {n} 项"
+  },
   "update": {
     "newVersion": "发现新版本可更新",
     "notice": "{targets}　到「设置 → 系统更新」一键升级",
@@ -1140,6 +1153,12 @@
     "savedManualStep": "设置已保存，但需要你手动一步",
     "saved": "设置已保存",
     "applying": "正在自动应用到上游…",
+    "applyRunning": "正在应用配置…",
+    "applyRunningHint": "上游容器正在重启，期间账号相关的数据可能暂时读不到。",
+    "applyOk": "配置已生效",
+    "applyFailed": "上游重载失败",
+    "applyFailedHint": "配置已经写入，但上游容器没能重启。请在宿主机执行 docker compose restart wb2api 使其生效。",
+    "applyDismiss": "关闭提示",
     "jsonInvalid": "JSON 格式有误，请检查括号与逗号",
     "jsonNotObject": "需要是一个 JSON 对象，例如 { \"checkin_hours\": [9, 21] }",
     "modelMapSaved": "模型映射已保存",

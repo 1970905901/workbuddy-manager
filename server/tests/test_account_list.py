@@ -65,10 +65,19 @@ class AccountListBehaviourTest(unittest.TestCase):
                          f'需要 node ≥ {_MIN_MAJOR}（type stripping），当前 {_MAJOR}')
     def test_filter_sort_paginate(self) -> None:
         self.assertTrue(_SCRIPT.is_file(), f'缺少测试脚本: {_SCRIPT}')
-        proc = subprocess.run(
-            [_NODE, '--experimental-strip-types', str(_SCRIPT)],
-            capture_output=True, text=True, timeout=120, cwd=str(_ROOT),
-        )
+
+        def run_once() -> subprocess.CompletedProcess:
+            return subprocess.run(
+                [_NODE, '--experimental-strip-types', str(_SCRIPT)],
+                capture_output=True, text=True, timeout=120, cwd=str(_ROOT),
+            )
+
+        proc = run_once()
+        # Node 偶发进程级崩溃（整套测试并跑时遇到过 0xC0000409）：不是断言失败，也与
+        # 被测逻辑无关，却会把整批测试染红。只对异常退出码重试一次；rc=1（脚本自己
+        # 判失败）不重试，免得这条守卫变成「跑两遍总能绿」的空转。
+        if proc.returncode not in (0, 1):
+            proc = run_once()
         out = (proc.stdout or '') + (proc.stderr or '')
         self.assertEqual(proc.returncode, 0, f'账号列表逻辑不符合预期：\n{out}')
         self.assertIn('all passed', out, f'脚本没有跑到通过：\n{out}')

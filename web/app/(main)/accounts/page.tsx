@@ -15,7 +15,10 @@ import {
   CalendarCheck,
   Check,
   Coins,
+  ChevronLeft,
   ChevronRight,
+  Search,
+  ArrowUpDown,
   RotateCcw,
   Sparkles,
   StickyNote,
@@ -35,12 +38,23 @@ import type {
 } from '@/lib/types';
 import {expiryBarPercent, expiryVisual, fmtAgo, fmtDateTime, fmtNumber, fmtRemain} from '@/lib/format';
 import {
+  AVAILABILITY_GROUPS,
+  availabilityGroup,
+  availabilityGroupLabelKey,
   availabilityLabelKey,
   availabilityOf,
   isDegraded,
   mergePoolStatus,
   rateLimitedModels,
 } from '@/lib/account-status';
+import {
+  groupCounts,
+  matchesQuery,
+  paginate,
+  selectAccounts,
+  type GroupFilter,
+  type SortKey,
+} from '@/lib/account-list';
 import {PageHeader} from '@/components/common/layout/PageHeader';
 import {EmptyState} from '@/components/common/layout/EmptyState';
 import {ConfirmDialog} from '@/components/common/layout/ConfirmDialog';
@@ -57,6 +71,15 @@ import {realmLabel, useRealm} from '@/lib/realm-context';
 import {useT} from '@/lib/i18n/provider';
 import {Button} from '@/components/ui/button';
 import {Badge} from '@/components/ui/badge';
+import {Input} from '@/components/ui/input';
+import {Label} from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -65,6 +88,24 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+
+/**
+ * 一页显示多少个账号。
+ *
+ * 账号一多（几十个）整张表会把页面撑得很长，翻页比无限滚动更适合「我要找某一个号」
+ * 的场景；页码条同时给出「共 N 个」，不会让人以为剩下的号不见了。
+ * **只有超过一页时才渲染页码条**，小池子看不到多余的控件。
+ */
+const PAGE_SIZE = 20;
+
+/**
+ * 账号 → 4 组展示语义。
+ *
+ * 定义在模块级是为了**引用稳定**：它会进 `useMemo` 的依赖（`groupCounts` /
+ * `selectAccounts`），每次渲染现写一个箭头函数会让那些 memo 每帧重算。
+ * 映射表本身只有一份，在 lib/account-status.ts 里。
+ */
+const groupOf = (a: Account) => availabilityGroup(availabilityOf(a));
 
 export default function AccountsPage() {
   const {realm, label: realmName} = useRealm();
@@ -77,6 +118,18 @@ export default function AccountsPage() {
   // 活动任务（单账号执行成长任务）的目标账号；null = 对话框关闭
   const [taskTarget, setTaskTarget] = useState<Account | null>(null);
   const [busyFile, setBusyFile] = useState<string | null>(null);
+  /**
+   * 列表的检索 / 状态筛选 / 排序 / 页码（P1-3）。
+   *
+   * 这四件事**全在客户端做**：一次请求就把整个分组的账号都拿回来了（`accountApi.list`
+   * 不分页），所以改条件既不重新取数、也不会边打字边发请求——不需要防抖。
+   * 日志页那边是**服务端**筛选（每个条件都是查询参数），所以那边的文本框必须防抖，
+   * 两页的差别来自数据在哪一侧，不是风格不一致。
+   */
+  const [q, setQ] = useState('');
+  const [statusGroup, setStatusGroup] = useState<GroupFilter>('all');
+  const [sort, setSort] = useState<SortKey>('default');
+  const [page, setPage] = useState(1);
   /**
    * 账号分组（多账号池）：一个分组 = 一套上游实例（账号池）。
    * null = 默认分组（升级前那套，行为逐字不变）；其余 = 上游记录的 id。
@@ -318,6 +371,55 @@ export default function AccountsPage() {
     () => merged.filter((a) => (a.realm ?? 'cn') === realm),
     [merged, realm],
   );
+
+  /**
+   * 各状态组（外加「全部」）的条数，给筛选按钮上的数字。
+   *
+   * 只受**搜索**影响，**不**受状态筛选影响：否则选中「需处理」之后其余按钮全变成 0，
+   * 看不出池子本来的分布，也就失去了「一眼扫过」的意义。
+   */
+  const counts = useMemo(
+    () => groupCounts(visible.filter((a) => matchesQuery(a, q)), groupOf),
+    [visible, q],
+  );
+
+  /**
+   * 搜索 + 状态筛选 + 排序之后的结果（还没分页）。
+   *
+   * `creditOf` 必须带上刚查到的**实时**积分：排序用的得是用户看到的那份数字，
+   * 否则会出现「按积分排序、显示出来的数值顺序却是乱的」——而且不报错。
+   */
+  const filtered = useMemo(
+    () =>
+      selectAccounts(visible, {q, group: statusGroup, sort}, {
+        groupOf,
+        creditOf: (a) => liveCredits[a.uid] ?? a.credits ?? null,
+      }),
+    [visible, q, statusGroup, sort, liveCredits],
+  );
+
+  const paged = useMemo(() => paginate(filtered, page, PAGE_SIZE), [filtered, page]);
+
+  /**
+   * 页码越界时在**渲染期**夹回来（删掉一个账号、或改筛选让条数变少就会越界）。
+   *
+   * 用渲染期纠正而不是 `useEffect`：后者会先用旧页码提交一帧空表，用户看到表格
+   * 闪一下「没有数据」再恢复。同日志页切版本的处理方式。
+   */
+  if (paged.page !== page) setPage(paged.page);
+
+  /** 三种「看不到账号」的原因，必须分开说——它们要用户做的事完全不同 */
+  const noAccountsAtAll = merged.length === 0;
+  const noAccountsInRealm = !noAccountsAtAll && visible.length === 0;
+  const noMatch = visible.length > 0 && filtered.length === 0;
+
+  /** 清掉列表自己的筛选（不动分组，也不动版本） */
+  function clearListFilters() {
+    setQ('');
+    setStatusGroup('all');
+    setSort('default');
+    setPage(1);
+  }
 
   /**
    * 今天还没签到的账号数 —— 「全部签到」按钮据此显示与禁用。
@@ -1082,12 +1184,61 @@ export default function AccountsPage() {
           : <AccountsSkeleton />
       )}
 
+      {/* 检索与状态筛选（P1-3）。账号还没取到时不渲染：那会儿计数全是 0，
+          摆出来等于说「一个账号都没有」。
+          这一排按钮是**状态信息不再依赖 hover** 的关键——移动端没有 hover，
+          原先 9 档状态只能靠徽章的悬浮提示解释，等于状态信息不可见。 */}
+      {accounts && (
+        <section className="rounded-[20px] bg-muted p-3.5">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={q}
+                onChange={(e) => { setQ(e.target.value); setPage(1); }}
+                placeholder={t('accounts.searchPlaceholder')}
+                className="h-9 bg-background pl-8"
+              />
+            </div>
+            <div className="-mx-0.5 flex flex-wrap items-center gap-1.5 overflow-x-auto px-0.5 pb-0.5">
+              <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+                <Coins className="h-3.5 w-3.5" />
+                {t('accounts.colStatus')}
+              </span>
+              {(['all', ...AVAILABILITY_GROUPS] as const).map((g) => (
+                <Button
+                  key={g}
+                  variant={statusGroup === g ? 'default' : 'outline'}
+                  size="sm"
+                  className="h-7 shrink-0 rounded-full px-2.5 text-[11px]"
+                  onClick={() => { setStatusGroup(g); setPage(1); }}
+                >
+                  {g === 'all' ? t('common.all') : t(availabilityGroupLabelKey(g))}
+                  <span className="ml-1 tabular-nums opacity-70">{counts[g]}</span>
+                </Button>
+              ))}
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
+              <Select value={sort} onValueChange={(v) => { setSort(v as SortKey); setPage(1); }}>
+                <SelectTrigger className="h-9 w-[150px] bg-background"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">{t('accounts.sortDefault')}</SelectItem>
+                  <SelectItem value="remain">{t('accounts.sortRemain')}</SelectItem>
+                  <SelectItem value="credits">{t('accounts.sortCredits')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </section>
+      )}
+
       {accounts && (
       <section className="overflow-hidden rounded-[20px] bg-muted">
         {/* 手机端：卡片列表。表格 6 列在窄屏需要横向滚动，读一行要来回拖，
             改为纵向卡片后信息一眼可见 */}
         <div className="divide-y divide-border/40 md:hidden">
-          {visible.map((a) => (
+          {paged.rows.map((a) => (
             <div key={a.file} className="space-y-2.5 px-3.5 py-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2.5">
@@ -1125,9 +1276,6 @@ export default function AccountsPage() {
               {isAdmin && renderActions(a)}
             </div>
           ))}
-          {!visible.length && (
-            <div className="px-4 py-12 text-center text-xs text-muted-foreground">{t('accounts.tableEmpty')}</div>
-          )}
         </div>
 
         {/* 桌面端：表格 */}
@@ -1144,7 +1292,7 @@ export default function AccountsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {visible.map((a) => (
+            {paged.rows.map((a) => (
               <TableRow key={a.file} className="border-b border-border/40">
                 <TableCell className="pl-4">
                   <div className="flex items-center gap-2.5">
@@ -1188,7 +1336,16 @@ export default function AccountsPage() {
         </Table>
         </div>
 
-        {!visible.length && (
+        {/*
+          「看不到账号」有三种原因，**必须分开说**——它们要用户做的事完全不同：
+            ① 一个账号都没有 → 去添加（原来只有这一种说法）
+            ② 有账号，但都不是当前版本的 → 去切版本。原来说的是「暂无账号」，
+               而这正是本次要修的谎话：切到国际版而池子里只有国内版账号时，
+               页面说「暂无账号」，读起来像号池是空的。
+            ③ 有账号，被搜索/状态筛选滤掉了 → 去清筛选。说「暂无账号」更糟：
+               账号明明在，只是被他自己刚才的筛选挡住了。
+        */}
+        {noAccountsAtAll ? (
           <EmptyState
             icon={Users}
             title={t('accounts.emptyTitle')}
@@ -1202,6 +1359,53 @@ export default function AccountsPage() {
               </Button>
             )}
           </EmptyState>
+        ) : noAccountsInRealm ? (
+          <EmptyState
+            icon={Users}
+            title={t('accounts.emptyRealmTitle', {realm: realmName})}
+            description={t('accounts.emptyRealmDesc')}
+            className="flex flex-col items-center justify-center py-16 text-center"
+          />
+        ) : noMatch ? (
+          <EmptyState
+            icon={Search}
+            title={t('accounts.noMatchTitle')}
+            description={t('accounts.noMatchDesc')}
+            className="flex flex-col items-center justify-center py-16 text-center"
+          >
+            <Button variant="outline" className="mt-4 rounded-full" onClick={clearListFilters}>
+              {t('accounts.clearFilters')}
+            </Button>
+          </EmptyState>
+        ) : null}
+
+        {/* 页码条只在不止一页时出现——小池子（绝大多数部署）看不到多余控件 */}
+        {paged.pages > 1 && (
+          <div className="flex items-center justify-between border-t border-border/40 px-4 py-3">
+            <div className="text-[11px] text-muted-foreground">
+              {t('accounts.pageInfo', {total: paged.total, page: paged.page, pages: paged.pages})}
+            </div>
+            <div className="flex gap-1">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7 rounded-md"
+                disabled={paged.page <= 1}
+                onClick={() => setPage(paged.page - 1)}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7 rounded-md"
+                disabled={paged.page >= paged.pages}
+                onClick={() => setPage(paged.page + 1)}
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
         )}
       </section>
       )}

@@ -81,8 +81,9 @@ _PAGES_WITH_LIES = {
         "t('settings.usersEmpty')",       # 「暂无管理用户」——等于说系统里一个账号都没有
     ],
     'accounts/page.tsx': [
-        "t('accounts.tableEmpty')",       # 窄屏列表的「暂无账号」
         "t('accounts.emptyTitle')",       # 「暂无账号」——等于说号池是空的
+        "t('accounts.emptyRealmTitle'",   # 「<版本> 没有账号」——同样是「没有」，只是限定到版本
+        "t('accounts.noMatchTitle')",     # 「没有匹配的账号」——筛选结果是空的，前提是清单已经取到
     ],
     'models/page.tsx': [
         "t('models.noModels')",           # 「暂无模型」——等于说腾讯那边没有可用模型
@@ -239,17 +240,39 @@ class AsyncStateInvariantTest(unittest.TestCase):
                          '变化，翻页 / 改时段不会重取（点了没反应）')
 
     def test_logs_keeps_rows_while_paging(self) -> None:
-        """日志页必须把「页码 / 天数」放进**第三**个参数（静默重取）。
+        """日志页必须把「页码 / 天数 / 各筛选项」放进**第三**个参数（静默重取）。
 
         第二组依赖（deps）的语义是「换了一个数据上下文」——变了就清空重取、显示骨架。
         页码若被放进去，**每翻一页都会闪一次骨架**；而翻页是高频操作，看起来像
-        页面在抽搐。所以 page / days 必须走第三组 refreshDeps，realm 走第二组。
+        页面在抽搐。所以 realm 走第二组，page / days / 各筛选项走第三组。
+
+        反过来，筛选项**漏**进第三组就是 P1-4 的原始形态：五个控件里只有「天数」在
+        依赖数组里，其余四个只在点「查询」时生效——同一排控件有两种脾气，能选、能改、
+        列表不动、也不报错。批次 3 把四个筛选项接进了依赖，这条断言同时钉住两个方向。
+
+        ⚠️ 局限：这里只检查**已知的六个**名字在不在第三组里。新加的第七个筛选控件不在
+        名单上，所以这条断言抓不到它（要抓「新增了控件却忘了进依赖」得解析 JSX 与依赖
+        数组的对应关系，不值当）。它抓的是**现有六个被摘掉**。
         """
         code = _code(_LOGS)
-        self.assertRegex(
-            code, r'\[realm\],\s*\n\s*\[page, days\],',
-            'logs 页的依赖分组不对：page/days 应作为第三个参数（变了只重取、不清空），'
-            'realm 作为第二个参数（变了清空重取）。放错会让每次翻页都闪一次骨架。',
+        args = _hook_args(code, 0)
+        self.assertGreaterEqual(len(args), 3, '找不到 logs 页 useAsyncAll 的三个参数')
+        context, query = args[1], args[2]
+        self.assertIn('realm', context,
+                      'logs 页没把 realm 放进第二组依赖（换了版本要清空重取）')
+        for dep in ('page', 'days'):
+            self.assertNotIn(
+                dep, context,
+                f'{dep} 被放进了第二组依赖：每次翻页 / 改时段都会清空重取、闪一次'
+                '骨架，看起来像页面在抽搐',
+            )
+        missing = [d for d in ('page', 'days', 'keyId', 'status', 'modelQ', 'ipQ')
+                   if d not in query]
+        self.assertEqual(
+            missing, [],
+            f'这些筛选 / 翻页条件不在第三组依赖里：{missing}。不在依赖里的筛选项'
+            '**改了不会重取**，控件成了装饰（P1-4 的原始形态）；文本类'
+            '（modelQ / ipQ）要用**防抖落定值**，不是输入框的即时值。',
         )
 
     def test_stats_keeps_upstream_out_of_the_main_group(self) -> None:

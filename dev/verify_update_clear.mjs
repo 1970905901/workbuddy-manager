@@ -63,17 +63,20 @@ const bodyText = () => page.locator('body').innerText();
 /** 面板正文 = 整页文本。注意「更新日志」同时是设置页另一个 Tab 的名字，
  *  判「日志区是否渲染」要用面板自己的占位文案（`暂无日志`），别用 Tab 名。 */
 const panelText = () => page.locator('body').innerText();
-/** 每次 goto/reload 之后 Tab 都会回到默认那个，必须重新点开 */
+/** 打开「系统更新」那一屏。
+ *
+ * #108 之后设置页是**子路由**（`/settings/system`），不再是同页的 Tab —— 直接按地址
+ * 进最稳，reload 也不会回到别的屏。 */
 async function openUpdateTab() {
-  await page.getByRole('tab', {name: /系统更新|System update/}).first().click().catch(() => {});
+  if (!/\/settings\/system\/?$/.test(page.url())) {
+    await page.goto(`${BASE}/settings/system`, {waitUntil: 'load'});
+  }
   await page.waitForTimeout(2500);
 }
 const statusFile = path.join(DATA, 'update-status.json');
 const logFile = path.join(DATA, 'update.log');
 
 // ── A 失败记录可见：日志与结果都在，且有清除入口 ──────────────────
-await page.goto(`${BASE}/settings`, {waitUntil: 'load'});
-await page.waitForTimeout(1500);
 await openUpdateTab();
 let text = await panelText();
 step(/更新未完成|Update incomplete|更新失败/.test(text), '失败结果卡片可见（造好的现场）',

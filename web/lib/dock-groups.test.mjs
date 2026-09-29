@@ -112,14 +112,15 @@ check('全都同组时只有一组，第一条之前不会有分隔线', splitBy
 
 /* ── 底栏真实分组（照着 ManagementBar 的口径） ─────────────────── */
 
+// 批次 4 ② 把**目的地**从 11 项收敛到 8 项：任务记录 / 红包 / 聊天测试台
+// 不再各占一个入口，改成在「账号」/「密钥」/「模型」页里用页内二级导航切换
+// （清单在 `web/lib/section-nav.ts`）。所以下面这三项**故意**不在这里了——
+// 它们不是「被漏掉」，而是「被吸收」。运营组因此从 6 项变成 3 项。
 const dock = [
   item('dashboard', 'overview', '总览'),
   item('accounts', 'ops', '运营'),
-  item('tasks', 'ops', '运营'),
   item('keys', 'ops', '运营'),
-  item('redPackets', 'ops', '运营'),
   item('models', 'ops', '运营'),
-  item('playground', 'ops', '运营'),
   item('stats', 'governance', '治理'),
   item('logs', 'governance', '治理'),
   item('security', 'governance', '治理'),
@@ -133,13 +134,24 @@ check(
   splitByGroup(dock).map((g) => [g.label, g.items.length]),
   [
     ['总览', 1],
-    ['运营', 6],
+    ['运营', 3],
     ['治理', 4],
     ['', 2],
   ],
 );
 
-check('真实底栏共 13 项，一项都不能丢', splitByGroup(dock).flatMap((g) => g.items).length, 13);
+check(
+  '真实底栏共 10 项（8 个目的地 + 2 个动作），一项都不能丢',
+  splitByGroup(dock).flatMap((g) => g.items).length,
+  10,
+);
+
+check(
+  '被吸收的三页不再出现在底栏',
+  splitByGroup(dock).flatMap((g) => g.items).map((i) => i.title)
+    .filter((t) => ['tasks', 'redPackets', 'playground'].includes(t)),
+  [],
+);
 
 if (failed > 0) {
   console.log(`\n${failed} 项失败`);

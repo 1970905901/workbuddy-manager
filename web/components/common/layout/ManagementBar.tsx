@@ -5,11 +5,8 @@ import {
   MessageCircleIcon,
   BarChart3,
   Users,
-  ClipboardList,
   KeyRound,
-  Gift,
   Boxes,
-  MessageSquare,
   ScrollText,
   TrendingUp,
   ShieldCheck,
@@ -508,6 +505,12 @@ export function ManagementBar() {
    * 它有两个问题：渲染层每个分支都得记得跳过它（移动端就是靠一句
    * `if (item.title === 'divider') return null` 硬跳过的），而且**手机端因此
    * 完全没有分组语义**。现在改成把分组键挂在条目上，由渲染层自己切。
+   *
+   * ⚠️ 批次 4 ② 把**目的地从 11 项收敛到 8 项**：`任务记录` / `红包` /
+   * `聊天测试台` 不再各占一个入口，改成在「账号」/「密钥」/「模型」页里用
+   * 页内二级导航切换（清单在 `@/lib/section-nav`，渲染在 `PageSectionTabs`）。
+   * 判据是「用户会不会在同一段时间里来回切」——会，那就不是两个一级入口。
+   * 三个被吸收的页面**路径没变**，所以既有的书签与深链仍然直接可用。
    */
   const dockItems = [
     {
@@ -525,35 +528,15 @@ export function ManagementBar() {
       groupLabel: t('nav.groupOps'),
     },
     {
-      title: t('nav.tasks'),
-      icon: <ClipboardList {...IconOptions} />,
-      href: '/tasks',
-      groupKey: 'ops',
-    },
-    {
       title: t('nav.keys'),
       icon: <KeyRound {...IconOptions} />,
       href: '/keys',
       groupKey: 'ops',
     },
     {
-      // 红包紧挨着密钥：它产出的是密钥（一份一个 key），只是多了「一次建一批、
-      // 额度随机分配」这层封装
-      title: t('nav.redPackets'),
-      icon: <Gift {...IconOptions} />,
-      href: '/red-packets',
-      groupKey: 'ops',
-    },
-    {
       title: t('nav.models'),
       icon: <Boxes {...IconOptions} />,
       href: '/models',
-      groupKey: 'ops',
-    },
-    {
-      title: t('nav.playground'),
-      icon: <MessageSquare {...IconOptions} />,
-      href: '/playground',
       groupKey: 'ops',
     },
     {

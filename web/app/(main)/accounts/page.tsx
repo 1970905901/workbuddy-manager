@@ -56,6 +56,7 @@ import {
   type SortKey,
 } from '@/lib/account-list';
 import {PageHeader} from '@/components/common/layout/PageHeader';
+import {PageSectionTabs} from '@/components/common/layout/PageSectionTabs';
 import {EmptyState} from '@/components/common/layout/EmptyState';
 import {ConfirmDialog} from '@/components/common/layout/ConfirmDialog';
 import {LoadError} from '@/components/common/states/LoadError';
@@ -1081,6 +1082,12 @@ export default function AccountsPage() {
           </>
         }
       />
+
+      {/* 二级导航（批次 4 ②：本页吸收了「任务记录」——账号是「主体」，
+          任务记录是「这个主体干了什么」，用户在两分钟内必然要一起看）。
+          本页没有早返回的整页守卫（取不到账号时只在下面给错误态），
+          所以放在这里一处即可。 */}
+      <PageSectionTabs />
 
       {/* 账号分组（多账号池）：默认分组 = 升级前那套（环境变量 / 上游
           config.json）；「添加分组」只填名称即可（地址默认沿用默认分组的、

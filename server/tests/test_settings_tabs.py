@@ -164,6 +164,28 @@ class SettingsTabsInvariantTest(unittest.TestCase):
             '或者少了一条（导航上点了 404）。',
         )
 
+    def test_upstream_route_is_not_gitignored(self) -> None:
+        """设置页的路由目录不能被 `.gitignore` 吞掉。
+
+        `.gitignore` 里那条 `upstream/` 原本是用来挡**仓库根目录**那份上游源码的
+        （里面有 auths/ 与 config.json，绝不能提交）。但它没锚定，于是连带忽略了
+        `web/app/(main)/settings/upstream/` —— 那个 Tab 的 page.tsx **提交不进去**，
+        而本地测试照样绿（文件在磁盘上，只是没进 git）。#108 就是这么漏的：PR 自带
+        的这条测试在分支上红了三条，`/settings/upstream` 在部署里是 404。
+        """
+        gi = (_ROOT / '.gitignore').read_text(encoding='utf-8').splitlines()
+        loose = [line for line in gi if line.strip() == 'upstream/']
+        self.assertEqual(
+            loose, [],
+            '未锚定的 `upstream/` 会吞掉任何同名子目录（web/app/(main)/settings/upstream/ '
+            '就被吞过）。请写成 `/upstream/`，只挡仓库根目录那一份。',
+        )
+        # 根目录那份仍要被挡住（这是这条规则存在的理由，别在修的时候顺手删掉）
+        self.assertTrue(
+            any(line.strip() in ('/upstream/', 'upstream/') for line in gi),
+            '.gitignore 里没有挡上游源码的规则了 —— auths/ 与 config.json 会被误提交',
+        )
+
     def test_route_pages_render_nothing(self) -> None:
         """7 个子路由的 page **不渲染内容**，内容由外壳渲染。
 

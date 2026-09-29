@@ -1045,7 +1045,11 @@
     "unpin": "取消固定",
     "logTitle": "更新日誌",
     "logLines": "{n} 行",
-    "logEmpty": "暫無日誌。執行更新後這裡會即時顯示進度。"
+    "logEmpty": "暫無日誌。執行更新後這裡會即時顯示進度。",
+    "clearResult": "清除記錄",
+    "clearResultTitle": "清除上次更新的結果與日誌？",
+    "clearResultDesc": "只會刪掉上次更新的結果與日誌（update.log）。已安裝版本、帳號與設定不受影響；更新進行中無法清除。",
+    "cleared": "已清除上次更新的記錄"
   },
   "settings": {
     "title": "設定",

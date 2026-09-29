@@ -553,6 +553,15 @@ export const systemApi = {
   /** 固定上游版本（空串 = 取消固定，恢复跟随分支） */
   setUpstreamRef: (ref: string) =>
     post<{ok: boolean; upstream_ref: string}>('/api/system/upstream-ref', {ref}),
+  /**
+   * 清除上次更新的结果与日志（issue #105）。
+   *
+   * 此前失败记录只能靠「下次发起更新」覆盖：状态文件与 update.log 都留着，
+   * 界面上那条「更新未完成」与日志永远擦不掉，用户得进容器手删文件。
+   * 更新进行中后端会拒绝（409）——那会把「正在更新」看丢。
+   */
+  clearUpdateStatus: () =>
+    del<{ok: boolean; message: string}>('/api/system/update-status'),
   /** 更新日志（解析仓库根目录 CHANGELOG.md，离线可用） */
   changelog: () => get<Changelog>('/api/system/changelog'),
 };

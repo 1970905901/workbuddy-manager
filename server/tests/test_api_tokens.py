@@ -268,6 +268,7 @@ class WriteEndpointScopeMatrixTest(unittest.TestCase):
     # 服务级 / 不可逆 / 能提权或抹痕迹的动作，只对**会话**开放。
     SESSION_ONLY = {
         'DELETE /api/accounts/{filename}',
+        'DELETE /api/system/update-status',   # 清除更新结果与日志：属于「抹掉痕迹」类
         'DELETE /api/security/rules/{rule_id}',
         'DELETE /api/tokens/{token_id}',
         'DELETE /api/users/{username}',

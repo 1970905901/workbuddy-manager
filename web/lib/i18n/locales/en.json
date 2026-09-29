@@ -1069,7 +1069,11 @@
     "unpin": "Remove pin",
     "logTitle": "Update log",
     "logLines": "{n} lines",
-    "logEmpty": "No log yet. Progress appears here in real time once an update starts."
+    "logEmpty": "No log yet. Progress appears here in real time once an update starts.",
+    "clearResult": "Clear",
+    "clearResultTitle": "Clear the previous update result and log?",
+    "clearResultDesc": "This only removes the last update result and its log (update.log). Installed version, accounts and settings are untouched. Not available while an update is running.",
+    "cleared": "Previous update record cleared"
   },
   "settings": {
     "title": "Settings",

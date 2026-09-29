@@ -259,7 +259,6 @@
     "upstreamUnavailable": "取不到上游统计",
     "upstreamSuccess": "成功",
     "cacheHitRate": "缓存命中",
-    "dailyAggToday": "当日汇总",
     "dailyAgg": "按天聚合",
     "noUsageData": "暂无用量数据",
     "byModel": "按模型",
@@ -269,7 +268,8 @@
     "tokenHint": "{v} Token",
     "usageHealthTitle": "用量统计可能没有正常累计",
     "usageHealthDetail": "今天已有 {n} 次调用记录，但用量统计为 0——统计可能没有正常写入。可尝试「修复统计」；若仍为 0，请查看服务端日志。",
-    "failedHint": "今日失败 {n} 次（不计入上方请求数）"
+    "failedHint": "今日失败 {n} 次（不计入上方请求数）",
+    "hourlyAgg": "按小时（当日汇总）"
   },
   "accounts": {
     "title": "账号管理",

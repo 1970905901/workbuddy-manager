@@ -283,7 +283,6 @@
     "upstreamUnavailable": "Upstream stats unavailable",
     "upstreamSuccess": "Succeeded",
     "cacheHitRate": "Cache hit",
-    "dailyAggToday": "Today only",
     "dailyAgg": "Aggregated daily",
     "noUsageData": "No usage data yet",
     "byModel": "By model",
@@ -293,7 +292,8 @@
     "tokenHint": "{v} tokens",
     "usageHealthTitle": "Usage statistics may not be accumulating",
     "usageHealthDetail": "There are {n} requests logged today but usage statistics show 0 — the stats may not be written correctly. Try Repair stats; if it stays at 0, check the server logs.",
-    "failedHint": "{n} failed today (not counted in the requests above)"
+    "failedHint": "{n} failed today (not counted in the requests above)",
+    "hourlyAgg": "Hourly (today)"
   },
   "accounts": {
     "title": "Accounts",

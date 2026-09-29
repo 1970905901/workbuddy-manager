@@ -259,7 +259,6 @@
     "upstreamUnavailable": "업스트림 통계를 가져올 수 없습니다",
     "upstreamSuccess": "성공",
     "cacheHitRate": "캐시 적중",
-    "dailyAggToday": "오늘 집계",
     "dailyAgg": "일별 집계",
     "noUsageData": "사용량 데이터가 없습니다",
     "byModel": "모델별",
@@ -269,7 +268,8 @@
     "tokenHint": "{v} Token",
     "usageHealthTitle": "사용량 통계가 정상적으로 누적되지 않았을 수 있습니다",
     "usageHealthDetail": "오늘 이미 {n}건의 호출 기록이 있지만 사용량 통계는 0입니다. 통계가 정상적으로 기록되지 않았을 수 있습니다. '통계 복구'를 시도하고, 계속 0이면 서버 로그를 확인하세요.",
-    "failedHint": "오늘 {n}건 실패 (위 요청 수에 포함되지 않음)"
+    "failedHint": "오늘 {n}건 실패 (위 요청 수에 포함되지 않음)",
+    "hourlyAgg": "시간별(오늘)"
   },
   "accounts": {
     "title": "계정 관리",

@@ -259,7 +259,6 @@
     "upstreamUnavailable": "取不到上游統計",
     "upstreamSuccess": "成功",
     "cacheHitRate": "快取命中",
-    "dailyAggToday": "當日彙總",
     "dailyAgg": "依天彙總",
     "noUsageData": "暫無用量資料",
     "byModel": "依模型",
@@ -269,7 +268,8 @@
     "tokenHint": "{v} Token",
     "usageHealthTitle": "用量統計可能沒有正常累計",
     "usageHealthDetail": "今天已有 {n} 次呼叫記錄，但用量統計為 0——統計可能沒有正常寫入。可嘗試「修復統計」；若仍為 0，請查看伺服器日誌。",
-    "failedHint": "今日失敗 {n} 次（不計入上方請求數）"
+    "failedHint": "今日失敗 {n} 次（不計入上方請求數）",
+    "hourlyAgg": "按小時（當日彙總）"
   },
   "accounts": {
     "title": "帳號管理",

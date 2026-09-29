@@ -556,6 +556,26 @@ export interface UsagePoint {
   failed?: number;
 }
 
+/**
+ * 某一天**按小时**的用量（`/api/stats/hourly`）。
+ *
+ * 「今日」趋势图用：范围只有一天时按天聚合只会得到一根柱子（那正是用户反馈的
+ * 「今日还是柱状图，不太对劲」）。与 `UsagePoint` **同源同口径** —— 小时表与
+ * 按天表由同一处写入累计，所以图与页头卡片永远一致，清日志也不会打架。
+ */
+export interface UsageHourPoint {
+  /** `YYYY-MM-DD` */
+  day: string;
+  /** 0-23（本地时区） */
+  hour: number;
+  requests: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  credit: number;
+  /** 该小时的失败请求数（来自请求日志，与 `UsagePoint.failed` 同一口径） */
+  failed: number;
+}
+
 export interface UsageBreakdown {
   name: string;
   requests: number;

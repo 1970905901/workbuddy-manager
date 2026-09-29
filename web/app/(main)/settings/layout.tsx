@@ -33,6 +33,7 @@ import {BASE_PATH} from '@/lib/base-path';
 import {
   DEFAULT_SETTINGS_TAB,
   SETTINGS_TABS,
+  SETTINGS_TAB_LABEL_KEYS,
   settingsTabFromPath,
   settingsTabHref,
   type SettingsTab,
@@ -49,6 +50,7 @@ import {useAuth} from '@/lib/auth-context';
 import {UpdatePanel} from '@/components/common/settings/UpdatePanel';
 import {TokensPanel} from '@/components/common/settings/TokensPanel';
 import {ChangelogPanel} from '@/components/common/settings/ChangelogPanel';
+import {UpstreamReloadNotice} from '@/components/common/settings/UpstreamReloadNotice';
 import {CopyButton} from '@/components/ui/copy-button';
 import {Button} from '@/components/ui/button';
 import {Badge} from '@/components/ui/badge';
@@ -846,18 +848,20 @@ export default function SettingsLayout({children}: {children: React.ReactNode}) 
    * 清单本身在 `@/lib/settings-tabs`：那边的 `SETTINGS_TABS` 同时被
    * `server/tests/test_settings_tabs.py` 用来断言「每一项都有真实存在的路由目录」。
    */
-  const TAB_META: Record<SettingsTab, {label: string; icon: React.ReactNode}> = {
-    upstream: {label: t('settings.tabUpstream'), icon: <Server className="h-3.5 w-3.5" />},
-    models: {label: t('settings.tabModels'), icon: <Shuffle className="h-3.5 w-3.5" />},
-    users: {label: t('settings.tabUsers'), icon: <Users className="h-3.5 w-3.5" />},
-    tokens: {label: t('settings.tabTokens'), icon: <KeyRound className="h-3.5 w-3.5" />},
-    system: {label: t('settings.tabSystem'), icon: <DownloadCloud className="h-3.5 w-3.5" />},
-    changelog: {label: t('settings.tabChangelog'), icon: <FileText className="h-3.5 w-3.5" />},
-    about: {label: t('settings.tabAbout'), icon: <Info className="h-3.5 w-3.5" />},
+  // 只留图标：标签键搬到了 `@/lib/settings-tabs`（命令面板也要用同一份，
+  // 留在外壳里就得在面板那边再抄一遍，漏抄一处不报错）。
+  const TAB_META: Record<SettingsTab, {icon: React.ReactNode}> = {
+    upstream: {icon: <Server className="h-3.5 w-3.5" />},
+    models: {icon: <Shuffle className="h-3.5 w-3.5" />},
+    users: {icon: <Users className="h-3.5 w-3.5" />},
+    tokens: {icon: <KeyRound className="h-3.5 w-3.5" />},
+    system: {icon: <DownloadCloud className="h-3.5 w-3.5" />},
+    changelog: {icon: <FileText className="h-3.5 w-3.5" />},
+    about: {icon: <Info className="h-3.5 w-3.5" />},
   };
   const tabItems: SectionTabItem[] = SETTINGS_TABS.map((name) => ({
     href: settingsTabHref(name),
-    label: TAB_META[name].label,
+    label: t(SETTINGS_TAB_LABEL_KEYS[name]),
     icon: TAB_META[name].icon,
   }));
 
@@ -1167,25 +1171,32 @@ export default function SettingsLayout({children}: {children: React.ReactNode}) 
   }
 
   const header = (
-    <PageHeader
-      title={t('settings.title')}
-      description={t('settings.description')}
-      actions={
-        <Button
-          variant="outline"
-          size="sm"
-          className="rounded-full"
-          title={t('settings.reloadTitle')}
-          onClick={() => {
-            reload();
-            loadModels(false);
-          }}
-        >
-          <RefreshCw />
-          {t('settings.reload')}
-        </Button>
-      }
-    />
+    <>
+      <PageHeader
+        title={t('settings.title')}
+        description={t('settings.description')}
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full"
+            title={t('settings.reloadTitle')}
+            onClick={() => {
+              reload();
+              loadModels(false);
+            }}
+          >
+            <RefreshCw />
+            {t('settings.reload')}
+          </Button>
+        }
+      />
+      {/* 上游重载状态（批次 5）。放进 `header` 而不是两个 return 分支里各写一遍：
+          下面「取不到配置」那条分支是**早返回**，漏一处就会出现「配置读不到时
+          看不到重载失败」——而配置读不到往往正是重载失败的原因，那才是最需要
+          看到它的时刻。导航/状态的有无应当取决于**路由**，不是**数据**。 */}
+      <UpstreamReloadNotice />
+    </>
   );
 
   /**

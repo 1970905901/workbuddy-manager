@@ -115,6 +115,19 @@
     "mobile3": "Once expanded, the second-to-last button quickly adds a Tencent account.",
     "mobile4": "Once expanded, the last button opens personal settings and account info."
   },
+  "palette": {
+    "title": "Command palette",
+    "desc": "Type a keyword to jump to any page",
+    "placeholder": "Search pages…",
+    "empty": "No matching pages",
+    "emptyHint": "Try “Accounts”, “Red packets”, or type a path",
+    "trigger": "Search",
+    "triggerHint": "Open command palette",
+    "hintMove": "select",
+    "hintOpen": "open",
+    "hintClose": "close",
+    "results": "{n} results"
+  },
   "update": {
     "newVersion": "A new version is available",
     "notice": "{targets} — upgrade in Settings → System update",
@@ -1168,6 +1181,12 @@
     "savedManualStep": "Settings saved, but one manual step is required",
     "saved": "Settings saved",
     "applying": "Applying to upstream…",
+    "applyRunning": "Applying configuration…",
+    "applyRunningHint": "The upstream container is restarting; account data may be temporarily unavailable.",
+    "applyOk": "Configuration is in effect",
+    "applyFailed": "Upstream reload failed",
+    "applyFailedHint": "The configuration was written, but the upstream container could not be restarted. Run docker compose restart wb2api on the host to apply it.",
+    "applyDismiss": "Dismiss",
     "jsonInvalid": "Invalid JSON — check the braces and commas",
     "jsonNotObject": "It must be a JSON object, for example { \"checkin_hours\": [9, 21] }",
     "modelMapSaved": "Model mapping saved",

@@ -115,6 +115,19 @@
     "mobile3": "展開後、最後から2番目のボタンで Tencent アカウントをすばやく追加できます。",
     "mobile4": "展開後、一番最後のボタンで個人設定とアカウント情報を開けます。"
   },
+  "palette": {
+    "title": "コマンドパレット",
+    "desc": "キーワードを入力して任意のページへ移動",
+    "placeholder": "ページを検索…",
+    "empty": "一致するページがありません",
+    "emptyHint": "「アカウント」「紅包」を試すか、パスを直接入力してください",
+    "trigger": "検索",
+    "triggerHint": "コマンドパレットを開く",
+    "hintMove": "選択",
+    "hintOpen": "開く",
+    "hintClose": "閉じる",
+    "results": "全 {n} 件"
+  },
   "update": {
     "newVersion": "新しいバージョンがあります",
     "notice": "{targets} — 「設定 → システム更新」からワンクリックで更新できます",
@@ -1144,6 +1157,12 @@
     "savedManualStep": "設定を保存しましたが、手動での 1 ステップが必要です",
     "saved": "設定を保存しました",
     "applying": "上流へ自動適用しています…",
+    "applyRunning": "設定を適用しています…",
+    "applyRunningHint": "上流コンテナを再起動しています。その間、アカウント関連のデータが一時的に取得できない場合があります。",
+    "applyOk": "設定が反映されました",
+    "applyFailed": "上流の再読み込みに失敗しました",
+    "applyFailedHint": "設定は書き込まれましたが、上流コンテナを再起動できませんでした。ホスト側で docker compose restart wb2api を実行して反映してください。",
+    "applyDismiss": "閉じる",
     "jsonInvalid": "JSON の形式が正しくありません。括弧とカンマを確認してください",
     "jsonNotObject": "JSON オブジェクトである必要があります（例: { \"checkin_hours\": [9, 21] }）",
     "modelMapSaved": "モデルマッピングを保存しました",

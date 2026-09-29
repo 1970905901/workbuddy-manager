@@ -36,6 +36,9 @@
     "forbidden": "權限不足：目前帳號無法執行這個操作"
   },
   "nav": {
+    "groupOverview": "總覽",
+    "groupOps": "營運",
+    "groupGovernance": "治理",
     "dashboard": "儀表板",
     "accounts": "帳號",
     "tasks": "任務",
@@ -73,6 +76,9 @@
     "poolOverview": "帳號池概覽",
     "managedAccounts": "受管帳號",
     "systemSettings": "系統設定",
+    "dockLabel": "底欄位置",
+    "dockFloating": "懸浮（可拖動）",
+    "dockPinned": "固定底部",
     "quickLinks": "快速連結",
     "uiReference": "UI 參考",
     "community": "LINUX DO 社群",
@@ -98,6 +104,8 @@
   },
   "dock": {
     "tipTitle": "選單列引導",
+    "tipDismiss": "知道了",
+    "tipNext": "下一步",
     "desktop1": "選單列已調整至此處，長按空白區域可自訂拖曳位置。",
     "desktop2": "右側第二個按鈕用於快速掃碼新增騰訊帳號。",
     "desktop3": "右側第一個按鈕用於存取個人設定與帳戶資訊。",

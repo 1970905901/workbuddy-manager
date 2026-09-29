@@ -49,6 +49,18 @@
  *                  「暂无账号」（账号在池子里，只是版本不对）
  *
  * P 的判据是**请求次数**（见下面 `hits`），因为「筛选生效了吗」在界面上看不出来。
+ *
+ * 批次 4（P1-1：底栏 11 项平铺、分隔线无标签、引导气泡压住正文）：
+ *   ① 分组  → 桌面 3 条组间分隔线（4 组），靠近时出组名「运营 / 治理」**且稳定不闪**；
+ *              动作组那条**不带**组名（快速添加/个人信息是动作，不是一类页面）
+ *   ② 手机  → 原来分组语义完全消失（11 项平铺）：抽屉里要有 3 条**带组名**的横线
+ *   ③ 气泡  → 有明确关闭按钮；点页面别处也能关；关过之后刷新不再出现
+ *   ④ 停靠  → 悬浮时长按拖动**能**移动（正对照），固定底部时**完全**不动，
+ *              并回到默认位（水平居中 + 贴底）；刷新后仍是固定
+ *
+ * ④ 的「能移动」是**正对照**，不能省：只断言「固定时拖不动」的话，一个从来就
+ * 拖不动的底栏同样会通过——断言恒真。③ 的「关过之后不再出现」也必须先证明
+ * 「重置之后真的又出现了」，否则「不出现」可能只是因为压根没显示过。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -574,6 +586,200 @@ await page.screenshot({path: `${OUT}/15-accounts-realm-empty.png`, fullPage: tru
 // 切回国内版：后面的断言与人工复看都默认是国内版
 await page.getByRole('tab', {name: '国内版'}).first().click();
 await page.waitForTimeout(800);
+
+// ══ 底栏分组语义（批次 4 修 P1-1）══════════════════════════════════
+//
+// 底栏原来靠一个**哨兵条目**表达分组（`{title: 'divider', icon: <div />}` 混在
+// items 里），后果有两个：分隔线不带任何说明（用户只能猜那条竖线分开的是什么），
+// 以及**手机端完全没有分组语义**——移动端分支直接 `return null` 跳过了它，
+// 于是手机上 11 项平铺。
+//
+// 这一段的判据是「分隔线在不在、组名显不显示」，界面不报错就看不出来。
+console.log('\n底栏分组语义（批次 4）');
+MODE.value = 0;
+// 清掉上次跑留下的底栏坐标与已读标记，让这一次从默认态开始（否则脚本不可重复跑）
+await page.goto(`${BASE}/dashboard`, {waitUntil: 'load'});
+await page.evaluate(() => {
+  localStorage.removeItem('workbuddy-manager:dock-position-v2');
+  localStorage.removeItem('workbuddy-manager:dock-mode');
+});
+await page.reload({waitUntil: 'load'});
+await page.waitForTimeout(2500);
+
+/** 只数**可见**的：桌面底栏在窄屏下仍在 DOM 里（`hidden md:flex`），数 DOM 会数错 */
+const visibleCount = (sel) => page.locator(`${sel}:visible`).count();
+
+const dividers = page.locator('[data-slot=dock-group-divider]');
+const separators = page.locator('[data-slot=dock-group-separator]');
+
+step((await page.locator('[data-slot=dock-root]').count()) === 1, '底栏在页面上（定位得到）');
+// 4 组 → 3 条分隔线，且第一组之前不画。少一条说明组没切开；多一条说明最左边多画了，
+// 看起来像「前面还有一组」。
+step((await visibleCount('[data-slot=dock-group-divider]')) === 3,
+     '桌面端画了 3 条组间分隔线（总览/运营/治理 + 动作组 = 4 组）',
+     `可见分隔线数：${await visibleCount('[data-slot=dock-group-divider]')}`);
+
+// 组名默认不显示：底栏高度写死 `h-16`，图标靠近时会从 40px 放大到 70px（本就溢出），
+// 再加一行常显的组名会把它顶高、并与放大后的图标打架。所以靠近才显示。
+step((await dividers.nth(0).locator('text=运营').count()) === 0,
+     '组名默认不显示（靠近才出现）');
+// ⚠️ 这里必须等**超过图标放大的时间**再断言，而且这不是为了「等渲染」：
+// 图标放大会让整个底栏变宽（实测 725 → 787px），而底栏是居中摆放的，于是分隔线会
+// 被从光标底下推开 8~30px —— 靠分隔线自己的 hover 事件时，组名会在 ~700ms 时灭掉。
+// hover 完立刻断言会**看不到**这个闪烁，也就盖不住「组名亮一下就没了」这个缺陷。
+await dividers.nth(0).hover();
+await page.waitForTimeout(1500);
+step((await dividers.nth(0).locator('text=运营').count()) === 1,
+     '靠近第一条分隔线显示组名「运营」，而且**稳定不闪**（原来那条竖线不带任何说明）');
+// 截在**组名可见**的这一刻：只在动作组那条（不带组名）后面截，证据里就没有组名
+await page.screenshot({path: `${OUT}/18-dock-groups-desktop.png`, fullPage: false});
+await dividers.nth(1).hover();
+await page.waitForTimeout(1500);
+step((await dividers.nth(1).locator('text=治理').count()) === 1,
+     '靠近第二条分隔线显示组名「治理」，同样稳定不闪');
+// 动作组（快速添加 / 个人信息）不是「目的地」而是动作，刻意不给组名——只与前面的
+// 页面分开。给它编一个组名反而让人以为那是一类页面。
+await dividers.nth(2).hover();
+await page.waitForTimeout(1000);
+step((await dividers.nth(2).innerText()).trim() === '',
+     '动作组那条分隔线不带组名（快速添加/个人信息是动作，不是一类页面）');
+
+// ── 手机端：分组语义原来完全消失（11 项平铺）────────────────────────
+await page.setViewportSize({width: 390, height: 844});
+await page.waitForTimeout(800);
+step((await visibleCount('[data-slot=dock-group-divider]')) === 0,
+     '手机端不画桌面那条竖线（换成带组名的横线）');
+step((await visibleCount('[data-slot=dock-group-separator]')) === 0,
+     '手机端抽屉没展开时当然没有分隔线');
+await page.locator('[data-slot=dock-mobile-toggle]').click();
+await page.waitForTimeout(900);
+step((await visibleCount('[data-slot=dock-group-separator]')) === 3,
+     '手机端抽屉里有 3 条分组分隔线（原来手机上是 11 项平铺，看不出哪几项是一类）',
+     `可见分隔线数：${await visibleCount('[data-slot=dock-group-separator]')}`);
+step(/运营/.test(await page.locator('[data-slot=dock-root]').innerText()),
+     '手机端的分隔线上**直接写着组名**（手机没有 hover，藏起来就等于没有）');
+await page.screenshot({path: `${OUT}/19-dock-groups-mobile.png`, fullPage: false});
+await page.setViewportSize({width: 1400, height: 1000});
+await page.waitForTimeout(800);
+
+// ── 引导气泡：随时关得掉，且关过就不再打扰 ─────────────────────────
+//
+// 原实现只能靠「把几条都点完」才关得掉，于是它一直挂在底栏正上方 —— 而底栏可以被
+// 拖到页面中部，于是它正好压住正文（用户反馈「反复出现在页面中部」）。
+console.log('\n底栏引导气泡（批次 4）');
+const tip = page.locator('[data-slot=dock-tip]');
+const showTipAgain = async () => {
+  await page.evaluate(() => localStorage.removeItem('workbuddy-manager:dock-tip-dismissed'));
+  await page.reload({waitUntil: 'load'});
+  await page.waitForTimeout(2500);
+};
+/**
+ * 在页面别处点一下。用「派发真实 PointerEvent」而不是 `page.mouse.click(x, y)`：
+ * 后者先做命中测试，坐标上正好是链接时会一路重试到超时（报「元素拦截了点击」），
+ * 而真点中链接还会导航走，后面每条断言都跟着错。这里要验的是**捕获阶段的
+ * document 监听**，派发一个真实 PointerEvent 走的完全是同一条路径。
+ */
+const clickSomewhereElse = () => page.evaluate(() => {
+  document.body.dispatchEvent(
+      new PointerEvent('pointerdown', {bubbles: true, cancelable: true}));
+});
+
+await showTipAgain();
+step((await tip.count()) === 1, '首次进入时引导气泡出现（前提：这一步真的把它弄出来了）');
+step(/知道了/.test(await tip.innerText()), '气泡上有明确的关闭按钮（不必把几条都点完）');
+await clickSomewhereElse();
+await page.waitForTimeout(900);
+step((await tip.count()) === 0, '点页面别处就把气泡收起来（原来只能一条条点完）');
+
+await showTipAgain();
+step((await tip.count()) === 1, '重置后气泡又出现（证明上一步是真的关掉了，不是本来就没有）');
+await tip.getByRole('button', {name: '知道了'}).click();
+await page.waitForTimeout(900);
+step((await tip.count()) === 0, '点「知道了」也关得掉');
+await page.reload({waitUntil: 'load'});
+await page.waitForTimeout(2500);
+step((await tip.count()) === 0, '关掉后刷新不再出现（记住了，不再反复打扰）');
+
+// ── 底栏「固定底部 / 悬浮」：固定时拖动要真的关掉 ───────────────────
+//
+// 底栏是浮动的，拖到页面中部就会压住正文。形态按既定决策保留（用户已决定不改），
+// 但给一个「别再挡我」的确定性选项。判据分两半，缺一不可：
+//   ① 悬浮模式下长按拖动**能**移动 —— 正对照。少了它，「固定模式下拖不动」在一个
+//      从来就拖不动的底栏上也是绿的（断言恒真）；
+//   ② 固定模式下拖动**完全**不动 —— 不是「先跟手走一段、松手才归位」，后者看起来
+//      像拖动坏了。
+console.log('\n底栏停靠模式（批次 4：解决底栏遮挡正文）');
+const dockRoot = page.locator('[data-slot=dock-root]');
+const dockBox = () => dockRoot.boundingBox();
+/** 长按底栏的**左上角**再拖。左上是内边距，不是图标；而且图标 hover 时会从 40px
+ *  放大到 70px，只有「按下」发生在这个瞬间之前，命中的才一定是空白处
+ *  （`event.target` 在 pointerdown 那一刻就定了，之后图标怎么长都不影响）。 */
+const dragDock = async () => {
+  const box = await dockBox();
+  const x = box.x + 3;
+  const y = box.y + 3;
+  await page.mouse.move(x, y);
+  await page.mouse.down();                       // 紧接着按下，不给图标放大的时间
+  await page.waitForTimeout(400);                // DOCK_LONG_PRESS_MS = 180
+  await page.mouse.move(x - 150, y - 170, {steps: 12});
+  await page.waitForTimeout(200);
+  await page.mouse.up();
+  await page.waitForTimeout(700);
+  return {before: box, after: await dockBox()};
+};
+const shift = (r) => Math.hypot(r.after.x - r.before.x, r.after.y - r.before.y);
+
+const floated = await dragDock();
+step(shift(floated) > 40, '悬浮模式：长按拖动**能**移动底栏（正对照）',
+     `位移 ${shift(floated).toFixed(0)}px`);
+await page.screenshot({path: `${OUT}/20-dock-dragged.png`, fullPage: false});
+
+// 打开个人信息 → 切到「固定底部」
+await page.locator('[data-slot=dock-profile-trigger]').click();
+await page.waitForTimeout(900);
+const modeToggle = page.locator('[data-slot=dock-mode-toggle]');
+step((await modeToggle.count()) === 1, '个人信息里有「底栏位置」开关');
+step(/悬浮/.test(await modeToggle.innerText()), '默认是「悬浮（可拖动）」',
+     (await modeToggle.innerText()).trim());
+await modeToggle.click();
+await page.waitForTimeout(900);
+step(/固定底部/.test(await modeToggle.innerText()), '点一下切到「固定底部」',
+     (await modeToggle.innerText()).trim());
+await page.keyboard.press('Escape');
+await page.waitForTimeout(700);
+
+// 固定后应当**回到默认位置**（桌面：底部居中）——这正是「别再挡我」的含义：
+// 不只是拖不动，还要把它从用户上次拖到的地方请回原位。
+{
+  const box = await dockBox();
+  const centerX = box.x + box.width / 2;
+  const bottom = box.y + box.height;
+  step(Math.abs(centerX - 700) < 6,
+       '固定底部后回到水平居中（桌面默认位），而不是停在刚才被拖到的位置',
+       `中心 x = ${centerX.toFixed(0)}（期望 700）`);
+  step(Math.abs(bottom - 984) < 8,
+       '固定底部后贴住底部（视口高 1000 − 16 边距）',
+       `下沿 y = ${bottom.toFixed(0)}（期望 984）`);
+}
+const pinned = await dragDock();
+step(shift(pinned) < 10, '固定底部：长按拖动**完全**不动（不是先跟手走一段再弹回）',
+     `位移 ${shift(pinned).toFixed(0)}px`);
+await page.screenshot({path: `${OUT}/21-dock-pinned.png`, fullPage: false});
+
+// 记住了吗：刷新一次还应该是「固定底部」
+await page.reload({waitUntil: 'load'});
+await page.waitForTimeout(2500);
+await page.locator('[data-slot=dock-profile-trigger]').click();
+await page.waitForTimeout(900);
+step(/固定底部/.test(await page.locator('[data-slot=dock-mode-toggle]').innerText()),
+     '刷新后仍是「固定底部」（记住了，不必每次重设）');
+// 还原成悬浮并清掉底栏坐标，让脚本可以重复跑
+await page.locator('[data-slot=dock-mode-toggle]').click();
+await page.waitForTimeout(700);
+await page.keyboard.press('Escape');
+await page.waitForTimeout(500);
+await page.evaluate(() => localStorage.removeItem('workbuddy-manager:dock-position-v2'));
+step(true, '（收尾）已还原成悬浮并清掉底栏坐标，脚本可重复跑');
 
 step(errors.length === 0, '全程没有未捕获的前端异常', errors.slice(0, 2).join(' | '));
 

@@ -36,6 +36,9 @@
     "forbidden": "권한이 없습니다: 현재 계정으로는 이 작업을 수행할 수 없습니다"
   },
   "nav": {
+    "groupOverview": "개요",
+    "groupOps": "운영",
+    "groupGovernance": "거버넌스",
     "dashboard": "대시보드",
     "accounts": "계정",
     "tasks": "작업",
@@ -73,6 +76,9 @@
     "poolOverview": "계정 풀 개요",
     "managedAccounts": "관리 중인 계정",
     "systemSettings": "시스템 설정",
+    "dockLabel": "독 위치",
+    "dockFloating": "플로팅(드래그 가능)",
+    "dockPinned": "하단 고정",
     "quickLinks": "빠른 링크",
     "uiReference": "UI 참고",
     "community": "LINUX DO 커뮤니티",
@@ -98,6 +104,8 @@
   },
   "dock": {
     "tipTitle": "메뉴 바 안내",
+    "tipDismiss": "확인",
+    "tipNext": "다음",
     "desktop1": "메뉴 바가 이 위치로 이동했습니다. 빈 영역을 길게 눌러 드래그하면 위치를 바꿀 수 있습니다.",
     "desktop2": "오른쪽에서 두 번째 버튼으로 Tencent 계정을 QR 코드로 빠르게 추가할 수 있습니다.",
     "desktop3": "가장 오른쪽 버튼으로 개인 설정과 계정 정보를 열 수 있습니다.",

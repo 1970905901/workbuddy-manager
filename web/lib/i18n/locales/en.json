@@ -36,6 +36,9 @@
     "forbidden": "Permission denied — your account is not allowed to do this"
   },
   "nav": {
+    "groupOverview": "Overview",
+    "groupOps": "Operations",
+    "groupGovernance": "Governance",
     "dashboard": "Dashboard",
     "accounts": "Accounts",
     "tasks": "Tasks",
@@ -73,6 +76,9 @@
     "poolOverview": "Account pool",
     "managedAccounts": "Managed accounts",
     "systemSettings": "System settings",
+    "dockLabel": "Dock position",
+    "dockFloating": "Floating (draggable)",
+    "dockPinned": "Pinned to bottom",
     "quickLinks": "Quick links",
     "uiReference": "UI reference",
     "community": "LINUX DO community",
@@ -98,6 +104,8 @@
   },
   "dock": {
     "tipTitle": "Menu bar guide",
+    "tipDismiss": "Got it",
+    "tipNext": "Next",
     "desktop1": "The menu bar has moved here. Long-press an empty area to drag it anywhere.",
     "desktop2": "The second button from the right opens QR onboarding for Tencent accounts.",
     "desktop3": "The rightmost button opens your profile and account info.",

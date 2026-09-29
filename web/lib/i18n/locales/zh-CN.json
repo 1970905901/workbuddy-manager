@@ -36,6 +36,9 @@
     "forbidden": "权限不足：当前账号不能执行这个操作"
   },
   "nav": {
+    "groupOverview": "总览",
+    "groupOps": "运营",
+    "groupGovernance": "治理",
     "dashboard": "仪表盘",
     "accounts": "账号",
     "tasks": "任务",
@@ -73,6 +76,9 @@
     "poolOverview": "账号池概览",
     "managedAccounts": "受管账号",
     "systemSettings": "系统设置",
+    "dockLabel": "底栏位置",
+    "dockFloating": "悬浮（可拖动）",
+    "dockPinned": "固定底部",
     "quickLinks": "快速链接",
     "uiReference": "UI 参考",
     "community": "LINUX DO 社区",
@@ -98,6 +104,8 @@
   },
   "dock": {
     "tipTitle": "菜单栏引导",
+    "tipDismiss": "知道了",
+    "tipNext": "下一步",
     "desktop1": "菜单栏已调整至此处，长按空白区域可自定义拖动位置。",
     "desktop2": "右侧第二个按钮用于快速扫码添加腾讯账号。",
     "desktop3": "右侧第一个按钮用于访问个人设置与账户信息。",

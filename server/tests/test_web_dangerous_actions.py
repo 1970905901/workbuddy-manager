@@ -25,7 +25,12 @@ _ROOT = Path(__file__).resolve().parents[2]
 _WEB = _ROOT / 'web'
 
 _SECURITY = _WEB / 'app' / '(main)' / 'security' / 'page.tsx'
-_SETTINGS = _WEB / 'app' / '(main)' / 'settings' / 'page.tsx'
+# 设置页的外壳在 `layout.tsx`：批次 4 起 7 个 Tab 变成了 `/settings/<tab>`
+# 子路由，而子路由的 page 每次跳转都会重挂载 —— 取数、表单状态与所有危险操作
+# 的确认弹窗都必须留在不重挂载的 layout 上（见那个文件顶部的说明）。
+# `page.tsx` 现在只剩一句重定向，读它会得到「找不到 settingsApi.removeUser」
+# 这种看不出所以然的报错。
+_SETTINGS = _WEB / 'app' / '(main)' / 'settings' / 'layout.tsx'
 _PLAYGROUND = _WEB / 'app' / '(main)' / 'playground' / 'page.tsx'
 _API = _WEB / 'lib' / 'api.ts'
 _MAIN_ERROR = _WEB / 'app' / '(main)' / 'error.tsx'

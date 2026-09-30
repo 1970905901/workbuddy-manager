@@ -1,4 +1,4 @@
-﻿# WorkBuddy Manager —— 本机启动脚本（Windows / PowerShell）
+# WorkBuddy Manager —— 本机启动脚本（Windows / PowerShell）
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
@@ -11,8 +11,26 @@ $envPath = Join-Path $root '.env'
 if (-not (Test-Path $envPath)) {
     $envExample = Join-Path $root '.env.example'
     if (Test-Path $envExample) {
-        Write-Host "[INIT] 首次运行，正在自动根据模板生成 .env 配置文件..." -ForegroundColor Cyan
-        Copy-Item $envExample $envPath
+        Write-Host "[INIT] 首次运行，正在自动根据模板生成适配 Windows 的 .env 配置文件..." -ForegroundColor Cyan
+        $envContent = Get-Content $envExample -Raw -Encoding UTF8
+        $rootSlash = ($root -replace '\\', '/')
+        
+        # 将 Linux /opt 模板路径自动转换为 Windows 本地路径，并启用 native 模式
+        $envContent = $envContent.Replace('/opt/workbuddy2api/auths', "$rootSlash/upstream/auths")
+        $envContent = $envContent.Replace('/opt/workbuddy2api/config.json', "$rootSlash/upstream/config.json")
+        $envContent = $envContent.Replace('/opt/workbuddy2api/start-workbuddy2api.cmd', "$rootSlash/upstream/start-workbuddy2api.cmd")
+        $envContent = $envContent.Replace('/opt/workbuddy2api/stop-workbuddy2api.cmd', "$rootSlash/upstream/stop-workbuddy2api.cmd")
+        $envContent = $envContent.Replace('/opt/workbuddy2api/data/server.err.log', "$rootSlash/upstream/data/server.err.log")
+        $envContent = $envContent.Replace('/opt/workbuddy2api', "$rootSlash/upstream")
+        $envContent = $envContent.Replace('/opt/workbuddy-manager/data/manager.db', "$rootSlash/data/manager.db")
+        $envContent = $envContent.Replace('/opt/workbuddy-manager/data/users.json', "$rootSlash/data/users.json")
+        $envContent = $envContent.Replace('/opt/workbuddy-manager/data', "$rootSlash/data")
+        $envContent = $envContent.Replace('/opt/workbuddy-manager/web/out', "$rootSlash/web/out")
+        $envContent = $envContent.Replace('WB2API_MODE=docker', 'WB2API_MODE=native')
+        $envContent = $envContent.Replace('WB_MANAGER_HOST=0.0.0.0', 'WB_MANAGER_HOST=127.0.0.1')
+        $envContent = $envContent.Replace('WB_SECURE_COOKIE=auto', 'WB_SECURE_COOKIE=false')
+        
+        [System.IO.File]::WriteAllText($envPath, $envContent, [System.Text.Encoding]::UTF8)
     }
 }
 

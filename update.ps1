@@ -74,19 +74,25 @@ function Find-LocalPackage {
     )
     foreach ($d in $searchDirectories) {
         if (-not (Test-Path $d)) { continue }
-        $candidates = Get-ChildItem -Path $d -Filter "workbuddy-manager-*.zip" -Recurse -Depth 2 -ErrorAction SilentlyContinue | `
+        # 只识别官方带签名的 .tar.gz 归档包
+        $candidates = Get-ChildItem -Path $d -Filter "workbuddy-manager-*.tar.gz" -Recurse -Depth 2 -ErrorAction SilentlyContinue | `
             Where-Object {
                 $_.Length -gt 5000000 -and `
                 -not (Test-Path "$($_.FullName).crdownload") -and `
                 -not (Test-Path "$($_.FullName).tmp")
             } | Sort-Object LastWriteTime -Descending
         
-        if ($candidates) {
+        foreach ($c in $candidates) {
+            # 必须严格存在同名 .sig 签名文件，杜绝未签名包绕过校验
+            $sigPath = "$($c.FullName).sig"
+            if (-not (Test-Path $sigPath)) { continue }
+
             if ($targetVersion) {
-                $matched = $candidates | Where-Object { $_.Name -match [regex]::Escape($targetVersion) } | Select-Object -First 1
-                if ($matched) { return $matched }
+                if ($c.Name -match [regex]::Escape($targetVersion)) {
+                    return @{ Archive = $c; Sig = Get-Item $sigPath }
+                }
             } else {
-                return ($candidates | Select-Object -First 1)
+                return @{ Archive = $c; Sig = Get-Item $sigPath }
             }
         }
     }
@@ -166,7 +172,70 @@ function Get-LatestGitHubTag {
     return $null
 }
 
-# ── 3. 版本比对与执行 ───────────────────────────────────
+# ── 3. 官方发布包数字签名验签（ssh-keygen -Y verify）───────────
+function Test-PackageSignature {
+    param(
+        [string]$archivePath,
+        [string]$sigPath
+    )
+    if (-not (Test-Path $archivePath)) { return $false }
+    if (-not (Test-Path $sigPath)) {
+        Write-Host "[ERROR] 缺少对应的数字签名文件 ($sigPath)，已拒绝安装。" -ForegroundColor Red
+        Write-Host "[ERROR] 官方发布均包含 .tar.gz.sig 签名，缺失签名说明发布流程可能被改动或包来源不可信。" -ForegroundColor Red
+        return $false
+    }
+
+    $sshKeygen = (Get-Command ssh-keygen.exe -ErrorAction SilentlyContinue).Source
+    if (-not $sshKeygen) {
+        Write-Host "[ERROR] 系统缺少 ssh-keygen.exe，无法校验发布包签名（Windows 10+ 自带 OpenSSH 客户端）。" -ForegroundColor Red
+        return $false
+    }
+
+    # 官方可信公钥锚点（与 deploy/update.py 内嵌公钥严格保持一致）
+    $pubkey = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHEGhxZQjEEK/RbtgcRLuuWji0fVB4E2dVKMnhtLlCkx workbuddy release signing'
+    $signer = 'release'
+
+    $tempSigners = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "allowed_signers_$([System.Guid]::NewGuid().ToString('N'))")
+    try {
+        [System.IO.File]::WriteAllText($tempSigners, "$signer $($pubkey.Trim())`n", [System.Text.Encoding]::UTF8)
+
+        Write-Host "[INFO] 正在校验官方数字签名 (ssh-keygen -Y verify)..." -ForegroundColor Cyan
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $sshKeygen
+        $psi.Arguments = "-Y verify -f `"$tempSigners`" -I $signer -n file -s `"$sigPath`""
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardInput = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.CreateNoWindow = $true
+
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        
+        $fs = [System.IO.File]::OpenRead($archivePath)
+        $fs.CopyTo($proc.StandardInput.BaseStream)
+        $fs.Close()
+        $proc.StandardInput.Close()
+
+        $stdout = $proc.StandardOutput.ReadToEnd()
+        $stderr = $proc.StandardError.ReadToEnd()
+        $proc.WaitForExit(60000)
+
+        $combined = ($stdout + "`n" + $stderr).Trim()
+
+        if ($proc.ExitCode -eq 0 -and $combined -match 'Good') {
+            Write-Host "[SUCCESS] 官方签名校验通过：$($combined -replace '`r|`n', ' ')" -ForegroundColor Green
+            return $true
+        } else {
+            Write-Host "[ERROR] ❌ 发布包数字签名校验失败，已拒绝安装！" -ForegroundColor Red
+            Write-Host "[ERROR] 可能是包被篡改或产物被替换。ssh-keygen 输出: $combined" -ForegroundColor Red
+            return $false
+        }
+    } finally {
+        if (Test-Path $tempSigners) { Remove-Item $tempSigners -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+# ── 4. 版本比对与流程确认 ─────────────────────────────────
 $currentVer = "未知"
 $verFile = Join-Path $root '.version'
 if (Test-Path $verFile) {
@@ -180,37 +249,38 @@ $latestVer = if ($tagInfo) { $tagInfo.Tag } else { $null }
 $detectedProxy = if ($tagInfo) { $tagInfo.Proxy } else { if ($env:HTTPS_PROXY) { $env:HTTPS_PROXY } else { 'http://127.0.0.1:7897' } }
 
 $searchDirs = Get-SmartDownloadDirectories
-$existingZip = Find-LocalPackage -searchDirectories $searchDirs -targetVersion $null
+$existingPkg = Find-LocalPackage -searchDirectories $searchDirs -targetVersion $null
 
 # 若网络未连通但找到了离线包，从离线包文件名直接推导版本号
-if (-not $latestVer -and $existingZip) {
-    if ($existingZip.Name -match 'workbuddy-manager-(v?\d+\.\d+\.\d+[\\w\.\-]*)\.zip') {
+if (-not $latestVer -and $existingPkg) {
+    if ($existingPkg.Archive.Name -match 'workbuddy-manager-(v?\d+\.\d+\.\d+[\w\.\-]*)\.tar\.gz') {
         $latestVer = $Matches[1]
-        Write-Host "[INFO] 已根据离线安装包识别版本: $latestVer" -ForegroundColor Yellow
+        Write-Host "[INFO] 已根据已签名离线安装包识别版本: $latestVer" -ForegroundColor Yellow
     } else {
-        $latestVer = "离线安装包"
+        $latestVer = "离线签名包"
     }
 }
 
-# 若网络未连通且没有任何离线包，提供友好交互引导
-if (-not $latestVer -and -not $existingZip) {
-    Write-Host "[WARN] 无法连接 GitHub 且未在常用目录中找到离线安装包。" -ForegroundColor Yellow
+# 若网络未连通且没有任何离线包，提示前往面板点「一键更新」或手动下载
+if (-not $latestVer -and -not $existingPkg) {
+    Write-Host "[WARN] 无法连接 GitHub 且未在常用目录中找到带签名的离线安装包。" -ForegroundColor Yellow
     Write-Host "[INFO] 已检索目录: $($searchDirs -join ' | ')" -ForegroundColor DarkGray
+    Write-Host "[TIP] 提示：您可登录 Web 管理面板，在「系统设置 → 一键更新」中直接更新。" -ForegroundColor Cyan
     $openBrowser = Read-Host "是否在浏览器中打开 GitHub Releases 页面手动下载？(Y/n)"
     if ($openBrowser -ne 'n' -and $openBrowser -ne 'N') {
         Start-Process "https://github.com/ithtelab/workbuddy-manager/releases"
-        Write-Host "[WAIT] 正在监听下载目录（下载完成后将自动识别并更新）..." -ForegroundColor Cyan
+        Write-Host "[WAIT] 正在监听下载目录（下载 tar.gz 与同名 .sig 完成后将自动识别并更新）..." -ForegroundColor Cyan
         
         $startTime = [DateTime]::Now
         while ($true) {
             Start-Sleep -Seconds 2
             $detected = Find-LocalPackage -searchDirectories $searchDirs -targetVersion $null
-            if ($detected -and ($detected.LastWriteTime -gt $startTime.AddMinutes(-5))) {
-                $existingZip = $detected
-                if ($detected.Name -match 'workbuddy-manager-(v?\d+\.\d+\.\d+[\w\.\-]*)\.zip') {
+            if ($detected -and ($detected.Archive.LastWriteTime -gt $startTime.AddMinutes(-5))) {
+                $existingPkg = $detected
+                if ($detected.Archive.Name -match 'workbuddy-manager-(v?\d+\.\d+\.\d+[\w\.\-]*)\.tar\.gz') {
                     $latestVer = $Matches[1]
                 } else {
-                    $latestVer = "离线包"
+                    $latestVer = "离线签名包"
                 }
                 break
             }
@@ -235,83 +305,66 @@ if ($currentVer -eq $latestVer) {
     }
 }
 
-# ── 4. 安装包捕获与智能传输 ─────────────────────────────
-$tempZip = Join-Path $root "update_temp.zip"
-if (Test-Path $tempZip) { Remove-Item $tempZip -Force }
+# ── 5. 安装包捕获与验签 ───────────────────────────────────
+$tempTar = Join-Path $root "update_temp.tar.gz"
+$tempSig = Join-Path $root "update_temp.tar.gz.sig"
+if (Test-Path $tempTar) { Remove-Item $tempTar -Force }
+if (Test-Path $tempSig) { Remove-Item $tempSig -Force }
 
-$targetZipFile = Find-LocalPackage -searchDirectories $searchDirs -targetVersion $latestVer
+$targetPkg = Find-LocalPackage -searchDirectories $searchDirs -targetVersion $latestVer
 
-if ($targetZipFile) {
-    Write-Host "[INFO] 已在目录中精准识别到安装包: $($targetZipFile.FullName)" -ForegroundColor Green
-    Write-Host "[INFO] 正在移动到项目目录进行解压更新..." -ForegroundColor Cyan
-    Move-Item -Path $targetZipFile.FullName -Destination $tempZip -Force
+if ($targetPkg) {
+    Write-Host "[INFO] 已在目录中精准识别到签名安装包: $($targetPkg.Archive.FullName)" -ForegroundColor Green
+    Copy-Item -Path $targetPkg.Archive.FullName -Destination $tempTar -Force
+    Copy-Item -Path $targetPkg.Sig.FullName -Destination $tempSig -Force
 } else {
-    $downloadUrl = "https://github.com/ithtelab/workbuddy-manager/releases/download/$latestVer/workbuddy-manager-$latestVer.zip"
+    $tarUrl = "https://github.com/ithtelab/workbuddy-manager/releases/download/$latestVer/workbuddy-manager-$latestVer.tar.gz"
+    $sigUrl = "https://github.com/ithtelab/workbuddy-manager/releases/download/$latestVer/workbuddy-manager-$latestVer.tar.gz.sig"
     $curlExe = (Get-Command curl.exe -ErrorAction SilentlyContinue).Source
     $downloadSuccess = $false
 
-    # 尝试方式 1: 使用 curl.exe 命令行极速拉取
+    # 尝试方式 1: 使用 curl.exe 命令行静默下载 tar.gz 与 .sig
     if ($curlExe) {
-        Write-Host "[INFO] 正在尝试后台极速下载..." -ForegroundColor Cyan
-        $curlArgs = @('-L', '--fail', '--connect-timeout', '10', '-o', $tempZip)
-        if ($detectedProxy) { $curlArgs += @('-x', $detectedProxy) }
-        $curlArgs += $downloadUrl
+        Write-Host "[INFO] 正在尝试后台下载官方签名发布包 ($latestVer)..." -ForegroundColor Cyan
+        $cArgsBase = @('-L', '--fail', '--connect-timeout', '10')
+        if ($detectedProxy) { $cArgsBase += @('-x', $detectedProxy) }
 
-        & $curlExe $curlArgs
-        if ($LASTEXITCODE -eq 0 -and (Test-Path $tempZip) -and ((Get-Item $tempZip).Length -gt 5000000)) {
+        & $curlExe ($cArgsBase + @('-o', $tempTar, $tarUrl))
+        & $curlExe ($cArgsBase + @('-o', $tempSig, $sigUrl))
+
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $tempTar) -and (Test-Path $tempSig) -and ((Get-Item $tempTar).Length -gt 5000000)) {
             $downloadSuccess = $true
-            Write-Host "[SUCCESS] 后台下载完成并校验通过。" -ForegroundColor Green
+            Write-Host "[SUCCESS] 发布包与签名文件下载完成。" -ForegroundColor Green
         }
     }
 
-    # 尝试方式 2: 若后台网络阻塞，自动唤起浏览器下载并自动监听下载目录
+    # 尝试方式 2: 调起浏览器下载并自动监听感应
     if (-not $downloadSuccess) {
-        Write-Host "[WARN] 命令行下载受阻，自动为您在浏览器中打开下载直链..." -ForegroundColor Yellow
-        Write-Host "[INFO] 下载直链: $downloadUrl" -ForegroundColor Cyan
-        Start-Process $downloadUrl
+        Write-Host "[WARN] 命令行下载受阻，自动为您在浏览器中打开官方发布包与签名直链..." -ForegroundColor Yellow
+        Start-Process $tarUrl
+        Start-Process $sigUrl
 
-        Write-Host "[WAIT] 正在实时监听下载目录（支持任何盘符下的 Downloads / Compressed 等）..." -ForegroundColor Cyan
-        Write-Host "[WAIT] 浏览器下载完成后本程序将全自动识别并完成更新，无需手动拖拽。" -ForegroundColor DarkGray
+        Write-Host "[WAIT] 正在实时监听下载目录（下载完 tar.gz 与 .sig 后将自动识别并验签更新）..." -ForegroundColor Cyan
 
         $watchTimeoutSeconds = 300
         $startTime = [DateTime]::Now
-        $promptedManual = $false
 
-        while (-not (Test-Path $tempZip)) {
+        while (-not (Test-Path $tempTar) -or -not (Test-Path $tempSig)) {
             Start-Sleep -Seconds 2
             
-            if (-not $promptedManual -and ([DateTime]::Now - $startTime).TotalSeconds -gt 30) {
-                $promptedManual = $true
-                Write-Host "[TIP] 如果您的浏览器下载到了特殊位置，可直接将其拖入本目录，或在稍后提示时粘贴路径。" -ForegroundColor Yellow
-            }
-
             if (([DateTime]::Now - $startTime).TotalSeconds -gt $watchTimeoutSeconds) {
-                Write-Host "[PROMPT] 未在常用目录检测到下载包。" -ForegroundColor Yellow
-                $customInput = Read-Host "请输入您的自定义下载文件夹路径 (按回车退出)"
-                if ($customInput -and (Test-Path $customInput)) {
-                    $envPath = Join-Path $root '.env'
-                    if (Test-Path $envPath) {
-                        Add-Content -Path $envPath -Value "`nWB_DOWNLOAD_DIR=$customInput"
-                    }
-                    $searchDirs = Get-SmartDownloadDirectories
-                    $foundCustom = Find-LocalPackage -searchDirectories @($customInput) -targetVersion $latestVer
-                    if ($foundCustom) {
-                        Move-Item -Path $foundCustom.FullName -Destination $tempZip -Force
-                        break
-                    }
-                }
                 Write-Host "[ERROR] 等待下载超时，操作已取消。" -ForegroundColor Red
                 exit 1
             }
 
             $detected = Find-LocalPackage -searchDirectories $searchDirs -targetVersion $latestVer
-            if ($detected -and ($detected.LastWriteTime -gt $startTime.AddMinutes(-5))) {
+            if ($detected -and ($detected.Archive.LastWriteTime -gt $startTime.AddMinutes(-5))) {
                 try {
-                    $stream = [System.IO.File]::Open($detected.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+                    $stream = [System.IO.File]::Open($detected.Archive.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
                     $stream.Dispose()
-                    Write-Host "[SUCCESS] 检测到下载完成: $($detected.FullName)" -ForegroundColor Green
-                    Write-Host "[INFO] 自动将其剪切移动到项目目录..." -ForegroundColor Cyan
-                    Move-Item -Path $detected.FullName -Destination $tempZip -Force
+                    Write-Host "[SUCCESS] 检测到下载完成: $($detected.Archive.FullName)" -ForegroundColor Green
+                    Copy-Item -Path $detected.Archive.FullName -Destination $tempTar -Force
+                    Copy-Item -Path $detected.Sig.FullName -Destination $tempSig -Force
                     break
                 } catch {}
             }
@@ -319,12 +372,32 @@ if ($targetZipFile) {
     }
 }
 
-# ── 5. 停止运行中服务 ───────────────────────────────────
+# 执行严格验签（信任链核心防线）
+$isSigValid = Test-PackageSignature -archivePath $tempTar -sigPath $tempSig
+if (-not $isSigValid) {
+    Remove-Item $tempTar, $tempSig -Force -ErrorAction SilentlyContinue
+    Write-Host "[ERROR] 验签未通过，更新已被强制终止。未做任何文件变动。" -ForegroundColor Red
+    exit 1
+}
+
+# ── 6. 停服与覆盖确认（关键交互节点）───────────────────────
+Write-Host ""
+Write-Host "[CONFIRM] 官方数字签名校验完全通过！" -ForegroundColor Green
+Write-Host "[CONFIRM] 即将停止当前服务，清空 web/out 并覆盖更新核心文件至 $latestVer。" -ForegroundColor Yellow
+Write-Host "[CONFIRM] 更新期间 Web 管理面板服务将短暂离线。" -ForegroundColor Yellow
+$confirmProceed = Read-Host "确认继续执行更新？(Y/n)"
+if ($confirmProceed -eq 'n' -or $confirmProceed -eq 'N') {
+    Remove-Item $tempTar, $tempSig -Force -ErrorAction SilentlyContinue
+    Write-Host "[INFO] 用户已取消更新操作。" -ForegroundColor DarkGray
+    exit 0
+}
+
+# ── 7. 停止运行中服务 ───────────────────────────────────
 Write-Host "[INFO] 正在安全停止当前服务进程..." -ForegroundColor Yellow
 $stopScript = Join-Path $root 'stop.ps1'
 if (Test-Path $stopScript) { & $stopScript }
 
-# ── 6. 备份本地 Windows 适配脚本 ─────────────────────────
+# ── 8. 备份本地 Windows 适配脚本 ─────────────────────────
 $backupDir = Join-Path $root '.tools\scripts_backup'
 New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
 $scriptsToProtect = @('start.ps1', 'stop.ps1', 'service-tools.ps1', 'start.cmd', 'stop.cmd', 'update.cmd', 'update.ps1')
@@ -333,75 +406,72 @@ foreach ($s in $scriptsToProtect) {
     if (Test-Path $src) { Copy-Item $src (Join-Path $backupDir $s) -Force }
 }
 
-# ── 7. 同步 Git 源码分支（若存在 Git 仓库）─────────────────
-if (Test-Path (Join-Path $root '.git')) {
-    try {
-        git fetch origin
-        git reset --hard origin/main
-    } catch {
-        Write-Host "[WARN] Git 源码同步提示: $($_.Exception.Message)" -ForegroundColor DarkGray
-    }
-}
-
-# ── 8. 安全解压并覆盖 ───────────────────────────────────
-Write-Host "[INFO] 正在更新前端静态资源 (web/out) 与服务端核心文件..." -ForegroundColor Cyan
+# ── 9. 安全解压并覆盖 ───────────────────────────────────
+Write-Host "[INFO] 正在安全解压并更新前端静态资源 (web/out) 与服务端核心文件..." -ForegroundColor Cyan
 
 # 清空旧的前端静态编译目录，避免历史版本残留
 $webOut = Join-Path $root 'web\out'
 if (Test-Path $webOut) { Remove-Item $webOut -Recurse -Force }
 
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-$zip = [System.IO.Compression.ZipFile]::OpenRead($tempZip)
+$venvPython = Join-Path $root '.venv\Scripts\python.exe'
+$extractScript = Join-Path $root '.tools\extract_release.py'
+New-Item -ItemType Directory -Path (Join-Path $root '.tools') -Force | Out-Null
 
-foreach ($entry in $zip.Entries) {
-    $fullName = $entry.FullName
-    $relPath = $null
-    if ($fullName -match '^workbuddy-manager-[^/]+/(.+)$') {
-        $relPath = $Matches[1]
-    } elseif ($fullName -notmatch '^[^/]+/') {
-        $relPath = $fullName
-    }
+$pyContent = @'
+import tarfile, sys, os
+from pathlib import Path
 
-    if (-not $relPath) { continue }
+archive_path = sys.argv[1]
+root_dir = Path(sys.argv[2])
 
-    # 保护项：绝不覆盖用户个人配置文件及独立环境
-    if ($relPath -eq '.env' -or `
-        $relPath.StartsWith('data/') -or `
-        $relPath.StartsWith('.venv/') -or `
-        $relPath.StartsWith('.tools/') -or `
-        $relPath.StartsWith('upstream/auths/') -or `
-        $relPath -eq 'upstream/config.json' -or `
-        $relPath -eq 'upstream/wb2api.exe') {
-        continue
-    }
+with tarfile.open(archive_path, "r:gz") as tf:
+    for member in tf.getmembers():
+        name = member.name.replace("\\", "/")
+        parts = name.split("/")
+        if len(parts) > 1 and parts[0].startswith("workbuddy-manager-"):
+            rel_path = "/".join(parts[1:])
+        else:
+            rel_path = name
+        
+        if not rel_path:
+            continue
+            
+        # 严格隔离保护项：绝不覆盖用户个人配置文件及环境
+        if (rel_path == ".env" or 
+            rel_path.startswith("data/") or 
+            rel_path.startswith(".venv/") or 
+            rel_path.startswith(".tools/") or 
+            rel_path.startswith("upstream/auths/") or 
+            rel_path == "upstream/config.json" or 
+            rel_path == "upstream/wb2api.exe"):
+            continue
+            
+        # 允许更新的白名单项目产物
+        if (rel_path.startswith("web/out/") or 
+            rel_path.startswith("server/") or 
+            rel_path.startswith("deploy/") or 
+            rel_path.startswith("docs/") or 
+            rel_path in (".version", "CHANGELOG.md", "README.md", "README.en.md")):
+            target = root_dir / rel_path
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+            elif member.isfile():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with tf.extractfile(member) as source, open(target, "wb") as dest:
+                    dest.write(source.read())
+'@
 
-    # 允许更新的产物
-    if ($relPath.StartsWith('web/out/') -or `
-        $relPath.StartsWith('server/') -or `
-        $relPath.StartsWith('docs/') -or `
-        $relPath.StartsWith('deploy/') -or `
-        $relPath -eq '.version' -or `
-        $relPath -eq 'CHANGELOG.md' -or `
-        $relPath -eq 'README.md' -or `
-        $relPath -eq 'README.en.md') {
-        $destPath = Join-Path $root $relPath.Replace('/', '\')
-        if ($entry.FullName.EndsWith('/')) {
-            if (-not (Test-Path $destPath)) { [System.IO.Directory]::CreateDirectory($destPath) | Out-Null }
-        } else {
-            $dir = Split-Path $destPath -Parent
-            if (-not (Test-Path $dir)) { [System.IO.Directory]::CreateDirectory($dir) | Out-Null }
-            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destPath, $true)
-        }
-    }
-}
-$zip.Dispose()
+[System.IO.File]::WriteAllText($extractScript, $pyContent, [System.Text.Encoding]::UTF8)
+
+& $venvPython $extractScript $tempTar $root
+Remove-Item $extractScript -Force -ErrorAction SilentlyContinue
 
 # 更新本地 .version 标记文件
 Set-Content -Path (Join-Path $root '.version') -Value $latestVer -Encoding UTF8
 
-# 彻底清理临时 zip 包，绝不遗留磁盘垃圾
-Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
-Write-Host "[INFO] 临时安装包已自动彻底清理删除。" -ForegroundColor DarkGray
+# 彻底清理临时安装包及签名文件，绝不遗留磁盘垃圾
+Remove-Item $tempTar, $tempSig -Force -ErrorAction SilentlyContinue
+Write-Host "[INFO] 临时签名安装包已自动彻底清理删除。" -ForegroundColor DarkGray
 
 # 还原 Windows 脚本与带空格路径引号修复
 foreach ($s in $scriptsToProtect) {
@@ -422,18 +492,17 @@ foreach ($ucmd in $upstreamCmds) {
     }
 }
 
-# ── 9. 同步 Python 运行环境依赖 ─────────────────────────
+# ── 10. 同步 Python 运行环境依赖 ────────────────────────
 Write-Host "[INFO] 正在同步 Python 依赖库..." -ForegroundColor Cyan
 $uvExe = Join-Path $root '.tools\uv\uv.exe'
 $reqFile = Join-Path $root 'server\requirements.txt'
-$venvPython = Join-Path $root '.venv\Scripts\python.exe'
 
 if ((Test-Path $uvExe) -and (Test-Path $venvPython) -and (Test-Path $reqFile)) {
     & $uvExe pip install -r $reqFile --python $venvPython
 }
 
 Write-Host "==================================================" -ForegroundColor Green
-Write-Host " [SUCCESS] WorkBuddy Manager 已成功更新至 $latestVer " -ForegroundColor Green
+Write-Host " [SUCCESS] WorkBuddy Manager 已成功安全更新至 $latestVer " -ForegroundColor Green
 Write-Host "==================================================" -ForegroundColor Green
 Write-Host "[INFO] 个人配置（.env、账号授权、数据库历史）完好无损。" -ForegroundColor White
 

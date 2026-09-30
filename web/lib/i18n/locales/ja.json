@@ -341,6 +341,7 @@
     "restarted": "上流を再起動しました",
     "disabledReason": "無効化の理由: {reason}",
     "badgeDisabled": "● 無効",
+    "badgeDisabledTitle": "上流がこのアカウントを自動的に無効化しました（セッション失効の連続、または上流側での BAN）。右側の「有効化」でシステム無効を解除し、アカウントプールに戻せます。再ログインが必要と表示された場合は、もう一度ログインしてください（ログイン自体も無効化を自動解除します）。",
     "badgeDisabledByPanel": "● 停止中",
     "badgeManualDisabled": "● 停止中",
     "badgeDisabledByPanelTitle": "この画面で一時停止しています：上流は読み込まないため選択されません。右の「有効化」でいつでも復元できます（資格情報は保持されます）。",

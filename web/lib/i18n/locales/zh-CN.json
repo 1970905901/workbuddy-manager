@@ -272,6 +272,11 @@
     "hourlyAgg": "按小时（当日汇总）"
   },
   "accounts": {
+    "proxyLine": "出口线路",
+    "proxyDirect": "默认出口",
+    "proxyMissing": "线路已失效",
+    "proxySaved": "出口线路已更新",
+
     "title": "账号管理",
     "descCn": "腾讯 CodeBuddy 账号池：Token 有效期、签到与连通性（每 30 秒自动刷新）",
     "descGlobal": "腾讯 CodeBuddy 账号池（国际版）：Token 有效期与连通性（每 30 秒自动刷新）",

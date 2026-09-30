@@ -91,6 +91,7 @@ def _account_payload(raw: dict) -> dict:
         'domain': auth.get('domain', ''),
         'realm': auth.get('realm'),
         'device_token': str(raw.get('device_token') or ''),
+        'proxy': str(raw.get('proxy') or ''),
     }
 
 

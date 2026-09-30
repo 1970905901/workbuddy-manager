@@ -113,6 +113,7 @@ export default function AccountsPage() {
   const t = useT();
   const {isAdmin} = useAuth();
   const [addOpen, setAddOpen] = useState(false);
+  const [proxyRoutes, setProxyRoutes] = useState<string[] | null>(null);
   // 备注编辑（issue #67）：记的是**哪个账号**而不是布尔——弹窗要以该账号当前的
   // 备注为初值，否则会拿上一个账号的内容去保存。
   const [noteTarget, setNoteTarget] = useState<Account | null>(null);
@@ -790,6 +791,40 @@ export default function AccountsPage() {
   }
 
   /** Token 有效期进度条 */
+  useEffect(() => {
+    let active = true;
+    accountApi.proxies().then((data) => {
+      if (active) setProxyRoutes(data.routes);
+    }).catch((error) => { if (active) notify.err(errText(error)); });
+    return () => { active = false; };
+  }, []);
+
+  function renderProxy(a: Account) {
+    if (!isAdmin) return <span className="text-xs">{a.proxy || t('accounts.proxyDirect')}</span>;
+    return (
+      <Select value={a.proxy ? `route:${a.proxy}` : 'default'} disabled={proxyRoutes === null || busyFile === a.file}
+              onValueChange={async (value) => {
+                setBusyFile(a.file);
+                try {
+                  await accountApi.setProxy(a.file, value === 'default' ? '' : value.slice(6), groupId);
+                  notify.ok(t('accounts.proxySaved'));
+                  await reloadAll();
+                } catch (error) { notify.err(errText(error)); }
+                finally { setBusyFile(null); }
+              }}>
+        <SelectTrigger className="h-8 min-w-[100px] max-w-[155px] text-xs" aria-label={t('accounts.proxyLine')}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="default">{t('accounts.proxyDirect')}</SelectItem>
+          {a.proxy && !(proxyRoutes ?? []).includes(a.proxy) &&
+            <SelectItem value={`route:${a.proxy}`}>{a.proxy} ({t('accounts.proxyMissing')})</SelectItem>}
+          {(proxyRoutes ?? []).map((route) => <SelectItem key={route} value={`route:${route}`}>{route}</SelectItem>)}
+        </SelectContent>
+      </Select>
+    );
+  }
+
   function renderExpiry(a: Account) {
     const pct = expiryBarPercent(a.remain_seconds, a.ttl_seconds);
     const vis = expiryVisual(a.remain_seconds);
@@ -1292,6 +1327,7 @@ export default function AccountsPage() {
                 {renderExpiry(a)}
               </div>
 
+              <div className="flex items-center gap-2 text-xs"><span className="text-muted-foreground">{t('accounts.proxyLine')}</span>{renderProxy(a)}</div>
               {isAdmin && renderActions(a)}
             </div>
           ))}
@@ -1307,6 +1343,7 @@ export default function AccountsPage() {
               <TableHead className="text-[11px] text-muted-foreground">{t('accounts.colStatus')}</TableHead>
               <TableHead className="text-[11px] text-muted-foreground">{t('metric.credits')}</TableHead>
               <TableHead className="text-[11px] text-muted-foreground">{t('accounts.colExpiry')}</TableHead>
+              <TableHead className="text-[11px] text-muted-foreground">{t('accounts.proxyLine')}</TableHead>
               {isAdmin && <TableHead className="pr-4 text-right text-[11px] text-muted-foreground">{t('accounts.colActions')}</TableHead>}
             </TableRow>
           </TableHeader>
@@ -1348,6 +1385,7 @@ export default function AccountsPage() {
                 </TableCell>
                 <TableCell>{renderCredits(a)}</TableCell>
                 <TableCell>{renderExpiry(a)}</TableCell>
+                <TableCell>{renderProxy(a)}</TableCell>
                 {isAdmin && <TableCell className="pr-4">{renderActions(a)}</TableCell>}
               </TableRow>
             ))}

@@ -142,6 +142,34 @@ def _reload_target(group: dict) -> dict | None:
     return None if group.get('is_default') else group
 
 
+@router.get('/proxies')
+def available_proxies(user: dict = Depends(security.current_user)) -> dict:
+    return {'routes': sorted(config.proxy_routes()), 'default': config.DEFAULT_ACCOUNT_PROXY}
+
+
+@router.put('/accounts/{filename}/proxy')
+async def account_set_proxy(
+    filename: str, body: dict = Body(...),
+    upstream_id: int | None = Query(None),
+    user: dict = Depends(security.require_admin),
+) -> dict:
+    name = body.get('proxy')
+    if not isinstance(name, str):
+        raise HTTPException(status_code=400, detail='proxy 必须是线路名或空字符串')
+    name = name.strip()
+    group = _group(upstream_id)
+    try:
+        config.account_proxy({'proxy': name})
+        result = wb2api.set_account_proxy(filename, name, _require_dir(group))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail='账号文件不存在') from exc
+    creditsvc.invalidate()
+    scheduled = reload.request_restart(_reload_target(group))
+    return {'ok': True, **result, 'reload_triggered': scheduled}
+
+
 @router.get('/accounts')
 async def list_accounts(upstream_id: int | None = Query(None),
                         user: dict = Depends(security.current_user)) -> dict:
@@ -294,7 +322,16 @@ async def auth_start(
         raw_region = str(body.get('region'))
     reg = str(raw_region or '').strip() or None
     try:
-        out = await tencent.start_login(r)
+        proxy_name = config.DEFAULT_ACCOUNT_PROXY
+        if isinstance(body, dict) and 'proxy' in body:
+            if not isinstance(body['proxy'], str):
+                raise HTTPException(status_code=400, detail='proxy 必须是线路名或空字符串')
+            proxy_name = body['proxy'].strip()
+        try:
+            config.account_proxy({'proxy': proxy_name})
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        out = await tencent.start_login(r, proxy_name) if proxy_name else await tencent.start_login(r)
         # 起后台轮询：前端是否被节流都不影响检测节奏（见文件上方说明）
         st = str(out.get('state') or '')
         if st:
@@ -369,6 +406,7 @@ async def auth_poll(
         'enterprise_id': result.get('enterprise_id', ''),
         'realm': realm_of_result,
         'domain': result.get('domain', ''),
+        'proxy': result.get('proxy', ''),
     }
 
     # 国际版：先做地区注册（未注册会导致后续聊天报 14017）
@@ -637,6 +675,7 @@ def _auth_dict(raw: dict) -> dict:
         'domain': auth.get('domain', ''),
         'realm': auth.get('realm'),
         'device_token': str(raw.get('device_token') or ''),
+        'proxy': str(raw.get('proxy') or ''),
     }
 
 
@@ -686,6 +725,7 @@ async def account_checkin(filename: str, upstream_id: int | None = Query(None),
         'domain': str(auth.get('domain') or ''),
         'realm': auth.get('realm'),
         'device_token': str(raw.get('device_token') or ''),
+        'proxy': str(raw.get('proxy') or ''),
     }, realm_of(auth))
     # 0 = 签到成功；10001 = 今日已签到，同样视为成功；
     # -2 = 该版本无签到体系（国际版），不是失败，也不该记成失败
@@ -872,6 +912,7 @@ async def checkin_all(upstream_id: int | None = Query(None),
                 'domain': str(auth.get('domain') or ''),
                 'realm': auth.get('realm'),
                 'device_token': str(raw.get('device_token') or ''),
+                'proxy': str(raw.get('proxy') or ''),
             }, realm_of(auth))
         ok = code in (0, 10001)
         db.add_checkin_log(uid, nickname, 'manual-batch', ok, code, message)
@@ -1295,6 +1336,7 @@ async def account_test(filename: str, upstream_id: int | None = Query(None),
         'domain': auth.get('domain', ''),
         'realm': auth.get('realm'),
         'device_token': str(raw.get('device_token') or ''),
+        'proxy': str(raw.get('proxy') or ''),
     })
     return {'ok': ok, 'message': message}
 
@@ -1333,6 +1375,7 @@ async def account_refresh(filename: str, upstream_id: int | None = Query(None),
         'domain': auth.get('domain', ''),
         'realm': auth.get('realm'),
         'device_token': str(raw.get('device_token') or ''),
+        'proxy': str(raw.get('proxy') or ''),
     })
     if not ok:
         return {'ok': False, 'message': message}

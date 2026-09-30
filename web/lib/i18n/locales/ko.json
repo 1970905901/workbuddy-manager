@@ -272,6 +272,11 @@
     "hourlyAgg": "시간별(오늘)"
   },
   "accounts": {
+    "proxyLine": "송신 경로",
+    "proxyDirect": "기본 경로",
+    "proxyMissing": "경로를 사용할 수 없습니다",
+    "proxySaved": "송신 경로가 업데이트되었습니다",
+
     "title": "계정 관리",
     "descCn": "Tencent CodeBuddy 계정 풀: Token 유효 기간, 출석, 연결 테스트 (30초마다 자동 새로고침)",
     "descGlobal": "Tencent CodeBuddy 계정 풀(글로벌 버전): Token 유효 기간과 연결 테스트 (30초마다 자동 새로고침)",

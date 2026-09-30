@@ -296,6 +296,11 @@
     "hourlyAgg": "Hourly (today)"
   },
   "accounts": {
+    "proxyLine": "Exit route",
+    "proxyDirect": "Default route",
+    "proxyMissing": "Route unavailable",
+    "proxySaved": "Exit route updated",
+
     "title": "Accounts",
     "descCn": "Tencent CodeBuddy account pool: token validity, check-in and connectivity (auto-refresh every 30s)",
     "descGlobal": "Tencent CodeBuddy account pool (Global edition): token validity and connectivity (auto-refresh every 30s)",

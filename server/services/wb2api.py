@@ -57,6 +57,24 @@ def read_account_file(filename: str, auth_dir: Path | None = None) -> dict:
     return json.loads(_safe_file(filename, auth_dir).read_text(encoding='utf-8'))
 
 
+def set_account_proxy(filename: str, proxy: str, auth_dir: Path | None = None) -> dict:
+    """只更新线路，保留凭据及其他字段；写入复用账号文件的原子替换。"""
+    from .tencent import _atomic_write_json
+
+    path = _safe_file(filename, auth_dir)
+    if path.is_symlink():
+        raise ValueError('账号文件不能是符号链接')
+    raw = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(raw, dict):
+        raise ValueError('账号文件格式异常')
+    if proxy:
+        raw['proxy'] = proxy
+    else:
+        raw.pop('proxy', None)
+    _atomic_write_json(path, raw)
+    return {'file': filename, 'proxy': proxy}
+
+
 def _jwt_times(access_token: str) -> tuple[int, int] | None:
     """从 accessToken（JWT）里读出 (iat, exp)。解不出返回 None。
 
@@ -165,6 +183,7 @@ def list_auth_accounts(auth_dir: Path | None = None) -> list[dict]:
         out.append(
             {
                 'file': path.name,
+                'proxy': str(raw.get('proxy') or ''),
                 'uid': str(acct.get('uid', '')),
                 'nickname': acct.get('nickname') or '未命名',
                 'enterprise_id': acct.get('enterpriseId', '') or '',

@@ -246,7 +246,8 @@ async def _build(realm: str, force: bool = False) -> dict:
         if not token:
             continue
         ok, data = await tencent.fetch_models({'access_token': token, 'realm': realm,
-                                               'domain': acct.get('domain', '')})
+                                               'domain': acct.get('domain', ''),
+                                               'proxy': acct.get('proxy', '')})
         if ok and isinstance(data, list) and data:
             return {
                 'models': _decorate(data, realm),

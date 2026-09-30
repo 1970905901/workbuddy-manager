@@ -272,6 +272,11 @@
     "hourlyAgg": "時間別（本日分）"
   },
   "accounts": {
+    "proxyLine": "送信経路",
+    "proxyDirect": "既定の経路",
+    "proxyMissing": "経路が無効です",
+    "proxySaved": "送信経路を更新しました",
+
     "title": "アカウント管理",
     "descCn": "Tencent CodeBuddy アカウントプール: Token 有効期限・チェックイン・疎通確認（30 秒ごとに自動更新）",
     "descGlobal": "Tencent CodeBuddy アカウントプール（グローバル版）: Token 有効期限と疎通確認（30 秒ごとに自動更新）",

@@ -30,7 +30,9 @@ if (-not (Test-Path $envPath)) {
         $envContent = $envContent.Replace('WB_MANAGER_HOST=0.0.0.0', 'WB_MANAGER_HOST=127.0.0.1')
         $envContent = $envContent.Replace('WB_SECURE_COOKIE=auto', 'WB_SECURE_COOKIE=false')
         
-        [System.IO.File]::WriteAllText($envPath, $envContent, [System.Text.Encoding]::UTF8)
+        # 无 BOM：模板首行虽然目前是注释（BOM 落在注释里无害），但一旦有人调整模板顺序，
+        # 第一个变量名就会带 ﻿ 前缀而整个失效 —— 不给自己留这种地雷。
+        [System.IO.File]::WriteAllText($envPath, $envContent, (New-Object System.Text.UTF8Encoding($false)))
     }
 }
 

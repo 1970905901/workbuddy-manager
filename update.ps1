@@ -197,7 +197,9 @@ function Test-PackageSignature {
 
     $tempSigners = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "allowed_signers_$([System.Guid]::NewGuid().ToString('N'))")
     try {
-        [System.IO.File]::WriteAllText($tempSigners, "$signer $($pubkey.Trim())`n", [System.Text.Encoding]::UTF8)
+        # 必须**无 BOM**：PowerShell 5.1 的 [Text.Encoding]::UTF8 会写 BOM，
+        # 而 ssh-keygen 读到 BOM 会整份文件解析失败 —— 真包也会被判「验签不过」。
+        [System.IO.File]::WriteAllText($tempSigners, "$signer $($pubkey.Trim())`n", (New-Object System.Text.UTF8Encoding($false)))
 
         Write-Host "[INFO] 正在校验官方数字签名 (ssh-keygen -Y verify)..." -ForegroundColor Cyan
         $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -218,7 +220,11 @@ function Test-PackageSignature {
 
         $stdout = $proc.StandardOutput.ReadToEnd()
         $stderr = $proc.StandardError.ReadToEnd()
-        $proc.WaitForExit(60000)
+        # 必须吞掉返回值：`WaitForExit()` 会把一个 bool 写进**输出流**，于是本函数的
+        # 返回值变成 @($true, <下面的 $true/$false>) —— 而调用点是 `if (-not $isSigValid)`，
+        # PowerShell 对「非空数组」取反恒为 $false，也就是**验签失败也不会中止**
+        # （篡改包照样被解压安装）。实测：篡改包返回 [True,False] → 门禁 PROCEED。
+        $null = $proc.WaitForExit(60000)
 
         $combined = ($stdout + "`n" + $stderr).Trim()
 
@@ -467,7 +473,8 @@ with tarfile.open(archive_path, "r:gz") as tf:
 Remove-Item $extractScript -Force -ErrorAction SilentlyContinue
 
 # 更新本地 .version 标记文件
-Set-Content -Path (Join-Path $root '.version') -Value $latestVer -Encoding UTF8
+        # 无 BOM：别让版本号被读成「﻿v1.0.x」（面板与更新脚本都会读这个文件）
+[System.IO.File]::WriteAllText((Join-Path $root '.version'), $latestVer, (New-Object System.Text.UTF8Encoding($false)))
 
 # 彻底清理临时安装包及签名文件，绝不遗留磁盘垃圾
 Remove-Item $tempTar, $tempSig -Force -ErrorAction SilentlyContinue

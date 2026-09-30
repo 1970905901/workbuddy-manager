@@ -463,10 +463,14 @@ async def _poll_login_background(state: str, realm: str, region: str | None,
 
 
 async def _revive_if_disabled(uid: str, *, base_url: str | None = None,
-                              api_key: str | None = None) -> tuple[bool, str, bool]:
+                              api_key: str | None = None) -> tuple[bool, str, bool | None]:
     """账号若被上游**系统自动禁用**，解除它。
 
-    返回 `(是否真的解除了, 说明文案, 解除后是否仍被禁用)`。
+    返回 `(是否真的解除了, 说明文案, 之后是否仍被禁用)` —— 第三位是**三态**：
+    `True` 仍禁用 / `False` 确认已回到池子 / `None` 读不到状态（不知道）。
+    为什么不是 bool：把「读不到」当 `False` 会让调用方**无条件报成功**
+    （「已启用」），而那时我们其实什么都没确认 —— 正是这个功能要消灭的误导。
+    调用方必须显式处理 `None`。
 
     为什么抽成一个函数：有三处要用同一套判断 —— 面板的「启用」按钮、重新登录后的
     自动恢复、以及将来可能的批量修复。写三遍必然漂移。
@@ -477,7 +481,7 @@ async def _revive_if_disabled(uid: str, *, base_url: str | None = None,
     """
     still = await wb2api.account_disabled(uid, base_url=base_url, api_key=api_key)
     if still is None:
-        return False, '读不到该账号在上游的状态（上游不可达，或它还没进入账号池）', False
+        return False, '读不到该账号在上游的状态（上游不可达，或它还没进入账号池）', None
     if not still:
         return False, '', False
     ok, msg, code = await wb2api.revive_account(uid, base_url=base_url, api_key=api_key)
@@ -486,15 +490,21 @@ async def _revive_if_disabled(uid: str, *, base_url: str | None = None,
             return False, ('上游未启用管理接口，无法解除系统禁用 —— 请到'
                            '「设置 → 账号管理接口」开启后重试'), True
         return False, f'解除系统禁用失败：{msg}', True
-    # 再确认一次：接口回 200 ≠ 真的回到池子（见 revive_account 的说明）
+    # 再确认一次：接口回 200 ≠ 真的回到池子（见 revive_account 的说明）。
+    # 这次读不到就如实返回 None（不知道），不要 `bool(None)` 谎报「已清干净」。
     after = await wb2api.account_disabled(uid, base_url=base_url, api_key=api_key)
-    return True, msg, bool(after)
+    return True, msg, after
 
 
 # 重新登录后的自动恢复。等待上限比热加载窗口（约 5 秒）宽一档：账号文件刚落盘时
 # 上游可能还没扫到，这时 `/status` 里读不到它（返回 None），要再等一轮。
 _REVIVE_WAIT_SECONDS = 20.0
 _REVIVE_POLL_SECONDS = 2.0
+
+# 在跑的自动恢复任务。**必须持有强引用**：asyncio 只保留对任务的弱引用，
+# `create_task()` 的结果没人接住时，任务可能在执行途中被 GC 掉 —— 症状是
+# 「这次修复有时不生效」，且完全不报错。与上面的 `_login_tasks` 同一套路。
+_revive_tasks: set[asyncio.Task] = set()
 
 
 async def _revive_after_login(uid: str, group: dict) -> None:
@@ -525,16 +535,26 @@ def _schedule_revive_after_login(uid: str, group: dict) -> None:
     """调度上面那个后台任务。
 
     登录**已经成功**（账号文件确实落盘了），所以这里任何失败都不该反过来影响
-    登录结果 —— 拿不到事件循环就静默跳过（测试直呼路由函数时是常见情形）。
+    登录结果 —— 拿不到事件循环、排不上任务都静默跳过（测试直呼路由函数、
+    或在没有循环的线程里调用，都是常见情形）。
+
+    整段都包在 try 里，不只包 `get_running_loop`：排任务那一步抛出来同样会
+    顺着 `_save_and_finish` 冒到 `auth_poll`，把一次**已经成功**的登录变成 500。
     """
     uid = str(uid or '').strip()
     if not uid:
         return
     try:
         loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    loop.create_task(_revive_after_login(uid, group))
+        task = loop.create_task(_revive_after_login(uid, group))
+        # 持有强引用：asyncio 只保留弱引用，没人接住的任务可能在执行途中被 GC 掉，
+        # 症状是「有时不生效」且不报错（与 _login_tasks 同一套路）。
+        if task is not None:
+            _revive_tasks.add(task)
+            task.add_done_callback(_revive_tasks.discard)
+    except Exception:  # noqa: BLE001 —— 排不上就算了，登录本身已经成功
+        logger.debug('调度「登录后自动解除系统禁用」失败（不影响登录结果）',
+                     exc_info=True)
 
 
 def _save_and_finish(result: dict, realm_of_result: str, region_msg: str,
@@ -1678,8 +1698,13 @@ async def account_set_disabled(
                     'via': 'manual_disabled',
                     'reload_triggered': reloaded,
                     'revived': revived,
+                    # 两位都清了才算真的回到池子：`still_disabled is None` 表示这一趟
+                    # **没读到**上游状态，那就别把话说满（上面 True 的分支已如实报失败）。
                     'message': (f'已启用该账号（{bit_msg}'
-                                + ('；并已解除系统禁用' if revived else '') + '）')
+                                + ('；并已解除系统禁用' if revived else '')
+                                + ('；但读不到上游状态，未能确认它是否仍被系统禁用'
+                                   if still_disabled is None else '')
+                                + '）')
                                + ('，正在重载上游使其生效' if reloaded else ''),
                 }
             # 状态位没走通（多半是上游没开管理接口）。这时**必须先看一眼**它是不是

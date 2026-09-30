@@ -681,6 +681,16 @@ class ReviveIfDisabledTest(unittest.TestCase):
         self.assertFalse(still)
         self.assertEqual(calls, [])
 
+    def test_unknown_status_is_none_not_false(self) -> None:
+        """读不到状态时第三位必须是 `None`（不知道），不是 `False`（确认没被禁用）。
+
+        复核补的：原来这一位是 bool，调用方拿到 `False` 就会**无条件报成功**
+        （「已启用」），而那时我们其实什么都没确认 —— 正是这个功能要消灭的那类误导。
+        """
+        (revived, msg, still), _ = self._run([None])
+        self.assertIsNone(still, '把「读不到状态」当成了「确认没被禁用」')
+        self.assertIn('读不到', msg)
+
 
 class ReviveAfterLoginTest(unittest.TestCase):
     """重新登录后的自动恢复：等账号入池 → 仍被禁用就解除。"""
@@ -817,6 +827,21 @@ class EnableRouteRevivesTest(unittest.TestCase):
         self.assertTrue(resp.json()['ok'])
         self.assertEqual(calls, [])
 
+    def test_enable_with_unknown_status_says_so(self) -> None:
+        """启用成功了、但读不到上游状态时：报成功可以，**别把话说满**。
+
+        复核补的：这一档原来会回一句干净的「已启用」——用户以为账号已经回到池子，
+        而面板连它是否仍被系统禁用都没读到。现在如实带上这一句。
+        """
+        resp, calls = self._enable([None])
+        self.assertEqual(resp.status_code, 200, resp.text)
+        out = resp.json()
+        self.assertTrue(out['ok'], '状态位确实清掉了，这一档仍应算成功')
+        self.assertIn('未能确认', out['message'],
+                      f'读不到状态却报了一句干净的「已启用」：{out["message"]}')
+        self.assertNotIn('并已解除系统禁用', out['message'], '并没有真的解除（读不到状态）')
+        self.assertEqual(calls, [], '读不到状态时不该去 revive')
+
 
 class LoginRevivesTest(unittest.TestCase):
     """登录收尾必须挂上自动恢复 —— 忘了挂是这类修复最典型的失败形态。"""
@@ -850,6 +875,50 @@ class LoginRevivesTest(unittest.TestCase):
         """没有运行中的循环（测试/脚本直呼）时不能抛 —— 登录已经成功了。"""
         from server.routers import accounts
         accounts._schedule_revive_after_login(UID, {'base_url': 'http://x'})   # 不该抛
+
+    def test_scheduled_task_is_held_then_released(self) -> None:
+        """排出去的任务要被**强引用**，跑完再摘掉。
+
+        复核补的：`create_task()` 的结果原来没人接住 —— asyncio 只保留弱引用，
+        任务可能在执行途中被 GC 掉，症状是「这个修复有时不生效」且不报错。
+        这里连带把引用表的一生也钉住：排上 → 表里有 → 跑完 → 表里没了。
+        """
+        from server.routers import accounts
+        ran: list = []
+
+        async def fake(uid, group):
+            ran.append(uid)
+
+        async def run():
+            with mock.patch.object(accounts, '_revive_after_login', fake):
+                accounts._schedule_revive_after_login(UID, {'base_url': 'http://x'})
+                self.assertEqual(len(accounts._revive_tasks), 1,
+                                 '调度后没有持有任务引用（可能被 GC 掉）')
+                for _ in range(5):
+                    await asyncio.sleep(0)
+                self.assertEqual(accounts._revive_tasks, set(), '跑完没有摘掉引用')
+
+        asyncio.run(run())
+        self.assertEqual(ran, [UID])
+
+    def test_scheduling_failure_never_escapes(self) -> None:
+        """排不上任务也不能抛出去 —— 登录已经成功，这里抛会把 200 变成 500。
+
+        整段（不只是 `get_running_loop`）都要兜住：`create_task` 那一步同样会抛，
+        而它冒出去会顺着 `_save_and_finish` 一路到 `auth_poll`。
+        """
+        from server.routers import accounts
+
+        class _BadLoop:
+            def create_task(self, coro):
+                coro.close()
+                raise RuntimeError('boom')
+
+        async def run():
+            with mock.patch.object(asyncio, 'get_running_loop', lambda: _BadLoop()):
+                accounts._schedule_revive_after_login(UID, {'base_url': 'http://x'})  # 不该抛
+
+        asyncio.run(run())
 
 
 if __name__ == '__main__':

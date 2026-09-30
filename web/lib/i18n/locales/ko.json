@@ -341,6 +341,7 @@
     "restarted": "업스트림을 재시작했습니다",
     "disabledReason": "비활성화 사유: {reason}",
     "badgeDisabled": "● 비활성화됨",
+    "badgeDisabledTitle": "업스트림이 이 계정을 자동으로 비활성화했습니다(세션 만료 반복 또는 업스트림 차단). 오른쪽의 \"사용\"을 누르면 시스템 비활성화가 해제되어 계정 풀에 돌아갑니다. 다시 로그인하라는 안내가 나오면 한 번 더 로그인하세요(로그인 자체도 비활성화를 자동 해제합니다).",
     "badgeDisabledByPanel": "● 일시중지",
     "badgeManualDisabled": "● 일시중지",
     "badgeDisabledByPanelTitle": "이 화면에서 일시중지했습니다: 업스트림이 로드하지 않으므로 선택되지 않습니다. 오른쪽 \"사용\"으로 언제든 복구할 수 있습니다(자격 증명은 유지).",

@@ -365,6 +365,7 @@
     "restarted": "Upstream restarted",
     "disabledReason": "Disabled reason: {reason}",
     "badgeDisabled": "● Disabled",
+    "badgeDisabledTitle": "The upstream disabled this account automatically (repeated session failures, or a ban on the upstream side). Click \"Enable\" on the right to clear the system disable and put it back in the pool. If it says you need to sign in again, re-run the login once — signing in also clears the disable automatically.",
     "badgeDisabledByPanel": "● Paused",
     "badgeManualDisabled": "● Paused",
     "badgeDisabledByPanelTitle": "You paused this account here: the upstream will not load it, so it is never selected. Press \"Enable\" to restore it anytime (credentials are kept).",

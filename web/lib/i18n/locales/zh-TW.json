@@ -341,6 +341,7 @@
     "restarted": "已重新啟動上游",
     "disabledReason": "停用原因：{reason}",
     "badgeDisabled": "● 已停用",
+    "badgeDisabledTitle": "上游已自動停用該帳號（連續登入失效，或被上游封禁）。點右側的「啟用」即可解除系統停用、把它放回帳號池；若提示需要重新登入，請先重新掃碼登入一次（重新登入本身也會自動解除停用）。",
     "badgeDisabledByPanel": "● 已停用",
     "badgeManualDisabled": "● 已停用",
     "badgeDisabledByPanelTitle": "你已在本面板臨時停用該帳號：上游不會載入它、不會被選中。點右側的「啟用」可隨時恢復（憑證不會遺失）。",

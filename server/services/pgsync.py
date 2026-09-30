@@ -68,6 +68,9 @@ _MIRROR_PREFIX = '_wb_'
 # 单事务内存与体积上去、进度更新也变粗。1000 行 × 十几列对本项目约几百 KB。
 BATCH = 1000
 
+# 连接超时（秒）：见导出/恢复里的说明。探测接口用的是同一个值。
+CONNECT_TIMEOUT = 8
+
 # 状态文件里的日志上限：备份会逐表写日志，大库几十条就够，不必无限增长。
 MAX_LOGS = 200
 
@@ -536,7 +539,9 @@ def export_to_pg(cfg: dict, reporter: _Reporter) -> dict:
     reporter.log(f'已生成一致性快照（{snapshot.stat().st_size // 1024} KB）')
     src = _SqliteSource(snapshot)
     try:
-        with psycopg.connect(dsn) as pg:
+        # connect_timeout：黑洞地址（SYN 被丢）下 libpq 会挂到 OS 默认超时（分钟级），
+        # 期间任务锁一直占着、界面「进行中」不动。8 秒足够建立内网/公网连接。
+        with psycopg.connect(dsn, connect_timeout=CONNECT_TIMEOUT) as pg:
             sink = _PgSink(pg)
             tables = src.tables()
             reporter.data['tables_total'] = len(tables)
@@ -640,13 +645,20 @@ def import_from_pg(cfg: dict, reporter: _Reporter) -> dict:
             reporter.log(f'恢复前已备份当前数据到 {backup.name}')
 
     conn = db.connect()
-    with psycopg.connect(dsn) as pg:
+    # 同导出：连接阶段也要有超时（见上面的说明）。这里刻意**在取 db._lock 之前**连接，
+    # 所以连不上时面板不会跟着卡住。
+    with psycopg.connect(dsn, connect_timeout=CONNECT_TIMEOUT) as pg:
         src = _PgSource(pg)
         available = set(src.tables())
         local = _local_tables(conn)
         missing = sorted(local - available)
         if missing:
-            reporter.log('镜像里没有这些表，恢复后将保持为空：' + '、'.join(missing), 'warn')
+            # 措辞必须与行为一致：这些表**不会被清空**。恢复的语义虽然有「让本地等于
+            # 镜像」的一面，但镜像可能来自更早的版本（那时这张表还不存在），清空等于
+            # 把镜像里根本没有的数据删掉 —— 那是不可恢复的损失。所以保持现状，只提示。
+            reporter.log(
+                '镜像里没有这些表，恢复不会改动它们（保持现状）：' + '、'.join(missing),
+                'warn')
         total = len(available & local)
         reporter.data['tables_total'] = total
 
@@ -662,6 +674,8 @@ def import_from_pg(cfg: dict, reporter: _Reporter) -> dict:
                         # 两边同名却没有任何公共列 —— 结构已经对不上了。
                         # 这时**不清空**：清掉等于把一张表的数据凭空删掉，
                         # 而镜像里那份又灌不进来。
+                        # （遍历的是 available & local 的交集，所以这里的「没有公共列」
+                        #   就是字面意思；镜像有、本地没有的表根本不会进这个循环。）
                         reporter.log(f'跳过 {table}（与镜像没有公共列）', 'warn')
                         reporter.data['tables_done'] = index
                         continue
@@ -748,14 +762,19 @@ def _run_job(kind: str, cfg: dict) -> None:
 
 
 def test_connection(cfg: dict) -> dict:
-    """探测连通性。不抛异常 —— 结果直接回给界面。"""
-    try:
-        psycopg = _require_psycopg()
-    except RuntimeError as exc:
-        return {'ok': False, 'message': str(exc)}
+    """探测连通性。不抛异常 —— 结果直接回给界面。
+
+    **先验配置、再要驱动**：地址没填是用户当下要改的东西，而缺驱动是环境问题。
+    反过来的话，没装驱动的机器上填了个空地址，用户看到的是「未安装驱动」——
+    照着它去装驱动，回来还是连不上（因为地址仍然空着）。
+    """
     try:
         dsn = build_dsn(cfg)
     except ValueError as exc:
+        return {'ok': False, 'message': str(exc)}
+    try:
+        psycopg = _require_psycopg()
+    except RuntimeError as exc:
         return {'ok': False, 'message': str(exc)}
     try:
         with psycopg.connect(dsn, connect_timeout=8) as conn:

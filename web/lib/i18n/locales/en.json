@@ -1101,7 +1101,7 @@
     "loading": "Loading backup settings…",
     "loadFailed": "Could not load the backup settings — this does not mean none were saved. Please retry.",
     "title": "PostgreSQL off-site backup",
-    "desc": "Mirrors all local data (account notes, keys, request logs, usage stats, settings…) to a PostgreSQL server. The panel keeps reading and writing its local database; PostgreSQL is only an **off-site vault**: if the server dies, install the panel on a new machine, enter the same connection details, and click \"Restore from PostgreSQL\" to pull the data back.",
+    "desc": "Mirrors all local data (account notes, keys, request logs, usage stats, settings…) to a PostgreSQL server. The panel keeps reading and writing its local database; PostgreSQL is only an **off-site vault**: if the server dies, install the panel on a new machine, enter the same connection details, and click \"Restore from PostgreSQL\" to pull the data back.\n\nThe backup covers the business data in the local database (account notes, keys, request logs, usage stats, settings…). `.env` and the admin account file are NOT included — carry those over yourself when restoring on a new machine.",
     "connTitle": "Connection",
     "host": "Host",
     "hostHint": "Hostname or IP of the PostgreSQL server. Private addresses are fine (e.g. 127.0.0.1, 172.17.0.1).",
@@ -1147,7 +1147,8 @@
     "kindImport": "Restore from PostgreSQL",
     "tableProgress": "Table {done}/{total}",
     "rowCount": "{n} rows",
-    "warn": "**Restoring overwrites local data.** If all you want is \"don't lose data\", scheduled migration is enough; restore is only needed when changing machines or after real data loss."
+    "warn": "**Restoring overwrites local data.** If all you want is \"don't lose data\", scheduled migration is enough; restore is only needed when changing machines or after real data loss.",
+    "dbnameHint": "Use a **dedicated database**: the migration rebuilds tables, so a same-named table already in that database will be replaced."
   },
   "settings": {
     "title": "Settings",

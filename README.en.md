@@ -250,7 +250,11 @@ upstream repo is gone, and its source is now maintained here.
   move onto PostgreSQL
 - Under Settings → Data backup, fill in host / port / database / user / password and
   **test the connection before saving**
-- **Migrate to PostgreSQL**: mirrors all local data over (reads local data only)
+- **Migrate to PostgreSQL**: mirrors all local data over (reads local data only).
+  The backup covers **the local database** (account notes / keys / request logs / usage /
+  settings…); `.env` and the admin account file are **not** included, so carry those over
+  yourself when restoring on a new machine. Point it at a **dedicated database** — the
+  migration rebuilds tables, so a same-named table already in that database gets replaced
 - **Restore from PostgreSQL**: install the panel on a new machine, enter the same
   connection details, and pull the data back in one click. A copy of the current local
   database is saved under `data/` first, so a mistaken restore can be undone

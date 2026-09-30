@@ -1141,3 +1141,63 @@ export interface CreatedRedPacket {
   expires_at: number;
   keys: ApiKey[];
 }
+
+/* ── PostgreSQL 异地备份（设置 → 数据备份）────────────── */
+
+/**
+ * 连接配置。密码在读取时恒为掩码（`********`），保存时原样回传表示「不改动」——
+ * 见 `server/services/pgsync.py` 的 merge_form。
+ */
+export interface PgSyncConfig {
+  /** 是否开启定时自动备份 */
+  enabled: boolean;
+  host: string;
+  port: number;
+  dbname: string;
+  user: string;
+  password: string;
+  /** libpq 的 sslmode；prefer 是默认值，不写进连接串 */
+  sslmode: string;
+  /** 自动备份间隔（分钟）；0 = 只手动 */
+  interval_minutes: number;
+  /** 恢复前是否自动备份本地库 */
+  keep_local_backup: boolean;
+  /** 上次导出完成的时刻（0 = 从未） */
+  last_export_at: number;
+  /** 上次恢复完成的时刻（0 = 从未） */
+  last_import_at: number;
+}
+
+export interface PgSyncLogLine {
+  ts: number;
+  level: string;
+  text: string;
+}
+
+export interface PgSyncStatus {
+  running: boolean;
+  /** 空串 = 从未跑过 */
+  kind: '' | 'export' | 'import';
+  /** null = 未运行过 */
+  ok: boolean | null;
+  step: string;
+  /** 0-100 */
+  percent: number;
+  tables_total: number;
+  tables_done: number;
+  rows: number;
+  logs: PgSyncLogLine[];
+  started_at: number;
+  finished_at: number;
+}
+
+export interface PgSyncConfigResponse {
+  config: PgSyncConfig;
+  status: PgSyncStatus;
+}
+
+export interface PgSyncTestResult {
+  ok: boolean;
+  message: string;
+  server_version?: string;
+}

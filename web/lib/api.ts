@@ -26,6 +26,10 @@ import type {
   ModelCatalog,
   ModelListResponse,
   Page,
+  PgSyncConfig,
+  PgSyncConfigResponse,
+  PgSyncStatus,
+  PgSyncTestResult,
   PlaygroundModels,
   RedPacket,
   RedPacketDetail,
@@ -585,4 +589,22 @@ export const systemApi = {
     del<{ok: boolean; message: string}>('/api/system/update-status'),
   /** 更新日志（解析仓库根目录 CHANGELOG.md，离线可用） */
   changelog: () => get<Changelog>('/api/system/changelog'),
+};
+
+/* ── PostgreSQL 异地备份（设置 → 数据备份）────────────── */
+export const pgSyncApi = {
+  config: () => get<PgSyncConfigResponse>('/api/settings/pg-sync'),
+  /** 保存连接配置；password 传掩码或空串表示沿用已保存的值 */
+  save: (body: Partial<PgSyncConfig>) =>
+    post<{config: PgSyncConfig}>('/api/settings/pg-sync', body),
+  /** 探测连通性。表单里刚填的值优先，没填的字段回落到已保存的配置 */
+  test: (body: Partial<PgSyncConfig>) =>
+    post<PgSyncTestResult>('/api/settings/pg-sync/test', body),
+  /** 把本地数据全量推到 PostgreSQL（只读本地，不会改动它） */
+  exportData: () =>
+    post<{ok: boolean; message: string; status: PgSyncStatus}>('/api/settings/pg-sync/export'),
+  /** 从 PostgreSQL 拉回数据。**会覆盖本地数据**，前端必须先二次确认 */
+  importData: () =>
+    post<{ok: boolean; message: string; status: PgSyncStatus}>('/api/settings/pg-sync/import'),
+  status: () => get<PgSyncStatus>('/api/settings/pg-sync/status'),
 };

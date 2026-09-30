@@ -1,4 +1,4 @@
-"""设置页 7 个 Tab 的可寻址子路由（批次 4 的 P1-2）+ 结构不变式。
+"""设置页 8 个 Tab 的可寻址子路由（批次 4 的 P1-2）+ 结构不变式。
 
 为什么值得有：这一批把「一页 2060 行的单页」改成 `/settings/<tab>`，做错了**界面
 不报错**，只是行为悄悄变差——
@@ -39,8 +39,8 @@ _VERIFY = _ROOT / 'dev' / 'verify_state_honesty.mjs'
 _LOCALES = _ROOT / 'web' / 'lib' / 'i18n' / 'locales'
 _NODE = shutil.which('node')
 
-# 路线图里写死的数字：7 个 Tab。多一个少一个都要有人主动改这里（以及 CHANGELOG）。
-_TAB_COUNT = 7
+# 路线图里写死的数字：8 个 Tab。多一个少一个都要有人主动改这里（以及 CHANGELOG）。
+_TAB_COUNT = 8
 
 # 只跑 .mjs，不碰 .ts —— Node 的 type stripping 从 22.6 起才有
 _MIN_MAJOR = 22

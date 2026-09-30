@@ -44,6 +44,7 @@ const STUB = {
   'nav.groupOverview': '总览', 'nav.groupOps': '运营', 'nav.groupGovernance': '治理',
   'settings.tabUpstream': '上游配置', 'settings.tabModels': '模型映射',
   'settings.tabUsers': '用户', 'settings.tabTokens': '令牌', 'settings.tabSystem': '系统',
+  'settings.tabBackup': '数据备份',
   'settings.tabChangelog': '更新日志', 'settings.tabAbout': '关于',
 };
 const t = (key) => STUB[key] ?? key;
@@ -75,7 +76,7 @@ check(
 );
 
 check(
-  '设置页 7 个 Tab 都在面板里，且标签键与清单模块一致',
+  '设置页 8 个 Tab 都在面板里，且标签键与清单模块一致',
   SETTINGS_TABS.map((tab) => {
     const found = byHref.get(settingsTabHref(tab));
     return found ? found.labelKey === SETTINGS_TAB_LABEL_KEYS[tab] : `缺 ${settingsTabHref(tab)}`;
@@ -184,7 +185,7 @@ check('路径可直接搜（/settings/tokens）',
 check('同一次输入两次给同一个顺序（否则列表在眼前跳）',
       ids(matchCommands(nav, '设置')), ids(matchCommands(nav, '设置')));
 
-check('「设置」能搜到设置页与它的 7 个 Tab',
+check('「设置」能搜到设置页与它的 8 个 Tab',
       ids(matchCommands(nav, '设置')).includes('/settings') &&
       ids(matchCommands(nav, '设置')).includes('/settings/users'),
       true);

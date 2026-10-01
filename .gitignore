@@ -99,6 +99,8 @@ dev/.account-note
 dev/.shots-account-note
 # 账号分组验收（verify_account_groups_ui.py）的临时数据（截图随 PR 提交，不忽略）
 dev/.account-groups
+# 出口线路验收（verify_account_proxy_ui.py）的临时数据（截图随 PR 提交，不忽略）
+dev/.account-proxy
 # 提示词缓存标记验收（verify_cache_log_ui.py）的临时数据与截图
 dev/.cache-log
 dev/.shots-cache-log

@@ -1043,19 +1043,25 @@ async def _docker_restart(name: str) -> tuple[bool, str]:
         return False, str(exc)
 
 
-def read_container_logs(limit: int = 200, timestamps: bool = True) -> list[str]:
+def read_container_logs(limit: int = 200, timestamps: bool = True,
+                        with_mtime: bool = False) -> list[str] | tuple[list[str], float | None]:
     """读取上游日志（原生日志文件或 Docker，失败返回空列表）。
 
     默认带 `--timestamps`：docker 会在每行前面加上精确到纳秒的 RFC3339 时间，
     自动任务日志据此获得准确时间并据此去重（上游自己的 log 前缀精度只到秒）。
+
+    `with_mtime=True` 额外返回原生日志文件的 mtime；Docker 模式返回 None。
+    账号回填需要它：原生日志行只有 `HH:MM:SS`，没有日期，不能单独还原 epoch。
     """
     if config.WB2API_MODE == 'native':
         try:
             count = max(1, min(5000, limit))
+            mtime = config.WB2API_LOG_FILE.stat().st_mtime
             with config.WB2API_LOG_FILE.open('r', encoding='utf-8', errors='replace') as fh:
-                return [ln.rstrip('\r\n') for ln in deque(fh, maxlen=count) if ln.strip()]
+                lines = [ln.rstrip('\r\n') for ln in deque(fh, maxlen=count) if ln.strip()]
+            return (lines, mtime) if with_mtime else lines
         except Exception:  # noqa: BLE001
-            return []
+            return ([], None) if with_mtime else []
 
     import subprocess
 
@@ -1067,9 +1073,10 @@ def read_container_logs(limit: int = 200, timestamps: bool = True) -> list[str]:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
         # docker logs 把应用日志写到 stderr
         raw = (proc.stdout or '') + (proc.stderr or '')
-        return [ln for ln in raw.splitlines() if ln.strip()]
+        lines = [ln for ln in raw.splitlines() if ln.strip()]
+        return (lines, None) if with_mtime else lines
     except Exception:  # noqa: BLE001
-        return []
+        return ([], None) if with_mtime else []
 
 
 # 管理端**允许读写**的上游配置段。既是 `save_upstream_config` 的写入白名单，
@@ -1180,7 +1187,7 @@ def load_upstream_config() -> dict:
 
 
 # 上游 config.json 的可视化字段类型约束：
-#   *_hours 是 []int（整点数组），cooldown.* 是时长字符串（30s/10m/2h/1d）
+#   *_hours 是 []int（整点数组），cooldown.* 是时长字符串（30s/10m/2h）
 def _has_control_chars(v: str) -> bool:
     """是否含换行或控制字符（路径 / UA 这类单行文本不允许）。"""
     return any(ord(ch) < 32 for ch in v)
@@ -1248,7 +1255,9 @@ def _check_float(key: str, raw: object) -> float:
     if not lo <= val <= hi:
         raise ValueError(f'{key} 必须在 {lo}-{hi}{unit} 之间（收到 {raw}）')
     return val
-_DURATION_RE = re.compile(r'^\d+\s*(s|m|h|d)$', re.IGNORECASE)
+# 上游用 Go time.ParseDuration，**不认 `d`**：写 `7d` 会让上游启动失败。
+# 面板与后端必须用同一份口径，只放行 Go 能解析的 s/m/h。
+_DURATION_RE = re.compile(r'^\d+\s*(s|m|h)$', re.IGNORECASE)
 
 
 def _sanitize_section(section: str, incoming: dict) -> dict:
@@ -1272,7 +1281,7 @@ def _sanitize_section(section: str, incoming: dict) -> dict:
             or key in ('ttl', 'gc_interval')
         ):
             if not _DURATION_RE.match(raw.strip()):
-                raise ValueError(f'{key} 时长格式有误，应为 30s / 10m / 2h / 1d')
+                raise ValueError(f'{key} 时长格式有误，应为 30s / 10m / 2h')
             out[key] = raw.strip()
         elif section == 'prompt' and key == 'mode':
             # 上游对非法值是**启动报错**（cmd/server/config.go:429
@@ -1327,7 +1336,7 @@ def _sanitize_section(section: str, incoming: dict) -> dict:
             # 所以不能套上面那条「必须匹配时长格式」的规则（否则用户没法关掉）。
             val = str(raw or '').strip()
             if val and val != '0' and not _DURATION_RE.match(val):
-                raise ValueError('expiring_soon 时长格式有误，应为 168h / 7d；留空或 0 = 禁用')
+                raise ValueError('expiring_soon 时长格式有误，应为 168h / 1h；留空或 0 = 禁用')
             out[key] = val
         elif key in _INT_RANGES:
             # 统一区间校验（activity_report_count 等；见 _INT_RANGES 注释）

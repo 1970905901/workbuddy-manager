@@ -273,6 +273,11 @@
     "hourlyAgg": "按小時（當日彙總）"
   },
   "accounts": {
+    "proxyLine": "出口線路",
+    "proxyDirect": "預設出口",
+    "proxyMissing": "線路已失效",
+    "proxySaved": "出口線路已更新",
+
     "title": "帳號管理",
     "descCn": "騰訊 CodeBuddy 帳號池：Token 有效期、簽到與連線測試（每 30 秒自動重新整理）",
     "descGlobal": "騰訊 CodeBuddy 帳號池（國際版）：Token 有效期與連線測試（每 30 秒自動重新整理）",

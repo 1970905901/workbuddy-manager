@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import socket
+import ssl
 import tempfile
 import time
 from pathlib import Path
@@ -1631,12 +1632,139 @@ def _reject_internal_host(host: str) -> str | None:
     return None
 
 
-async def test_upstash(url: str, token: str | None = None) -> tuple[bool, str]:
-    """用 Upstash REST 接口探测连通性（PING）。token 留空时取配置文件中的值。
+_REDIS_SCHEMES = ('redis', 'rediss')
 
-    安全：地址经 `_reject_internal_host` 过滤——这是服务端代发起请求的接口，
-    不能让它打到内网或云元数据端点（SSRF）。
+
+def _redis_target(url: str) -> dict | None:
+    """把 redis:// / rediss:// 地址拆成 (scheme, host, port, username, password)。
+
+    只认标准写法，不做安全判定（与 `_upstash_rest_base` 同一条约定：判定在调用方）：
+      redis://host:6379          redis://:密码@host:6379/0
+      redis://用户名:密码@host:6379   rediss://host:6380（TLS）
+    非 redis/rediss 的 scheme 返回 None —— 那条路走 Upstash REST。
     """
+    raw = (url or '').strip()
+    if '://' not in raw:
+        return None
+    scheme, rest = raw.split('://', 1)
+    scheme = scheme.lower()
+    if scheme not in _REDIS_SCHEMES:
+        return None
+    userinfo, _, hostpart = rest.rpartition('@')
+    hostpart = hostpart.split('/', 1)[0]          # 去掉 /0 这类 db 序号（PING 不挑库）
+    host, _, port = hostpart.rpartition(':')
+    if not host:                                  # 没写端口
+        host, port = hostpart, ''
+    username = password = ''
+    if userinfo:
+        username, sep, password = userinfo.partition(':')
+        if not sep:                               # redis://user@host：只有用户名
+            username, password = userinfo, ''
+    return {
+        'scheme': scheme,
+        'host': host.strip(),
+        'port': int(port) if port.strip().isdigit() else 6379,
+        'username': username,
+        'password': password,
+    }
+
+
+def _resp_command(*parts: str) -> bytes:
+    """按 RESP 数组编码一条命令（内联命令在密码含空格/二进制时不安全）。"""
+    out = [f'*{len(parts)}\r\n'.encode()]
+    for part in parts:
+        raw = part.encode('utf-8')
+        out.append(b'$%d\r\n%s\r\n' % (len(raw), raw))
+    return b''.join(out)
+
+
+async def _resp_read_reply(reader: asyncio.StreamReader) -> tuple[str, str]:
+    """读一条 RESP 回复 → (kind, text)。kind ∈ {'+', '-', ':', '$', '*'}。"""
+    line = (await reader.readline()).decode('utf-8', 'replace').rstrip('\r\n')
+    if not line:
+        raise ConnectionError('连接被对端关闭')
+    kind, body = line[0], line[1:]
+    if kind == '$':                               # 批量字符串：还要读正文
+        size = int(body or -1)
+        if size < 0:
+            return kind, ''
+        data = await reader.readexactly(size + 2)
+        return kind, data[:-2].decode('utf-8', 'replace')
+    if kind == '*':                               # 数组：这里只关心有没有报错
+        return kind, body
+    return kind, body
+
+
+async def _redis_ping(url: str, timeout: float = 5.0) -> tuple[bool, str]:
+    """用 RESP 协议真发一个 PING —— 自建 Redis 的连通性只能这样验。
+
+    为什么**不套用** REST 那套「只放行公网」的判定：自建 Redis 在私网、甚至回环
+    （宿主机原生部署就是 127.0.0.1:6379）都是正常形态，而这条路上探测的地址本就
+    是用户自己填给上游用的存储地址；拦掉的话按钮就变成必现误报 —— 明明上游连得
+    上，面板却说地址不允许（issue #125）。元数据主机名仍然拒绝（见 `_BLOCKED_HOSTNAMES`），
+    那是最小的一块高风险面，且不影响任何正常部署。
+    """
+    target = _redis_target(url)
+    if not target or not target['host']:
+        return False, '请先填写 Redis 地址'
+    host = target['host']
+    if host.strip().lower() in _BLOCKED_HOSTNAMES:
+        return False, f'{host} 是不允许探测的内部地址'
+
+    ssl_ctx = ssl.create_default_context() if target['scheme'] == 'rediss' else None
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, target['port'], ssl=ssl_ctx), timeout)
+    except asyncio.TimeoutError:
+        return False, f'无法连接：{host}:{target["port"]} 超时'
+    except Exception as exc:  # noqa: BLE001
+        return False, f'无法连接：{_err_text(exc)}'
+
+    try:
+        if target['password']:
+            # 新老服务端都要能用：给了用户名（且不是 default）才发三参数 AUTH
+            # （Redis 6+ 的 ACL 写法），否则用两参数 —— 老版本只认这一种。
+            if target['username'] and target['username'] != 'default':
+                writer.write(_resp_command('AUTH', target['username'], target['password']))
+            else:
+                writer.write(_resp_command('AUTH', target['password']))
+            await writer.drain()
+            kind, body = await asyncio.wait_for(_resp_read_reply(reader), timeout)
+            if kind == '-':
+                return False, f'认证失败：{body[:80]}'
+        writer.write(_resp_command('PING'))
+        await writer.drain()
+        kind, body = await asyncio.wait_for(_resp_read_reply(reader), timeout)
+        if kind == '-':
+            return False, f'Redis 返回错误：{body[:80]}'
+        if kind == '+' and body.strip().upper() == 'PONG':
+            return True, '连接正常（PONG）'
+        return True, f'已连通，响应：{body[:60]}'
+    except asyncio.TimeoutError:
+        return False, '无法连接：等待响应超时'
+    except Exception as exc:  # noqa: BLE001
+        return False, f'无法连接：{_err_text(exc)}'
+    finally:
+        try:
+            writer.close()
+            await asyncio.wait_for(writer.wait_closed(), 2)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def test_upstash(url: str, token: str | None = None) -> tuple[bool, str]:
+    """探测 Redis 存储的连通性，按地址形态分流：
+
+      · `redis://` / `rediss://` → 真发 RESP `PING`（自建 Redis 的验法，见 `_redis_ping`）；
+      · 其余（`https://` 的 Upstash REST）→ POST `/ping` + Bearer Token。
+
+    安全：**REST 分支**的地址经 `_reject_internal_host` 过滤——它是「服务端代发
+    请求并回显响应片段」，不能打到内网或云元数据端点（SSRF）。RESP 分支不套这套
+    判定（自建 Redis 在私网/回环是正常形态，见 `_redis_ping` 的说明），只拒元数据
+    主机名。
+    """
+    if (url or '').strip().lower().startswith(_REDIS_SCHEMES):
+        return await _redis_ping(url)
     base = _upstash_rest_base(url)
     if not base:
         return False, '请先填写 Upstash 地址'

@@ -9,7 +9,9 @@
     | #971 | 14:58:13 | deepseek-v4.1-flash | stream | 200 | 6509授(3a3a19b1) | TTFB=1083ms | ...
 
 Docker 模式下 `docker logs --timestamps` 会给每行加**纳秒级**的 RFC3339 前缀；
-原生模式写文件时没有这层前缀，但上游自己的请求行带有完整日期。两种情况都要能
+原生模式写文件时没有这层前缀，而**行内只有 `HH:MM:SS`**（上游 `logging.go` 用的
+就是 `time.Now().Format("15:04:05")`，不带日期）——所以原生模式要靠日志文件的
+mtime 作日期锚点、再按行内时钟还原秒数，见 `_native_timestamps`。两种情况都要能
 还原出「请求结束」时刻：本端 `request_logs.ts` 记的也是该时刻（`_record` 在流
 收尾时取 `int(time.time())`），所以两边可以直接对齐——实测同一批请求误差 < 1 秒。
 
@@ -88,10 +90,13 @@ def _parse_docker_ts(raw: str) -> int | None:
 
 
 def _normalize_account(raw: str) -> str:
-    """兼容上游两种账号写法。
+    """把账号标签归一成「可以直接拿去比对」的字符串。
 
-    旧版日志是 `昵称(uid8)`；当前服务器源码是 `uid=<uid8>`。旧版保留原文供界面
-    显示昵称，新版只保留 uid 前缀，统一交给数据库按 64 字符清洗。
+    我们手上的上游源码用的是 `logfmt.Label`，聊天行里输出的是 **`昵称(uid8)`**
+    （见 `internal/server/logging.go`）——这种保留原文，界面正要靠它显示昵称。
+    `uid=<uid8>` 这种形态**不是**当前上游聊天行的写法（`uid=` 只出现在它的错误串
+    里），但实测有构建/日志路径会这么打，所以顺手容错：见到前缀就剥掉。
+    两者最后都交给数据库按 64 字符清洗。
     """
     value = raw.strip()
     if value.lower().startswith('uid='):

@@ -276,7 +276,9 @@ export function AddAccountDialog({
               <div className="text-[11px] font-medium">{t('accounts.proxyLine')}</div>
               <Select value={proxy ? `route:${proxy}` : 'default'} disabled={!routesReady}
                       onValueChange={(value) => setProxy(value === 'default' ? '' : value.slice(6))}>
-                <SelectTrigger className="h-9 w-full rounded-full text-xs"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-9 w-full rounded-full text-xs" aria-label={t('accounts.proxyLine')}>
+                <SelectValue />
+              </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="default">{t('accounts.proxyDirect')}</SelectItem>
                   {proxy && !proxyRoutes.includes(proxy) &&

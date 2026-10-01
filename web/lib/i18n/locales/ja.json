@@ -212,6 +212,7 @@
     "globalTotalsNote": "上流がエディション別の集計を返さないため、上記は 2 つのエディションの合計です",
     "noUpstreamStatus": "上流の状態を取得できませんでした",
     "healthSnapshot": "アカウント健全性スナップショット",
+    "viewAllAccounts": "すべてのアカウントを表示",
     "noAccounts": "アカウントがありません",
     "noAccountsHint": "画面下部の「クイック追加」から QR コードで Tencent アカウントを認証してください",
     "unusable": "{n} 件が使用不可",

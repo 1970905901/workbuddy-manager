@@ -236,6 +236,7 @@
     "globalTotalsNote": "Upstream reported no per-edition counts; the numbers above combine both editions",
     "noUpstreamStatus": "Upstream status unavailable",
     "healthSnapshot": "Account health snapshot",
+    "viewAllAccounts": "View all accounts",
     "noAccounts": "No accounts yet",
     "noAccountsHint": "Use Quick add in the bottom bar to sign in a Tencent account by QR code",
     "unusable": "{n} unusable",

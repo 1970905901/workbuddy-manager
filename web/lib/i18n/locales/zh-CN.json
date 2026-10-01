@@ -212,6 +212,7 @@
     "globalTotalsNote": "上游未提供分版本计数，以上为两个版本合计",
     "noUpstreamStatus": "未获取到上游状态",
     "healthSnapshot": "账号健康快照",
+    "viewAllAccounts": "查看全部账号",
     "noAccounts": "暂无账号",
     "noAccountsHint": "点击底栏「快速添加」扫码授权腾讯账号",
     "unusable": "{n} 个不可用",

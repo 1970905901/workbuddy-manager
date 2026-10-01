@@ -212,6 +212,7 @@
     "globalTotalsNote": "上游未提供分版本計數，以上為兩個版本合計",
     "noUpstreamStatus": "未取得上游狀態",
     "healthSnapshot": "帳號健康快照",
+    "viewAllAccounts": "查看全部帳號",
     "noAccounts": "暫無帳號",
     "noAccountsHint": "點擊底欄「快速新增」掃碼授權騰訊帳號",
     "unusable": "{n} 個無法使用",

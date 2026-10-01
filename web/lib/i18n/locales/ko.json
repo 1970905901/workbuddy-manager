@@ -212,6 +212,7 @@
     "globalTotalsNote": "업스트림이 버전별 집계를 제공하지 않아 위 수치는 두 버전 합계입니다",
     "noUpstreamStatus": "업스트림 상태를 가져오지 못했습니다",
     "healthSnapshot": "계정 상태 스냅샷",
+    "viewAllAccounts": "전체 계정 보기",
     "noAccounts": "계정이 없습니다",
     "noAccountsHint": "하단 바의 '빠른 추가'로 Tencent 계정을 QR 인증하세요",
     "unusable": "{n}개 사용 불가",

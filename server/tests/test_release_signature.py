@@ -36,6 +36,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -189,7 +190,9 @@ class SignatureVerifyTest(unittest.TestCase):
         """不能把「没签名」当成「通过」——否则攻击者只要不传 .sig 就绕过了。"""
         ok, rep, err = self._check(self.pkg, None)
         self.assertFalse(ok)
-        self.assertIn('没有可用的签名文件', rep.text() + err)
+        self.assertIn('尚未附带签名文件', rep.text() + err)
+        self.assertIn('稍后重试', rep.text() + err,
+                      '签名未就绪时要给出「稍后重试」这条路，而不是让人以为发布坏了')
 
     def test_wrong_public_key_rejected(self) -> None:
         """换成别人的公钥：签名对不上，必须拒绝。"""
@@ -250,7 +253,7 @@ class SignatureVerifyTest(unittest.TestCase):
         rep = _Rep()
         with self.assertRaises(RuntimeError) as ctx:
             mod.verify_release_signature(pkg, '', rep)
-        self.assertIn('没有可用的签名文件', str(ctx.exception))
+        self.assertIn('尚未附带签名文件', str(ctx.exception))
         self.assertFalse(Path(str(pkg) + '.sig').exists(), '不应凭空造出签名文件')
 
     def test_sig_download_failure_rejected(self) -> None:
@@ -261,9 +264,13 @@ class SignatureVerifyTest(unittest.TestCase):
         shutil.copyfile(self.pkg, pkg)
         missing = (work / 'does-not-exist.sig').as_uri()
         rep = _Rep()
-        with self.assertRaises(RuntimeError) as ctx:
-            mod.verify_release_signature(pkg, missing, rep)
-        self.assertIn('没有可用的签名文件', str(ctx.exception))
+        with mock.patch.object(mod.time, 'sleep', lambda *_: None):   # 别真等退避
+            with self.assertRaises(RuntimeError) as ctx:
+                mod.verify_release_signature(pkg, missing, rep)
+        # 这条是关键回归（issue #129）：下载失败是**网络问题**，不能报成
+        # 「没有签名文件 → 发布流程可能被改动」——那是把用户引向错误的方向。
+        self.assertIn('网络问题', str(ctx.exception))
+        self.assertNotIn('没有可用的签名文件', str(ctx.exception))
 
 
 class UpdateManagerWiringTest(unittest.TestCase):

@@ -1021,6 +1021,7 @@
     "allUpToDate": "管理端と上流はどちらも最新です",
     "checkedAgo": "（{ago}に確認）",
     "managerUpgrade": "管理端: {from} →",
+    "sigPending": "このバージョンは公開直後で、まだ署名が用意されていません（維護者が手元で署名します）。今更新すると拒否されます。数分〜数十分ほど置いて再試行してください。",
     "upstreamUpgrade": "上流: {from} →",
     "commitsBehind": "（{n} コミット遅れ）",
     "viewCommits": "この {n} コミットの変更内容を見る",

@@ -1021,6 +1021,7 @@
     "allUpToDate": "管理端与上游均为最新版本",
     "checkedAgo": "（{ago}检测）",
     "managerUpgrade": "管理端：{from} →",
+    "sigPending": "这个版本刚发布、签名还没就绪（维护者正在自己的机器上签），现在更新会被拒绝。稍后再试即可，一般几分钟到几十分钟。",
     "upstreamUpgrade": "上游：{from} →",
     "commitsBehind": "（落后 {n} 个提交）",
     "viewCommits": "查看这 {n} 个提交改了什么",

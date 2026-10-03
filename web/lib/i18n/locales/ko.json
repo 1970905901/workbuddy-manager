@@ -1021,6 +1021,7 @@
     "allUpToDate": "관리 콘솔과 업스트림 모두 최신입니다",
     "checkedAgo": "({ago} 확인)",
     "managerUpgrade": "관리 콘솔: {from} →",
+    "sigPending": "이 버전은 방금 공개되어 아직 서명이 준비되지 않았습니다(관리자가 직접 서명합니다). 지금 업데이트하면 거부됩니다. 보통 몇 분 뒤 다시 시도하면 됩니다.",
     "upstreamUpgrade": "업스트림: {from} →",
     "commitsBehind": "({n}개 커밋 뒤처짐)",
     "viewCommits": "이 {n}개 커밋에서 무엇이 바뀌었는지 보기",

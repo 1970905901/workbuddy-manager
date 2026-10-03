@@ -362,8 +362,9 @@ def check_signature(archive: Path, sig_path: Path, rep: Reporter) -> None:
 
     if not sig_path.is_file():
         raise RuntimeError(
-            '该 Release 没有可用的签名文件，已拒绝安装。\n'
-            '  正常发布流程会附带 .tar.gz.sig；缺失说明发布流程可能被改动。'
+            '该 Release 尚未附带签名文件，已拒绝安装。\n'
+            '  新版本发布后需要维护者在自己的机器上签名再上传（一般几分钟到几十分钟）；'
+            '稍后重试即可，不需要改任何配置。'
         )
 
     # ssh-keygen 要求 allowed_signers 格式（纯 .pub 文件不接受）
@@ -406,21 +407,48 @@ def check_signature(archive: Path, sig_path: Path, rep: Reporter) -> None:
 
 
 def download_signature(sig_url: str, archive: Path, rep: Reporter) -> Path:
-    """下载签名文件到包旁边，返回其路径。失败时抛错（不返回"空签名"）。"""
+    """下载签名文件到包旁边，返回其路径。失败时抛错（不返回"空签名"）。
+
+    两种失败要分开说（用户报过 #127/#129）：把**网络超时**说成「该 Release 没有
+    可用的签名文件」，会把人引到「发布流程是不是被改坏了」上去，而真正该做的是
+    稍后重试。所以：
+
+      · 404 → Release 里确实没有 `.sig`（维护者签名前的窗口期就是这种）→ 明说
+        「尚未附带签名文件，稍后重试」，不要暗示发布流程被改动；
+      · 其它（超时/连接失败）→ 明说「下载失败（网络问题）」并**重试三次**——
+        GitHub 资产 CDN 偶发超时很常见（维护者本机也遇到过整包下到一半卡住）。
+    """
     sig_path = archive.with_suffix(archive.suffix + '.sig')
     if not sig_url:
         return sig_path  # 让 check_signature 报「缺少签名文件」并给出清晰指引
     rep.log('下载签名文件…')
-    try:
-        req = urllib.request.Request(sig_url, headers={'User-Agent': 'workbuddy-manager-updater'})
-        with _opener().open(req, timeout=60) as resp, open(sig_path, 'wb') as fh:
-            shutil.copyfileobj(resp, fh)
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(
-            f'该 Release 没有可用的签名文件，已拒绝安装：{exc}\n'
-            '  正常发布流程会附带 .tar.gz.sig；缺失说明发布流程可能被改动。'
-        ) from exc
-    return sig_path
+    last: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            req = urllib.request.Request(sig_url,
+                                         headers={'User-Agent': 'workbuddy-manager-updater'})
+            with _opener().open(req, timeout=60) as resp, open(sig_path, 'wb') as fh:
+                shutil.copyfileobj(resp, fh)
+            return sig_path
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                sig_path.unlink(missing_ok=True)
+                raise RuntimeError(
+                    '该 Release 尚未附带签名文件，已拒绝安装。\n'
+                    '  新版本发布后需要维护者在自己的机器上签名再上传（一般几分钟到几十分钟）；'
+                    '稍后重试即可，不需要改任何配置。'
+                ) from exc
+            last = exc
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+        sig_path.unlink(missing_ok=True)      # 半截文件不能留给后面的验签
+        if attempt < 3:
+            rep.log(f'签名文件下载失败（{last}），第 {attempt}/3 次，稍后重试…', 'warn')
+            time.sleep(3 * attempt)
+    raise RuntimeError(
+        f'下载签名文件失败（网络问题，不是发布流程的问题）：{last}\n'
+        '  已重试 3 次。稍后再试；若一直失败，请检查这台服务器到 GitHub 的网络或代理设置。'
+    ) from last
 
 
 def verify_release_signature(archive: Path, sig_url: str, rep: Reporter) -> None:

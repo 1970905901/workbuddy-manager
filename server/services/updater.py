@@ -493,6 +493,9 @@ def tail_log(lines: int = 80) -> str:
 # 避免每次打开页面都去请求；用户可手动强制刷新。
 _VERSION_CACHE_FILE = config.DATA_DIR / 'version-check.json'
 VERSION_CACHE_TTL = 6 * 3600          # 6 小时
+# 「新版本已发布但还没有签名」时的短 TTL：这时结论随时会变（维护者签完就好），
+# 用 5 分钟换来界面及时恢复。
+_SIG_PENDING_TTL = 5 * 60
 UPSTREAM_API_REPO = os.environ.get('WB_UPSTREAM_API_REPO') or 'Sliverkiss/workbuddy2api'
 # 管理端仓库（owner/name），用于查询最新 Release
 MANAGER_REPO = os.environ.get('WB_MANAGER_REPO') or 'ithtelab/workbuddy-manager'
@@ -638,7 +641,7 @@ def _fetch_remote_versions() -> dict:
     """向 GitHub 查询管理端与上游的最新版本（不做缓存判断）。"""
     result: dict = {
         'checked_at': int(time.time()),
-        'manager': {'latest': '', 'url': '', 'error': ''},
+        'manager': {'latest': '', 'url': '', 'sig_ready': None, 'error': ''},
         'upstream': {'latest': '', 'date': '', 'subject': '', 'error': ''},
     }
 
@@ -648,6 +651,12 @@ def _fetch_remote_versions() -> dict:
         if isinstance(rel, dict):
             result['manager']['latest'] = str(rel.get('tag_name') or '')
             result['manager']['url'] = str(rel.get('html_url') or '')
+            # 是否已附带签名（发布后维护者签名前会有一段窗口期，见 issue #127/#129）：
+            # 现在就在版本检查里说清，别让用户点下去才被拒绝。
+            assets = rel.get('assets') or []
+            result['manager']['sig_ready'] = any(
+                str((a or {}).get('name') or '').endswith('.tar.gz.sig')
+                for a in assets if isinstance(a, dict))
     except urllib.error.HTTPError as exc:
         result['manager']['error'] = '未找到 Release' if exc.code == 404 else f'HTTP {exc.code}'
     except Exception as exc:  # noqa: BLE001
@@ -681,7 +690,10 @@ def check_updates(force: bool = False) -> dict:
     """检测是否有新版本。结果缓存 6 小时（GitHub 未认证 API 限流较严）。"""
     cache = _read_cache()
     age = time.time() - float(cache.get('checked_at') or 0)
-    if force or not cache or age > VERSION_CACHE_TTL:
+    # 已知「该版本还没有签名」时用短 TTL：签名一上传（通常几分钟）界面就该恢复
+    # 正常，而不是继续拿旧结论劝退用户。
+    ttl = _SIG_PENDING_TTL if cache.get('manager', {}).get('sig_ready') is False         else VERSION_CACHE_TTL
+    if force or not cache or age > ttl:
         fresh = _fetch_remote_versions()
         # 保留上次成功结果：临时网络故障不应让界面显示「未知」
         for key in ('manager', 'upstream'):
@@ -711,6 +723,7 @@ def check_updates(force: bool = False) -> dict:
             'latest': m_latest,
             'has_update': manager_has,
             'url': str(cache.get('manager', {}).get('url') or ''),
+            'sig_ready': cache.get('manager', {}).get('sig_ready'),
             'error': str(cache.get('manager', {}).get('error') or ''),
             'repo': MANAGER_REPO,
         },

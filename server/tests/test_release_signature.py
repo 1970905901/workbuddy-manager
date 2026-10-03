@@ -329,6 +329,37 @@ class ReleaseWorkflowTest(unittest.TestCase):
         wf = (_ROOT / '.github' / 'workflows' / 'release.yml').read_text(encoding='utf-8')
         self.assertIn('.sig', wf, '发布流程未涉及签名文件')
 
+    # ── issue #127/#129：CI 建的 Release 必须是**草稿** ──────────────
+    #
+    # 以前 CI 直接公开发布：维护者签名要几分钟到几十分钟，这期间任何人点
+    # 「一键更新」都会被「没有可用的签名文件」拒绝。`releases/latest`（面板与
+    # 更新器的版本检查都读它）会跳过草稿，于是把 release 建为草稿，这个窗口就
+    # 从用户侧消失了 —— 只有签名并 `gh release edit --draft=false` 之后才可见。
+
+    def test_release_is_created_as_draft(self) -> None:
+        wf = (_ROOT / '.github' / 'workflows' / 'release.yml').read_text(encoding='utf-8')
+        m = re.search(r'gh release create[^\n]*(?:\n[^\n]*){0,6}', wf)
+        self.assertIsNotNone(m, '找不到 gh release create')
+        self.assertIn('--draft', m.group(0),
+                      'CI 直接公开发布 —— 未签名的版本会立刻对用户可见（#127/#129 的窗口期）')
+
+    def test_docs_tell_you_to_publish_after_signing(self) -> None:
+        for name in ('release-process.md', 'release-signing.md'):
+            doc = (_ROOT / 'docs' / name).read_text(encoding='utf-8')
+            self.assertIn('--draft=false', doc,
+                          f'{name} 没写「签名核对后把草稿发布出去」这一步 —— '
+                          '漏了它用户永远看不到新版本')
+
+    def test_guard_is_not_vacuous(self) -> None:
+        """反证：把 create 换回公开发布，第一条必须能看出来。"""
+        wf = ('          else\n'
+              '            gh release create "$TAG" \\\n'
+              '              --title "$TAG" \\\n'
+              '              "${STAGE}.tar.gz"\n')
+        m = re.search(r'gh release create[^\n]*(?:\n[^\n]*){0,6}', wf)
+        self.assertIsNotNone(m)
+        self.assertNotIn('--draft', m.group(0))
+
 
 class PubkeyConsistencyTest(unittest.TestCase):
     """信任锚只有一份，但被写在了两个地方：

@@ -1026,9 +1026,12 @@ export default function AccountsPage() {
         >
           {stopped ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
         </Button>
+        {/* 账号名放说明里而不是标题：名称可能很长，18px 标题在 380px 弹窗里一折行就挤乱。
+            窄屏用 min() 保住两侧 1rem 留白，单写 380px 会在 <412px 的手机上贴满屏幕边缘。 */}
         <ConfirmDialog
-          title={t('accounts.deleteTitle', {name: a.nickname || a.uid})}
-          description={t('accounts.deleteDesc')}
+          title={t('accounts.deleteTitle')}
+          description={t('accounts.deleteDesc', {name: a.nickname || a.uid})}
+          contentClassName="max-w-[min(380px,calc(100%-2rem))] sm:max-w-[380px]"
           confirmText={t('accounts.delete')}
           destructive
           onConfirm={() => run(a.file, () => accountApi.remove(a.file, groupId),

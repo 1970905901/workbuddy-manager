@@ -20,6 +20,7 @@ import urllib.request
 from pathlib import Path
 
 from .. import config
+from .errtext import err_text
 
 STATUS_FILE = config.DATA_DIR / 'update-status.json'
 # docker 可用性缓存（(时间, 布尔)）。每次探测要跑 docker info（~50ms），
@@ -442,7 +443,7 @@ def start_update(target: str) -> tuple[bool, str]:
    if os.name == 'nt' else {'start_new_session': True}),
         )
     except Exception as exc:  # noqa: BLE001
-        return False, f'启动更新失败：{exc}'
+        return False, f'启动更新失败：{err_text(exc)}'
     finally:
         try:
             if logfh not in (subprocess.DEVNULL,):  # type: ignore[comparison-overlap]
@@ -474,7 +475,7 @@ def clear_status() -> tuple[bool, str]:
         try:
             f.unlink(missing_ok=True)
         except OSError as exc:
-            return False, f'清除失败：{exc}'
+            return False, f'清除失败：{err_text(exc)}'
     return True, '已清除上次更新的结果与日志'
 
 

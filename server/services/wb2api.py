@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .. import config
 from . import realm as _realm
+from .errtext import err_text
 from .realm import realm_of, supports_checkin
 
 
@@ -419,9 +420,11 @@ ASYNC_HEADERS = {'Content-Type': 'application/json'}
 
 
 def _err_text(exc: Exception) -> str:
-    """异常文本可能为空（如 AssertionError），补上类型名便于排查。"""
-    detail = str(exc).strip()
-    return f'{type(exc).__name__}: {detail}' if detail else type(exc).__name__
+    """异常文本可能为空（如 AssertionError / TimeoutError），补上类型名便于排查。
+
+    统一走 `errtext.err_text`：空文本的超时还会给「超时（等不到响应）」这种人话。
+    """
+    return err_text(exc)
 
 
 def _auth_headers(api_key: str | None = None) -> dict:

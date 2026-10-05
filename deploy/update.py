@@ -288,13 +288,38 @@ def run(cmd: list[str], cwd: Path | None = None, rep: Reporter | None = None,
     return proc.returncode, out
 
 
-def http_json(url: str, timeout: int = 20) -> dict:
-    req = urllib.request.Request(url, headers={
+def _github_headers() -> dict:
+    """GitHub API 请求头；设了 WB_GITHUB_TOKEN / GITHUB_TOKEN 则认证。
+
+    未认证限额只有 60 次/小时/IP，共享出口（TUN/系统代理）极易被同出口的
+    其他用户打满，表现为偶发 HTTP 403；认证后为 5000 次/小时。
+    """
+    headers = {
         'Accept': 'application/vnd.github+json',
         'User-Agent': 'workbuddy-manager-updater',
-    })
-    with _opener().open(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode('utf-8'))
+    }
+    token = (os.environ.get('WB_GITHUB_TOKEN')
+             or os.environ.get('GITHUB_TOKEN') or '').strip()
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    return headers
+
+
+def http_json(url: str, timeout: int = 20) -> dict:
+    req = urllib.request.Request(url, headers=_github_headers())
+    try:
+        with _opener().open(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except urllib.error.HTTPError as exc:
+        # 把 GitHub 的可读原因带出来（如 "API rate limit exceeded for x.x.x.x"），
+        # 否则调用方只能打出 "HTTP 403"，无从判断是该等配额重置还是换网络
+        detail = ''
+        try:
+            detail = exc.read().decode('utf-8', errors='replace').strip()[:200]
+        except Exception:  # noqa: BLE001
+            pass
+        raise RuntimeError(f'HTTP {exc.code} {exc.reason} {detail}'.strip()) from exc
+
 
 
 def download(url: str, dest: Path, rep: Reporter) -> None:
@@ -1124,18 +1149,85 @@ def wait_upstream_ready(rep: Reporter) -> bool:
 
 
 # ── 管理端更新 ───────────────────────────────────────────
+def fetch_release_via_api() -> dict:
+    """经 GitHub API 取最新 Release（认证后 5000 次/小时，未认证 60 次/小时/IP）。"""
+    rel = http_json(f'https://api.github.com/repos/{MANAGER_REPO}/releases/latest')
+    assets = rel.get('assets') or []
+    pkg = next((a for a in assets if str(a.get('name', '')).endswith('.tar.gz')), None)
+    if not pkg:
+        raise RuntimeError('该 Release 未提供 .tar.gz 产物')
+    sig = next((a for a in assets
+                if str(a.get('name', '')).endswith('.tar.gz.sig')), None)
+    return {
+        'tag': rel.get('tag_name') or '',
+        'pkg_url': pkg['browser_download_url'],
+        'pkg_name': Path(str(pkg.get('name') or 'pkg.tar.gz')).name,
+        'sig_url': str(sig.get('browser_download_url') or '') if sig else '',
+    }
+
+
+def fetch_release_via_redirect(latest_url: str | None = None,
+                               repo: str | None = None) -> dict:
+    """不走 GitHub API 的回退：releases/latest 的 302 重定向拿最新 tag。
+
+    API 未认证限额只有 60 次/小时/IP，共享出口（TUN/系统代理）极易被同出口
+    用户打满，表现为偶发 HTTP 403；而 github.com 的网页端与
+    releases/download 资产下载不受该配额限制。资产名按发布惯例
+    workbuddy-manager-<tag>.tar.gz 构造（历届 Release 均如此）。
+    """
+    repo = repo or MANAGER_REPO
+    req = urllib.request.Request(
+        latest_url or f'https://github.com/{repo}/releases/latest',
+        headers={'User-Agent': 'workbuddy-manager-updater'})
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ARG002
+            return None
+
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        opener.open(req, timeout=30)
+    except urllib.error.HTTPError as exc:
+        if exc.code not in (301, 302, 303, 307, 308):
+            raise RuntimeError(f'releases/latest 回退探测失败：HTTP {exc.code}') from exc
+        loc = exc.headers.get('Location') or ''
+        tag = urllib.parse.unquote(loc.split('/tag/', 1)[-1].split('?')[0].split('#')[0])
+        if not tag or '/' in tag:
+            raise RuntimeError(f'releases/latest 重定向未含有效 tag：{loc}') from exc
+    else:
+        raise RuntimeError('releases/latest 未按预期重定向（网络异常或路径变更）')
+
+    base = f'https://github.com/{repo}/releases/download/{tag}'
+    pkg_name = f'workbuddy-manager-{tag}.tar.gz'
+    return {
+        'tag': tag,
+        'pkg_url': f'{base}/{pkg_name}',
+        'pkg_name': pkg_name,
+        'sig_url': f'{base}/{pkg_name}.sig',
+    }
+
+
 def update_manager(rep: Reporter) -> None:
     rep.step('更新管理端')
 
-    # 1) 取最新 Release
+    # 1) 取最新 Release：API 优先（认证后 5000 次/小时；未认证仅 60 次/小时/IP，
+    #    共享出口极易被同出口用户打满而 403）；失败时回退到 releases/latest
+    #    的 302 重定向（不走 API、无配额限制）。
+    info: dict | None = None
+    api_error = ''
     try:
-        rel = http_json(f'https://api.github.com/repos/{MANAGER_REPO}/releases/latest')
-    except urllib.error.HTTPError as exc:
-        raise RuntimeError(f'获取 Release 失败：HTTP {exc.code}') from exc
+        info = fetch_release_via_api()
     except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f'无法访问 GitHub API：{exc}') from exc
+        api_error = f'{type(exc).__name__}: {exc}'
+        rep.log(f'GitHub API 不可用（{api_error}），回退到 releases/latest 重定向…', 'warn')
+    if info is None:
+        try:
+            info = fetch_release_via_redirect()
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f'获取 Release 失败：API {api_error}；回退路径也失败：{exc}') from exc
 
-    tag = rel.get('tag_name') or ''
+    tag = info['tag']
     rep.log(f'最新版本：{tag or "(未知)"}')
     rep.set_target_version(tag)
 
@@ -1144,26 +1236,23 @@ def update_manager(rep: Reporter) -> None:
         rep.log(f'当前已是最新版本（{tag}）')
         return
 
-    assets = rel.get('assets') or []
-    pkg = next((a for a in assets if str(a.get('name', '')).endswith('.tar.gz')), None)
-    if not pkg:
-        raise RuntimeError('该 Release 未提供 .tar.gz 产物')
-    sig = next((a for a in assets
-                if str(a.get('name', '')).endswith('.tar.gz.sig')), None)
+    pkg_name = info['pkg_name']
+    pkg_url = info['pkg_url']
+    sig_url = info['sig_url']
 
     # 2) 下载并解压到临时目录
     with tempfile.TemporaryDirectory(prefix='wbm-update-') as tmpdir:
         tmp = Path(tmpdir)
-        # 只用文件名部分：pkg['name'] 来自网络响应，虽然 GitHub 不允许名字含
-        # 路径分隔符，但"用远端数据拼本地路径"与早前的路径穿越是同一类错误，
-        # 这里按同名原则做净化（Path(...).name 会丢掉任何目录成分）
-        archive = tmp / Path(str(pkg.get('name') or 'pkg.tar.gz')).name
-        download(pkg['browser_download_url'], archive, rep)
+        # pkg_name 已在 fetch_release_via_api / fetch_release_via_redirect 里按
+        # 同名原则净化（Path(...).name 丢掉任何目录成分）：下载地址来自网络
+        # 响应，"用远端数据拼本地路径"与早前的路径穿越是同一类错误
+        archive = tmp / pkg_name
+        download(pkg_url, archive, rep)
 
         # 验签必须在下解压之前：先确认「这个包是你签的」，再谈包里的内容
         verify_release_signature(
             archive,
-            str(sig.get('browser_download_url') or '') if sig else '',
+            sig_url,
             rep,
         )
 

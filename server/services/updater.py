@@ -504,10 +504,17 @@ _upstream_api_repo_cache: str | None = None
 
 
 def _gh_get(url: str, timeout: int = 15) -> object:
-    req = urllib.request.Request(url, headers={
+    headers = {
         'Accept': 'application/vnd.github+json',
         'User-Agent': 'workbuddy-manager-updater',
-    })
+    }
+    # 认证后 5000 次/小时；未认证仅 60 次/小时/IP——共享出口（TUN/系统代理）
+    # 极易被同出口的其他用户打满，表现为设置页"检测更新"偶发 403
+    token = (os.environ.get('WB_GITHUB_TOKEN')
+             or os.environ.get('GITHUB_TOKEN') or '').strip()
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode('utf-8'))
 

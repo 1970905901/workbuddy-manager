@@ -1138,7 +1138,7 @@ export default function AccountsPage() {
               </Button>
             )}
             {isAdmin && (
-              <UploadAccountsButton upstreamId={groupId} onSuccess={reloadAll} />
+              <UploadAccountsButton upstreamId={groupId} groups={groups} onSuccess={reloadAll} />
             )}
             {isAdmin && (
               <Button size="sm" className="rounded-full" onClick={() => setAddOpen(true)}>

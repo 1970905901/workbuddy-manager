@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import io
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -200,6 +202,39 @@ class AccountUploadTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['failed'][0]['message'], '账号导入失败')
         self.assertNotIn('private', response.text)
+
+    def test_exports_each_account_as_a_reimportable_json_file(self) -> None:
+        enabled = {
+            'account': {'uid': 'export-1', 'nickname': 'One'},
+            'auth': {'accessToken': 'at-1', 'expiresAt': 4102444800},
+        }
+        disabled = {
+            'account': {'uid': 'export-2', 'nickname': 'Two'},
+            'auth': {'accessToken': 'at-2', 'expiresAt': 4102444800},
+        }
+        (self.auth_dir / 'workbuddy-export-1.json').write_text(
+            json.dumps(enabled), encoding='utf-8')
+        (self.auth_dir / 'workbuddy-export-2.json.disabled').write_text(
+            json.dumps(disabled), encoding='utf-8')
+        (self.auth_dir / 'ignore.txt').write_text('ignore', encoding='utf-8')
+
+        response = self.client.get('/api/accounts/export')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('application/zip', response.headers['content-type'])
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            self.assertEqual(sorted(archive.namelist()), [
+                'workbuddy-export-1.json', 'workbuddy-export-2.json',
+            ])
+            self.assertEqual(json.loads(archive.read('workbuddy-export-1.json')), enabled)
+            self.assertEqual(json.loads(archive.read('workbuddy-export-2.json')), disabled)
+
+    def test_export_requires_an_account_directory(self) -> None:
+        group = {**self.group, 'auth_dir': ''}
+        with mock.patch.object(accounts.upstreamsvc, 'default_upstream', return_value=group):
+            response = self.client.get('/api/accounts/export')
+
+        self.assertEqual(response.status_code, 409)
 
 
 if __name__ == '__main__':

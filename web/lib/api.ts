@@ -156,6 +156,12 @@ export const accountApi = {
   list: (upstreamId?: number | null) =>
     get<AccountsResponse>('/api/accounts',
                           upstreamId == null ? undefined : {upstream_id: upstreamId}),
+  exportZip: async (upstreamId?: number | null) => {
+    const response = await http.get<Blob>('/api/accounts/export' + groupQs(upstreamId), {
+      responseType: 'blob',
+    });
+    return response.data;
+  },
   upload: (files: File[], upstreamId?: number | null, overwrite = false) => {
     const body = new FormData();
     files.forEach((file) => body.append('files', file, file.name));

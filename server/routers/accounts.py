@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import io
 import json
 import logging
 import shutil
 import time
+import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 
 from .. import config, db, security, upstreamsvc
 from ..services import (
@@ -22,6 +25,11 @@ logger = logging.getLogger('workbuddy.accounts')
 router = APIRouter(prefix='/api', tags=['accounts'])
 
 _ACCOUNT_UPLOAD_MAX_BYTES = 2 * 1024 * 1024
+
+
+def _export_account_name(path: Path) -> str:
+    """Return a JSON filename that can be uploaded again."""
+    return path.name[:-len('.disabled')] if path.name.endswith('.disabled') else path.name
 
 
 class _InvalidUploadProxy(ValueError):
@@ -93,6 +101,39 @@ def _uploaded_entries(raw: object) -> list[object]:
     if not entries:
         raise ValueError('JSON 中没有账号条目')
     return entries
+
+
+@router.get('/accounts/export')
+def export_accounts(
+    upstream_id: int | None = Query(None),
+    user: dict = Depends(security.require_session_admin),
+) -> StreamingResponse:
+    """Export one JSON file per account from the selected group."""
+    group = _group(upstream_id)
+    auth_dir = _require_dir(group)
+    base = auth_dir.resolve()
+    files = sorted(auth_dir.glob('workbuddy*.json'))
+    files += sorted(auth_dir.glob('workbuddy*.json.disabled'))
+
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, mode='w', compression=zipfile.ZIP_DEFLATED) as archive:
+        for path in files:
+            try:
+                if not path.is_file() or path.resolve().parent != base:
+                    continue
+                raw = path.read_bytes()
+                json.loads(raw.decode('utf-8'))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                logger.warning('跳过无法导出的账号文件 file=%s', path.name)
+                continue
+            archive.writestr(_export_account_name(path), raw)
+
+    payload.seek(0)
+    return StreamingResponse(
+        payload,
+        media_type='application/zip',
+        headers={'Content-Disposition': 'attachment; filename="accounts.zip"'},
+    )
 
 
 @router.post('/accounts/upload')

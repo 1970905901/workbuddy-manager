@@ -190,7 +190,8 @@ def list_auth_accounts(auth_dir: Path | None = None) -> list[dict]:
                 'nickname': acct.get('nickname') or '未命名',
                 'enterprise_id': acct.get('enterpriseId', '') or '',
                 'expires_at': exp,
-                'is_expired': now >= exp,
+                # expiresAt=0 is an unknown expiry, not an already expired token.
+                'is_expired': exp > 0 and now >= exp,
                 'remain_seconds': max(0, int(exp - now)),
                 # 该令牌签发的总时长（供进度条按真实比例展示），解不出为 None
                 'ttl_seconds': ttl,

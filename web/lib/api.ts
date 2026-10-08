@@ -156,6 +156,27 @@ export const accountApi = {
   list: (upstreamId?: number | null) =>
     get<AccountsResponse>('/api/accounts',
                           upstreamId == null ? undefined : {upstream_id: upstreamId}),
+  exportZip: async (upstreamId?: number | null) => {
+    const response = await http.get<Blob>('/api/accounts/export' + groupQs(upstreamId), {
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+  upload: (files: File[], upstreamId?: number | null, overwrite = false) => {
+    const body = new FormData();
+    files.forEach((file) => body.append('files', file, file.name));
+    const group = groupQs(upstreamId);
+    const separator = group ? '&' : '?';
+    return http.post<{
+      ok: boolean;
+      uploaded: Array<{file: string; uid: string; updated: boolean}>;
+      added: Array<{file: string; uid: string; updated: boolean}>;
+      overwritten: Array<{file: string; uid: string; updated: boolean}>;
+      rejected: Array<{file: string; uid?: string; message: string}>;
+      failed: Array<{file: string; message: string}>;
+    }>('/api/accounts/upload' + group + separator + `overwrite=${overwrite ? 'true' : 'false'}`, body)
+      .then((r) => r.data);
+  },
   /**
    * 发起扫码登录；realm 决定国内版 / 国际版端点。
    *

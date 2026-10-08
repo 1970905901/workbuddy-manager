@@ -37,6 +37,13 @@ from .realm import (
 
 from .errtext import err_text
 
+class AccountExistsError(ValueError):
+    """Raised when an import attempts to replace an existing account without consent."""
+
+    def __init__(self, uid: str) -> None:
+        self.uid = uid
+        super().__init__('账号已存在')
+
 # 扫码 state 缓存：state -> (登记时间, 发起时的版本)。
 # 记 realm 是为了在回调时校验一致——若用户先开国内版的码、又切到国际版再轮询，
 # 不校验就会把国际版的 token 写进国内版的会话流程（上游 validateRealmMatch 同此意图）。
@@ -323,7 +330,8 @@ def _safe_auth_path(filename: str, auth_dir: Path | None = None) -> Path:
     return (auth_dir or config.AUTH_DIR) / filename
 
 
-def write_auth_file(account: dict, auth_dir: Path | None = None) -> tuple[str, bool]:
+def write_auth_file(account: dict, auth_dir: Path | None = None,
+                    *, allow_overwrite: bool = True) -> tuple[str, bool]:
     """严格按 workbuddy2api 的嵌套结构落盘，返回 (文件名, 是否覆盖)。
 
     realm 写在 `auth` 对象内（与 domain 同级）——上游就是从这里读的。
@@ -347,7 +355,12 @@ def write_auth_file(account: dict, auth_dir: Path | None = None) -> tuple[str, b
     base = auth_dir or config.AUTH_DIR
     base.mkdir(parents=True, exist_ok=True)
     target = base / f'workbuddy-{uid}.json'
+    disabled_target = base / f'{target.name}.disabled'
+    if not target.exists() and disabled_target.exists():
+        target = disabled_target
     existed = target.exists()
+    if existed and not allow_overwrite:
+        raise AccountExistsError(uid)
     domain = account.get('domain', '')
     resolved = resolve_realm(account.get('realm'), domain)
 

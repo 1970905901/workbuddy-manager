@@ -1,6 +1,7 @@
 """运行期配置：全部通过环境变量覆盖，默认值适配 1Panel 单机部署。"""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import secrets
@@ -216,6 +217,79 @@ def new_secret() -> str:
     return secrets.token_urlsafe(48)
 
 
+# ── 出站客户端池（issue #144）────────────────────────────────
+#
+# 为什么不再每次新建：Windows 上构造 httpx.AsyncClient 会去加载系统证书库建 SSL
+# 上下文，实测 **~1 秒**（Linux 上没这么夸张，所以这个问题只在原生 Windows 部署
+# 上暴露）。面板的每个页面切换都要问上游几次（账号/状态/模型），于是「每次出站
+# 新建客户端」直接表现成「切页面慢 1~3 秒」。共享之后同一套配置只建一次。
+#
+# 键里带**事件循环**：httpx 的客户端（连接池）绑在创建它的那个循环上，跨循环
+# 复用会炸（同步路由里 `asyncio.run` 另起循环那条路就是例子，见
+# `modelcatalog.fetch_ids_blocking`）。不同循环各建一个，互不干扰。
+_CLIENTS: dict[tuple, tuple] = {}
+_CLIENTS_MAX = 24
+
+
+class _BorrowedClient:
+    """借出去用的客户端：退出 `async with` 时**不关闭**（归还给池）。
+
+    调用点全是 `async with config.http_client(...) as client:` 的写法，所以这里
+    只把「上下文管理」这层语义接过来，避免改十几个调用点。关闭由
+    `close_clients()`（应用退出）或池满淘汰时统一做。
+    """
+
+    __slots__ = ('_client',)
+
+    def __init__(self, client) -> None:  # noqa: ANN001
+        self._client = client
+
+    async def __aenter__(self):  # noqa: ANN201
+        return self._client
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
+def _timeout_key(tmo) -> tuple:  # noqa: ANN001
+    return (tmo.connect, tmo.read, tmo.write, tmo.pool)
+
+
+def _build_client(tmo, proxy: str | None):  # noqa: ANN001, ANN202
+    import httpx
+
+    kwargs: dict = {'timeout': tmo, 'trust_env': False}
+    if proxy:
+        kwargs['proxy'] = proxy
+    return httpx.AsyncClient(**kwargs)
+
+
+async def close_clients() -> None:
+    """关掉池里所有客户端（应用退出时调用；幂等）。"""
+    clients = [entry[1] for entry in _CLIENTS.values()]
+    _CLIENTS.clear()
+    for client in clients:
+        try:
+            await client.aclose()
+        except Exception:  # noqa: BLE001 —— 退出路径上的清理失败不该再抛
+            continue
+
+
+def _evict(loop) -> None:  # noqa: ANN001
+    """池满了淘汰最早的一个（按插入顺序）。"""
+    while len(_CLIENTS) > _CLIENTS_MAX:
+        key = next(iter(_CLIENTS))
+        entry = _CLIENTS.pop(key, None)
+        if not entry or entry[1].is_closed:
+            continue
+        old_loop, client = entry
+        try:
+            if old_loop is loop:
+                loop.create_task(client.aclose())      # 同一循环才能安全关闭
+        except Exception:  # noqa: BLE001
+            continue
+
+
 def http_client(timeout, *, connect: float | None = None, proxy: str | None = None):
     """统一的 httpx 客户端：默认忽略系统/环境代理，避免内网请求被代理劫持。
 
@@ -224,6 +298,10 @@ def http_client(timeout, *, connect: float | None = None, proxy: str | None = No
     timeout 可以传数字，也可以传已构造好的 httpx.Timeout。
     注意：httpx 不允许「Timeout 实例 + connect 关键字」同时传，
     因此传入实例时忽略 connect，避免 AssertionError。
+
+    **返回的是借用语义的上下文管理器**（退出时不关客户端，见 `_BorrowedClient`）：
+    同一事件循环 + 同一组超时/代理只建一次，连接池复用（issue #144：Windows 上
+    每次新建要 ~1 秒，正好是页面切换的耗时）。
     """
     import httpx
 
@@ -233,8 +311,20 @@ def http_client(timeout, *, connect: float | None = None, proxy: str | None = No
         tmo = httpx.Timeout(timeout, connect=connect)
     else:
         tmo = httpx.Timeout(timeout)
-    kwargs = {'timeout': tmo, 'trust_env': False}
     selected_proxy = HTTP_PROXY if proxy is None else proxy
-    if selected_proxy:
-        kwargs['proxy'] = selected_proxy
-    return httpx.AsyncClient(**kwargs)
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # 事件循环外（同步夹具/脚本场景）：不缓存，按老样子建一个即用即弃的，
+        # 免得把一个绑在未知循环上的客户端留在池里。
+        return _build_client(tmo, selected_proxy)
+
+    key = (*_timeout_key(tmo), selected_proxy or '')
+    entry = _CLIENTS.get(key)
+    if entry is not None and entry[0] is loop and not entry[1].is_closed:
+        return _BorrowedClient(entry[1])
+    client = _build_client(tmo, selected_proxy)
+    _CLIENTS[key] = (loop, client)
+    _evict(loop)
+    return _BorrowedClient(client)

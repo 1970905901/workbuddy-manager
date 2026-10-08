@@ -241,7 +241,13 @@ _LOGIN_POLL_MAX = 300.0          # 后台最多盯 5 分钟，之后当过期处
 _LOGIN_RESULT_TTL = 900.0        # 终态结果留 15 分钟，够前端被节流后回来取
 _login_polls: dict[str, dict] = {}       # state → 响应（终态含成功结果）
 _login_tasks: dict[str, asyncio.Task] = {}
-_login_regions: dict[str, str] = {}      # state → 国际版地区（可能晚于 auth/start 到达）
+_login_regions: dict[str, str] = {}
+# `_login_ready`：授权已经拿到、但**落盘失败**时把那份结果记下来（issue #146）。
+# 为什么要记：落盘失败后前端会继续轮询同一个 state 重试落盘，而腾讯那边这次授权
+# 可能已经不再报 ready —— 于是前端只拿到「等待中」，永远等下去（用户看到的就是
+# 一直 waiting，日志里却在刷 200 OK）。记下结果后，重试完全走本端：重新落盘，
+# 成功了就完成，失败则把「去修目录权限」那条可执行提示原样报给前端。
+_login_ready: dict[str, tuple[dict, str, str, float]] = {}      # state → 国际版地区（可能晚于 auth/start 到达）
 _login_owner: dict[str, str] = {}        # state → 发起人，用于收掉同一用户的旧轮询
 
 
@@ -281,6 +287,10 @@ def _prune_login_polls() -> None:
         _login_tasks.pop(st, None)
         _login_regions.pop(st, None)
         _login_owner.pop(st, None)
+    # 「等重试落盘」的备忘也要按同样的 TTL 清（它没有 _login_polls 条目，
+    # 上面那轮扫不到它）
+    for st in [k for k, v in _login_ready.items() if now - float(v[3]) > _LOGIN_RESULT_TTL]:
+        _login_ready.pop(st, None)
 
 
 def _today_start() -> int:
@@ -595,6 +605,13 @@ async def auth_poll(
     r = None
     if realm is not None:
         r = 'global' if str(realm).strip().lower() == 'global' else 'cn'
+    ready = _login_ready.get(state)
+    if ready is not None:
+        # 上次已经拿到授权、只是没落盘：直接重试落盘（不再问腾讯——那边可能已经
+        # 不再报 ready，继续问只会让用户一直「等待中」）。
+        memo_result, memo_realm, memo_msg = ready[0], ready[1], ready[2]
+        return _save_and_finish(memo_result, memo_realm, memo_msg, state, group=group)
+
     result = await tencent.poll_login(state, r)
     if result.get('status') != 'ready':
         return result
@@ -642,8 +659,11 @@ async def auth_poll(
     # 落位，否则「签到成功但标记没写」的窗口里重试仍会重跑一次。
     _mark_provisioned(state)
     creditsvc.invalidate(str(result.get('uid', '')))
-    return _save_and_finish(result, realm_of_result, region_msg, state,
-                            group=group)
+    # 落盘前记下这份结果：万一落盘失败，重试要能只重做落盘（见 _login_ready 注释）
+    _login_ready[state] = (result, realm_of_result, region_msg, time.time())
+    out = _save_and_finish(result, realm_of_result, region_msg, state, group=group)
+    _login_ready.pop(state, None)
+    return out
 
 
 def _mark_provisioned(state: str) -> None:

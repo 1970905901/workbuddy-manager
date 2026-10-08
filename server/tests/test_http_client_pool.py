@@ -133,6 +133,41 @@ class HttpClientReuseTest(unittest.TestCase):
         asyncio.run(_aclose(direct))
 
 
+    def test_closing_a_borrowed_client_does_not_kill_the_shared_one(self) -> None:
+        """自己 `client = http_client(...)` 再 `aclose()` 的写法不能真的关掉共享客户端。
+
+        网关 / Anthropic 兼容 / 测试台 / Responses 四处就是这种写法。共享之后，
+        那里的 aclose 一旦真关，会把别人正在用的连接池一起关掉 —— 并发下就是
+        「偶发请求失败」。借来的客户端只支持「归还」。
+        """
+
+        async def scenario():
+            async with config.http_client(10, connect=3) as first:
+                pass
+            borrowed = config.http_client(10, connect=3)   # 不用 async with 的写法
+            await borrowed.aclose()                        # 旧写法里的 finally 分支
+            async with config.http_client(10, connect=3) as again:
+                pass
+            return first, again
+
+        first, again = asyncio.run(scenario())
+        self.assertFalse(first.is_closed, '借来的客户端被 aclose 真关掉了')
+        self.assertIs(first, again, '关过一次之后没从池里复用 —— 退化成每次新建')
+
+    def test_borrowed_wrapper_forwards_client_calls(self) -> None:
+        """包装要能当客户端用（post/stream/headers…），否则不用 async with 的写法会崩。"""
+        async def scenario():
+            borrowed = config.http_client(10, connect=3)
+            return borrowed, borrowed.timeout, borrowed.headers
+
+        borrowed, timeout, headers = asyncio.run(scenario())
+        self.assertTrue(hasattr(borrowed, 'post') and hasattr(borrowed, 'stream'),
+                        '属性转发没生效，`client.post(...)` 会 AttributeError')
+        self.assertEqual(timeout.connect, 3)
+        self.assertIn('user-agent', {k.lower() for k in headers})
+        asyncio.run(config.close_clients())
+
+
 async def _aclose(client) -> None:  # noqa: ANN001
     await client.aclose()
 

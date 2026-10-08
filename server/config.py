@@ -234,9 +234,16 @@ _CLIENTS_MAX = 24
 class _BorrowedClient:
     """借出去用的客户端：退出 `async with` 时**不关闭**（归还给池）。
 
-    调用点全是 `async with config.http_client(...) as client:` 的写法，所以这里
+    调用点大多是 `async with config.http_client(...) as client:` 的写法，所以这里
     只把「上下文管理」这层语义接过来，避免改十几个调用点。关闭由
     `close_clients()`（应用退出）或池满淘汰时统一做。
+
+    另外**代理属性访问**（`__getattr__`）并让 `aclose()` 变成「归还」而不是真关：
+    有几处调用点是不用 `async with`、自己 `client = http_client(...)` 然后
+    `finally: await client.aclose()` 的写法（网关、Anthropic 兼容、测试台、Responses
+    各一处）。共享之后，那些 `aclose()` 一旦真关，就会把别人正在用的连接池一起关掉
+    ——并发下表现为「偶发请求失败」。所以借来的客户端只支持「还」，真关只发生在池
+    淘汰与退出清理里。
     """
 
     __slots__ = ('_client',)
@@ -244,11 +251,19 @@ class _BorrowedClient:
     def __init__(self, client) -> None:  # noqa: ANN001
         self._client = client
 
+    def __getattr__(self, name: str):  # noqa: ANN201
+        # 借用包装要能当客户端用（post/stream/headers/... 一律转发）
+        return getattr(self._client, name)
+
     async def __aenter__(self):  # noqa: ANN201
         return self._client
 
     async def __aexit__(self, *exc: object) -> bool:
         return False
+
+    async def aclose(self) -> None:
+        """借用语义：只归还，不真关（共享客户端由池统一管理）。"""
+        return None
 
 
 def _timeout_key(tmo) -> tuple:  # noqa: ANN001

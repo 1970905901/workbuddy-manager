@@ -237,5 +237,48 @@ class AccountUploadTest(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
 
 
+class ImportExportAuditTest(AccountUploadTest):
+    """导入/导出都必须**留痕**，导出还必须禁止缓存（维护者复核补）。
+
+    两边都是「把账号凭据搬来搬去」：不审计的话，事后看不出谁在什么时候拷走了
+    哪些号；不禁止缓存的话，一个装着全部 token 的压缩包可能躺在中间层或浏览器
+    缓存里。这两条是给这个功能上的最小护栏。
+    """
+
+    def test_export_writes_an_audit_entry(self) -> None:
+        (self.auth_dir / 'workbuddy-audit-1.json').write_text(json.dumps({
+            'account': {'uid': 'audit-1', 'nickname': 'A'},
+            'auth': {'accessToken': 'at', 'expiresAt': 4102444800},
+        }), encoding='utf-8')
+        rows: list[tuple] = []
+        with mock.patch.object(security, 'audit',
+                               side_effect=lambda *a, **k: rows.append((a, k))):
+            response = self.client.get('/api/accounts/export')
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(rows, '导出没有留下审计记录')
+        self.assertIn('accounts.export', str(rows[0][0]))
+
+    def test_export_response_is_not_cacheable(self) -> None:
+        response = self.client.get('/api/accounts/export')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('no-store', response.headers.get('cache-control', ''),
+                      '装着账号凭据的压缩包被允许缓存了')
+
+    def test_import_writes_an_audit_entry(self) -> None:
+        payload = {
+            'account': {'uid': 'audit-2', 'nickname': 'B'},
+            'auth': {'accessToken': 'at-2', 'expiresAt': 4102444800},
+        }
+        rows: list[tuple] = []
+        with mock.patch.object(security, 'audit',
+                               side_effect=lambda *a, **k: rows.append((a, k))):
+            response = self.client.post(
+                '/api/accounts/upload',
+                files=[('files', ('a.json', json.dumps(payload).encode(), 'application/json'))])
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(rows, '导入没有留下审计记录')
+        self.assertIn('accounts.import', str(rows[0][0]))
+
+
 if __name__ == '__main__':
     unittest.main()

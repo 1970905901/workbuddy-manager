@@ -294,6 +294,8 @@
     "exportGroup": "选择导出分组",
     "exportDone": "账号导出完成",
     "exportDoneDetail": "ZIP 文件已开始下载",
+    "exportConfirmTitle": "导出账号（含凭据）",
+    "exportConfirmDesc": "导出的压缩包里是账号授权文件，可直接用于另一台面板导入 —— 也就是说，拿到它等于拿到这些账号。请只保存在可信的地方，用完及时删除。",
     "groupNoDirShort": "（未配置账号目录）",
     "uploadJson": "上传账号",
     "uploadAllowOverwrite": "允许覆盖同 UID 账号",

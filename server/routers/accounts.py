@@ -129,10 +129,17 @@ def export_accounts(
             archive.writestr(_export_account_name(path), raw)
 
     payload.seek(0)
+    security.audit(user, 'accounts.export', group['name'],
+                   f'导出 {len(files)} 个账号文件（含凭据）')
     return StreamingResponse(
         payload,
         media_type='application/zip',
-        headers={'Content-Disposition': 'attachment; filename="accounts.zip"'},
+        headers={
+            'Content-Disposition': 'attachment; filename="accounts.zip"',
+            # 包里是账号凭据：明确不许任何中间层或浏览器缓存它（审计留痕是另一半）。
+            'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+            'Pragma': 'no-cache',
+        },
     )
 
 
@@ -208,6 +215,10 @@ async def upload_accounts(
             logger.exception('账号文件导入失败 file=%s', name)
             failed.append({'file': name, 'message': '文件导入失败'})
 
+    if uploaded or rejected:
+        security.audit(user, 'accounts.import', group['name'],
+                       f'新增 {len(added)} / 覆盖 {len(overwritten)} / '
+                       f'拒绝 {len(rejected)} / 失败 {len(failed)}')
     return {
         'ok': not failed and not rejected,
         'uploaded': uploaded,

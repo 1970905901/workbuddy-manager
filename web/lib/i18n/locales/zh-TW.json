@@ -294,6 +294,8 @@
     "exportGroup": "選擇匯出分組",
     "exportDone": "帳號匯出完成",
     "exportDoneDetail": "ZIP 檔案已開始下載",
+    "exportConfirmTitle": "匯出帳號（含憑證）",
+    "exportConfirmDesc": "匯出的壓縮檔內是帳號授權檔，可直接在另一台面板匯入 —— 也就是說，拿到它等於拿到這些帳號。請只保存在可信的地方，用完儘快刪除。",
     "groupNoDirShort": "（未設定帳號目錄）",
     "uploadJson": "上傳 JSON",
     "uploadAllowOverwrite": "允許覆蓋相同 UID 帳號",

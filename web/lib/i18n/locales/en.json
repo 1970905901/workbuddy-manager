@@ -318,6 +318,8 @@
     "exportGroup": "Export group",
     "exportDone": "Accounts exported",
     "exportDoneDetail": "The ZIP download has started",
+    "exportConfirmTitle": "Export accounts (includes credentials)",
+    "exportConfirmDesc": "The archive contains the account authorization files and can be imported on another panel — in other words, whoever gets it gets these accounts. Store it somewhere trusted and delete it when done.",
     "groupNoDirShort": "(no account directory)",
     "uploadJson": "Upload JSON",
     "uploadAllowOverwrite": "Allow overwrite for same UID",

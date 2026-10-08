@@ -294,6 +294,8 @@
     "exportGroup": "エクスポートするグループ",
     "exportDone": "エクスポート完了",
     "exportDoneDetail": "ZIP のダウンロードを開始しました",
+    "exportConfirmTitle": "アカウントをエクスポート（認証情報を含む）",
+    "exportConfirmDesc": "書き出したアーカイブには各アカウントの認証ファイルが入っており、別のパネルにそのまま取り込めます。つまり、これを手に入れた人はそれらのアカウントを手に入れたのと同じです。信頼できる場所に保管し、使い終わったら速やかに削除してください。",
     "groupNoDirShort": "（アカウントディレクトリなし）",
     "uploadJson": "JSONをアップロード",
     "uploadAllowOverwrite": "同じ UID のアカウントを上書き",

@@ -173,6 +173,8 @@ class PostParamLocationAuditTest(unittest.TestCase):
         '/api/accounts/{filename}/proxy': {'upstream_id'},
         '/api/accounts/{filename}/disabled': {'upstream_id'},
         '/api/accounts/{filename}/move': {'upstream_id'},
+        # 账号导入（PR #145）：前端把分组与「是否覆盖同 uid」都按 query 传
+        '/api/accounts/upload': {'upstream_id', 'overwrite'},
         '/api/restart': {'upstream_id'},
     }
 

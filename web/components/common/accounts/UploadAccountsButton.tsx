@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/animate-ui/radix/dialog';
+import {ConfirmDialog} from '@/components/common/layout/ConfirmDialog';
 import {
   Select,
   SelectContent,
@@ -176,15 +177,24 @@ export function UploadAccountsButton({
                     ))}
                   </SelectContent>
                 </Select>
-                <Button
-                  variant="outline"
-                  className="mt-4 w-full rounded-full"
-                  disabled={busy || Boolean(selectedExportGroup && !selectedExportGroup.auth_dir)}
-                  onClick={() => void exportAccounts()}
-                >
-                  <Download className="h-4 w-4" />
-                  {t('accounts.exportAccount')}
-                </Button>
+                {/* 导出要把账号凭据打包带走，按仓库约定走二次确认 */}
+                <ConfirmDialog
+                  title={t('accounts.exportConfirmTitle')}
+                  description={t('accounts.exportConfirmDesc')}
+                  confirmText={t('accounts.exportAccount')}
+                  destructive
+                  trigger={
+                    <Button
+                      variant="outline"
+                      className="mt-4 w-full rounded-full"
+                      disabled={busy || Boolean(selectedExportGroup && !selectedExportGroup.auth_dir)}
+                    >
+                      <Download className="h-4 w-4" />
+                      {t('accounts.exportAccount')}
+                    </Button>
+                  }
+                  onConfirm={() => void exportAccounts()}
+                />
               </div>
             </div>
             <Button variant="outline" className="w-full rounded-full" onClick={() => setOpen(false)}>

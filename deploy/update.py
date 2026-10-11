@@ -1207,6 +1207,23 @@ def fetch_release_via_redirect(latest_url: str | None = None,
     }
 
 
+def install_requirements(req: Path, rep: Reporter) -> None:
+    """安装 Python 依赖，失败则抛错。
+
+    与 install.sh 一致：先带 `--break-system-packages`（PEP 668 的系统 Python
+    不带它会拒装），不认这个参数的旧 pip 会失败，再不带它重试一次。
+    """
+    py = sys.executable
+    rep.log('检查 / 安装 Python 依赖…')
+    code, _ = run([py, '-m', 'pip', 'install', '-q', '--break-system-packages', '-r', str(req)],
+                  rep=rep, check=False)
+    if code == 0:
+        return
+    code, _ = run([py, '-m', 'pip', 'install', '-q', '-r', str(req)], rep=rep, check=False)
+    if code != 0:
+        raise RuntimeError(f'Python 依赖安装失败（exit {code}），已中止更新，当前版本保持不变')
+
+
 def update_manager(rep: Reporter) -> None:
     rep.step('更新管理端')
 
@@ -1270,6 +1287,13 @@ def update_manager(rep: Reporter) -> None:
             raise RuntimeError('新包缺少 server/main.py，中止更新')
         if not (new_web_out / 'index.html').is_file():
             raise RuntimeError('新包缺少 web/out/index.html，中止更新')
+
+        # 依赖必须在**替换代码之前**装：装失败就中止，安装目录一个字节都不动，
+        # 旧版本继续运行。早先是换完代码再 `check=False` 装依赖，pip 失败也照样
+        # 标记成功并重启，新代码缺依赖起不来（issue #157）。
+        new_req = new_server / 'requirements.txt'
+        if new_req.is_file():
+            install_requirements(new_req, rep)
 
         # 3) 备份当前代码后替换
         ts = time.strftime('%Y%m%d-%H%M%S')
@@ -1375,13 +1399,6 @@ def update_manager(rep: Reporter) -> None:
             enforce_local_bind(rep)
             rep.log('上游源码有变化，重建容器使其生效…')
             rebuild_upstream(rep)
-
-    # 4) 依赖有变化则重装
-    req = INSTALL_DIR / 'server' / 'requirements.txt'
-    if req.is_file():
-        py = sys.executable
-        rep.log('检查 / 安装 Python 依赖…')
-        run([py, '-m', 'pip', 'install', '-q', '-r', str(req)], rep=rep, check=False)
 
     rep.log(f'管理端已更新到 {tag}，重启服务以生效')
 

@@ -257,6 +257,44 @@ class UpdateEndToEndTest(unittest.TestCase):
         self.assertEqual((inst / '.version').read_text(encoding='utf-8').strip(), 'v1.0.0')
         self.assertFalse((inst / 'CHANGELOG.md').exists())
 
+    def test_failed_dependency_install_aborts_without_touching_install(self) -> None:
+        """pip 失败（网络、PEP 668、磁盘满…）必须判定更新失败，且不落盘（issue #157）。
+
+        早先是换完代码再 `check=False` 装依赖：pip 失败也标记成功并重启，
+        新代码缺依赖起不来，容器无限重启。
+        """
+        inst = self._make_install('pipfail')
+        pkg, sig = self._make_release('pipfail')
+        mod = self._load(inst)
+        pip_calls: list[list[str]] = []
+
+        def fake_run(cmd, *a, **kw):
+            if cmd[1:3] == ['-m', 'pip']:
+                pip_calls.append(cmd)
+                return 1, 'ERROR: Could not install packages'
+            return 0, ''
+
+        orig_update = mod.update_manager
+
+        def update_with_failing_pip(rep):
+            mod.run = fake_run
+            return orig_update(rep)
+
+        mod.update_manager = update_with_failing_pip
+        ok, rep = self._run_update(mod, pkg, sig)
+        self.assertFalse(ok, 'pip 失败竟然判定为更新成功')
+        self.assertNotIn('ok', rep.state, '失败的更新不应写终态 ok')
+        self.assertIn('依赖安装失败', rep.text())
+        # 与 install.sh 一致：先带 --break-system-packages，失败再不带重试
+        self.assertEqual(len(pip_calls), 2)
+        self.assertIn('--break-system-packages', pip_calls[0])
+        self.assertNotIn('--break-system-packages', pip_calls[1])
+
+        self.assertIn('# OLD', (inst / 'server' / 'main.py').read_text(encoding='utf-8'))
+        self.assertIn('OLD', (inst / 'web' / 'out' / 'index.html').read_text(encoding='utf-8'))
+        self.assertEqual((inst / '.version').read_text(encoding='utf-8').strip(), 'v1.0.0')
+        self.assertFalse((inst / 'CHANGELOG.md').exists())
+
     def test_unsigned_release_aborts(self) -> None:
         """攻击者控制发布渠道后，最省事的做法就是干脆不带签名。"""
         inst = self._make_install('nosig')

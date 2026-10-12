@@ -751,17 +751,21 @@ export function ProxyPanel() {
                         )}
                       </span>
                       <span className="w-16 shrink-0 text-right">
-                        <Button variant="ghost" size="sm"
-                                className="h-7 rounded-full px-2 text-[11px]"
-                                disabled={bindBusy || !row.bound}
-                                title={t('settings.proxyRotateHint')}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void rotate([row.file]);
-                                }}>
-                          <RefreshCw className="mr-1 h-3 w-3" />
-                          {t('settings.proxyRotate')}
-                        </Button>
+                        {/* 只有独享线路才有「会话」这个概念；共享线路上换会话是无用动作
+                            （出口由那条固定会话决定），不给按钮免得让人以为换了 IP。 */}
+                        {bindFor?.mode === 'exclusive' && (
+                          <Button variant="ghost" size="sm"
+                                  className="h-7 rounded-full px-2 text-[11px]"
+                                  disabled={bindBusy || !row.bound}
+                                  title={t('settings.proxyRotateHint')}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void rotate([row.file]);
+                                  }}>
+                            <RefreshCw className="mr-1 h-3 w-3" />
+                            {t('settings.proxyRotate')}
+                          </Button>
+                        )}
                       </span>
                     </div>
                   );

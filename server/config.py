@@ -205,11 +205,14 @@ def account_proxy(auth: dict) -> str | None:
         raise ValueError(f'账号绑定的代理线路 {name!r} 不存在')
     try:
         parsed = urlsplit(url)
-        valid = parsed.scheme in ('http', 'https') and bool(parsed.hostname) and parsed.port != 0
+        # socks5 / socks5h 由 httpx + socksio 支持（socks5h 把域名解析交给代理）。
+        # socks4/socks4a 实测 httpx 直接报 Unknown scheme，不放进来。
+        valid = (parsed.scheme in ('http', 'https', 'socks5', 'socks5h')
+                 and bool(parsed.hostname) and parsed.port != 0)
     except ValueError:
         valid = False
     if not valid:
-        raise ValueError(f'代理线路 {name!r} 配置无效（需要 HTTP/HTTPS 代理）')
+        raise ValueError(f'代理线路 {name!r} 配置无效（需要 HTTP/HTTPS/SOCKS5 代理）')
     return url
 
 

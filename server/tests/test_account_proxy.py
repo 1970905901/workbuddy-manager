@@ -146,10 +146,24 @@ class AccountProxyTest(unittest.TestCase):
             client.assert_not_called()
 
     def test_invalid_proxy_url_is_not_disclosed(self):
-        self.cfg.write_text(json.dumps({'proxies': {'route-a': 'socks5://proxy.example:1080'}}))
+        # socks4 是 httpx 不认的协议（Unknown scheme），仍然算无效地址
+        self.cfg.write_text(json.dumps({'proxies': {'route-a': 'socks4://proxy.example:1080'}}))
         with self.assertRaises(ValueError) as ctx:
             config.account_proxy({'proxy': 'route-a'})
         self.assertNotIn('proxy.example', str(ctx.exception))
+
+    def test_socks5_routes_are_accepted(self):
+        """住宅代理服务商给的凭据常常就是 socks5 写法（实测 ProxyLane 如此），
+        线路表里要能直接填 —— 此前只认 http/https，填 socks5 会在调用时才报
+        「配置无效」。socks5h（域名解析交给代理）同样放行。"""
+        self.cfg.write_text(json.dumps({'proxies': {
+            'route-a': 'socks5://user:pass@proxy.example:1080',
+            'route-b': 'socks5h://user:pass@proxy.example:1080',
+        }}))
+        self.assertEqual(config.account_proxy({'proxy': 'route-a'}),
+                         'socks5://user:pass@proxy.example:1080')
+        self.assertEqual(config.account_proxy({'proxy': 'route-b'}),
+                         'socks5h://user:pass@proxy.example:1080')
 
     def test_unbound_accounts_keep_existing_global_proxy_behavior(self):
         with mock.patch.object(config, 'http_client') as client:

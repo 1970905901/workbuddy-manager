@@ -172,5 +172,47 @@ async def _aclose(client) -> None:  # noqa: ANN001
     await client.aclose()
 
 
+
+
+class ProxySchemeSupportTest(unittest.TestCase):
+    """代理线路支持哪些协议：http / https / socks5（socks5 靠 socksio）。
+
+    为什么单独钉：socks5 支持**完全依赖一个可选依赖** —— httpx 没装 socksio 时，
+    **构造客户端就抛** `ImportError: Using SOCKS proxy, but the 'socksio' package is
+    not installed`。而住宅代理服务商给凭据时常常直接给 socks5://（实测 ProxyLane
+    就是），用户照抄就撞上这句「看起来像自己少装了东西」的报错。
+
+    所以这里两条一起钉：依赖必须声明在 requirements 里，且三种协议都能构造出客户端。
+    （只构造不发请求 —— 能不能连通由代理服务商决定，不是本用例的事。）
+    """
+
+    def setUp(self) -> None:
+        config._CLIENTS.clear()
+        self.addCleanup(config._CLIENTS.clear)
+
+    def test_socksio_is_declared_in_requirements(self) -> None:
+        req = (Path(__file__).resolve().parents[2]
+               / 'server' / 'requirements.txt').read_text(encoding='utf-8')
+        self.assertIn('socksio', req,
+                      'requirements 里没有 socksio —— 填 socks5:// 的用户会看到 '
+                      '「socksio 未安装」而不是「代理不通」')
+
+    def test_all_three_schemes_are_accepted(self) -> None:
+        async def scenario():
+            out = {}
+            for scheme in ('http://user:pass@127.0.0.1:7890',
+                           'https://user:pass@127.0.0.1:7890',
+                           'socks5://user:pass@127.0.0.1:1080'):
+                async with config.http_client(10, connect=3, proxy=scheme) as client:
+                    out[scheme.split('://', 1)[0]] = client
+            return out
+
+        clients = asyncio.run(scenario())
+        self.assertEqual(sorted(clients), ['http', 'https', 'socks5'])
+        for scheme, client in clients.items():
+            with self.subTest(scheme=scheme):
+                self.assertFalse(client.is_closed)
+        # 三种协议各自一个客户端：连接池不能混用不同代理
+        self.assertEqual(len({id(c) for c in clients.values()}), 3)
 if __name__ == '__main__':
     unittest.main()

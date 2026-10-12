@@ -114,8 +114,15 @@ def _probe_opener() -> urllib.request.OpenerDirector:
 # 取值顺序：WB_UPDATE_PROXY（更新专用）> WB_HTTP_PROXY（面板的出口代理，
 # 用户已经为它配过代理时不必再配一遍）> 环境变量里的 http_proxy / https_proxy
 # （urllib 的默认行为）。本机地址由 no_proxy 自动放行。
-UPDATE_PROXY = (os.environ.get('WB_UPDATE_PROXY')
-                or os.environ.get('WB_HTTP_PROXY') or '').strip()
+_RAW_PROXY = (os.environ.get('WB_UPDATE_PROXY')
+              or os.environ.get('WB_HTTP_PROXY') or '').strip()
+# 面板能吃 socks5（装了 socksio），但更新器用的是 urllib —— 它只认 http/https，
+# 把手给 socks5:// 只会得到一条看不懂的报错（而下载失败的报错本来就容易误判）。
+# 所以非 http 的取法一律忽略，并在 main() 里记一条日志说明怎么配。
+PROXY_UNSUPPORTED = ('' if not _RAW_PROXY
+                     or _RAW_PROXY.lower().startswith(('http://', 'https://'))
+                     else _RAW_PROXY)
+UPDATE_PROXY = '' if PROXY_UNSUPPORTED else _RAW_PROXY
 if UPDATE_PROXY:
     # 本机与内网不走代理：更新器要读本地状态文件，代理配置不该把内网也带偏。
     os.environ.setdefault('no_proxy', '127.0.0.1,localhost')
@@ -1556,6 +1563,12 @@ def main() -> int:
 
     rep = Reporter(args.target)
     rep.log(f'开始更新（target={args.target}，安装目录={INSTALL_DIR}）')
+    if PROXY_UNSUPPORTED:
+        # 只报协议名，不回显地址（里面通常带用户名与密码）
+        scheme = PROXY_UNSUPPORTED.split('://', 1)[0]
+        rep.log(f'已忽略下载代理（{scheme}）：更新器只认 http/https。'
+                f'需要更新也走代理时，单独设 WB_UPDATE_PROXY=http://…；'
+                f'面板自身的代理不受影响。', 'warn')
 
     ok = True
     try:

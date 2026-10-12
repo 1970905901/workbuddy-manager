@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import os
 import secrets
@@ -273,12 +274,66 @@ def _timeout_key(tmo) -> tuple:  # noqa: ANN001
     return (tmo.connect, tmo.read, tmo.write, tmo.pool)
 
 
+_INTERNAL_SUFFIXES = ('.local', '.internal', '.lan', '.docker', '.localhost')
+
+
+def _is_internal_host(host: str | None) -> bool:
+    """这个目标算不算「内网 / 本机」——算的话不该交给外部代理。
+
+    覆盖三类：回环与常见内网别名、私有 / 链路本地 / 保留网段的 IP、**单标签主机名**
+    （容器服务名 `workbuddy2api` 这类；公网域名一定带点）。
+    """
+    h = (host or '').strip().lower().rstrip('.')
+    if not h:
+        return False
+    if h in ('localhost', 'host.docker.internal', 'host.containers.internal'):
+        return True
+    if h.endswith(_INTERNAL_SUFFIXES) or '.' not in h:
+        # 单标签 = 内网 DNS（容器服务名、`myhost` 之类）。公网目标必然带点。
+        return True
+    try:
+        addr = ipaddress.ip_address(h)
+    except ValueError:
+        return False
+    return bool(addr.is_private or addr.is_loopback or addr.is_link_local
+                or addr.is_reserved or addr.is_unspecified)
+
+
+def _proxy_transport(proxy: str):  # noqa: ANN202
+    """「内网/本机直连、其余走代理」的 httpx transport。
+
+    用自定义 transport 而不是 `mounts=`：mounts 只能按主机名模式匹配，表达不了
+    「私有网段」「单标签主机名」这两类，而它们恰恰是容器部署的常态（`workbuddy2api`、
+    `host.docker.internal`、`10.x`…）。
+
+    类建在这里而不是模块顶层，是因为 httpx 在本模块是**按需导入**的（保持冷启动
+    不加载它）；每个 (循环, 超时, 代理) 组合只建一次客户端，这点构造开销可忽略。
+    """
+    import httpx
+
+    class _DirectForInternalTransport(httpx.AsyncBaseTransport):
+        def __init__(self) -> None:
+            self._proxied = httpx.AsyncHTTPTransport(proxy=proxy)
+            self._direct = httpx.AsyncHTTPTransport()
+
+        async def handle_async_request(self, request):  # noqa: ANN001, ANN201
+            transport = (self._direct if _is_internal_host(request.url.host)
+                         else self._proxied)
+            return await transport.handle_async_request(request)
+
+        async def aclose(self) -> None:
+            await self._proxied.aclose()
+            await self._direct.aclose()
+
+    return _DirectForInternalTransport()
+
+
 def _build_client(tmo, proxy: str | None):  # noqa: ANN001, ANN202
     import httpx
 
     kwargs: dict = {'timeout': tmo, 'trust_env': False}
     if proxy:
-        kwargs['proxy'] = proxy
+        kwargs['transport'] = _proxy_transport(proxy)
     return httpx.AsyncClient(**kwargs)
 
 

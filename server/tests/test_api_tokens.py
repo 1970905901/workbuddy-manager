@@ -282,6 +282,15 @@ class WriteEndpointScopeMatrixTest(unittest.TestCase):
         'POST /api/security/rules',
         'POST /api/sessions/revoke',
         'POST /api/settings/upstream',
+        # 代理线路与全局出口代理（设置 → 代理）：能改「谁的流量从哪个出口出去」，
+        # 而且是**凭据载体**（地址里带用户名密码）—— 泄露的 token 不该能读能写。
+        'POST /api/proxy-routes',
+        'PUT /api/proxy-routes/{name}',
+        'DELETE /api/proxy-routes/{name}',
+        'POST /api/proxy-routes/import',
+        'POST /api/proxy-routes/probe',
+        'PUT /api/settings/proxy',
+        'POST /api/settings/proxy/probe',
         'POST /api/settings/upstash/reload',   # 评审补：与 /api/restart 同动作
         'POST /api/system/update',
         'POST /api/system/upstream-ref',

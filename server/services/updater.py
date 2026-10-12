@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from .. import config
+from .. import config, db
 from .errtext import err_text
 
 STATUS_FILE = config.DATA_DIR / 'update-status.json'
@@ -409,6 +409,15 @@ def start_update(target: str) -> tuple[bool, str]:
     STATUS_FILE.unlink(missing_ok=True)
 
     env = dict(os.environ)
+    # 面板「设置 → 代理」里配的出口代理 / 更新代理交给更新器：它是个独立进程，
+    # 只认环境变量（update.py 自己的下载只认 http/https，非 http 的写法那边会
+    # 忽略并记一条日志，面板自身的代理不受影响）。
+    stored_http_proxy = config.stored_http_proxy()
+    stored_update_proxy = db.get_setting('update_proxy', '') or ''
+    if stored_http_proxy:
+        env['WB_HTTP_PROXY'] = stored_http_proxy
+    if stored_update_proxy:
+        env['WB_UPDATE_PROXY'] = str(stored_update_proxy)
     env.update({
         'WB_INSTALL_DIR': str(config.ROOT),
         'WB_UPSTREAM_DIR': str(_upstream_dir()),

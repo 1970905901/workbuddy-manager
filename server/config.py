@@ -112,6 +112,8 @@ AUDIT_ALL_ACCESS = _env('WB_AUDIT_ALL_ACCESS', '0') == '1'
 # 留空时所有请求都不使用任何代理：httpx 默认 trust_env=True 会读取系统/环境代理，
 # 会把内网请求（如 127.0.0.1:7863）也交给系统代理，导致连接被劫持或长时间超时。
 HTTP_PROXY = _env('WB_HTTP_PROXY', '')
+# 出口代理探测用的地址（界面上「测试」按钮；默认回出口 IP 与归属地）
+PROXY_PROBE_URL = _env('WB_PROXY_PROBE_URL', 'https://ipinfo.io/json')
 DEFAULT_ACCOUNT_PROXY = _env('WB_DEFAULT_ACCOUNT_PROXY', '')
 
 # 本机一键导入：允许把新密钥直接写进**本机的** cc-switch / ZCode 配置。
@@ -363,6 +365,26 @@ def _evict(loop) -> None:  # noqa: ANN001
             continue
 
 
+def stored_http_proxy() -> str:
+    """面板设置里存的出口代理；空串 = 没设过（回落到环境变量）。"""
+    try:
+        from . import db          # 延迟导入：config 被 db 反过来 import，顶层会成环
+        value = db.get_setting('http_proxy', '')
+    except Exception:             # noqa: BLE001 —— 读不到就当没设过，别让出站挂掉
+        return ''
+    return str(value or '').strip()
+
+
+def effective_http_proxy() -> str:
+    """当前生效的出口代理：**面板设置优先，其次环境变量**。
+
+    为什么要这一层：`WB_HTTP_PROXY` 是环境变量，界面上填不了（容器里还得改
+    compose）。有了它，页面上的设置改完立即生效（客户端池按代理串缓存，
+    新值自然建新客户端），环境变量仍作为兜底与「未设置」时的默认。
+    """
+    return stored_http_proxy() or HTTP_PROXY
+
+
 def http_client(timeout, *, connect: float | None = None, proxy: str | None = None):
     """统一的 httpx 客户端：默认忽略系统/环境代理，避免内网请求被代理劫持。
 
@@ -384,7 +406,7 @@ def http_client(timeout, *, connect: float | None = None, proxy: str | None = No
         tmo = httpx.Timeout(timeout, connect=connect)
     else:
         tmo = httpx.Timeout(timeout)
-    selected_proxy = HTTP_PROXY if proxy is None else proxy
+    selected_proxy = effective_http_proxy() if proxy is None else proxy
 
     try:
         loop = asyncio.get_running_loop()

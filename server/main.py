@@ -17,7 +17,7 @@ from .stdio_utf8 import force_utf8_stdio
 from .routers import (
     accounts, anthropic, auth, gateway, keys, logs, models, playground,
     pgsync as pgsync_router, redpackets, responses, security as security_router,
-    settings, stats, system, tokens, upstreams,
+    proxies, settings, stats, system, tokens, upstreams,
 )
 from .services import accountlog, pgsync, renew, tasklog, taskrun
 
@@ -158,6 +158,8 @@ app.include_router(security_router.router)
 # 管理面作用域化 API Token（见 docs/api-tokens.md）；接口本身只接受会话鉴权
 app.include_router(tokens.router)
 app.include_router(settings.router)
+# 代理线路与全局出口代理（设置 → 代理）
+app.include_router(proxies.router)
 # PostgreSQL 异地备份：把本地数据镜像出去、需要时拉回来（见 services/pgsync）
 app.include_router(pgsync_router.router)
 # 多上游（账号池分组）：密钥绑定上游 = 请求走那个池，见 upstreamsvc

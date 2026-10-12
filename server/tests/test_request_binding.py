@@ -171,6 +171,8 @@ class PostParamLocationAuditTest(unittest.TestCase):
         '/api/accounts/{filename}/clear-cooling': {'upstream_id'},
         '/api/accounts/{filename}/note': {'upstream_id'},
         '/api/accounts/{filename}/proxy': {'upstream_id'},
+        # 代理线路（设置 → 代理）：改名/删除要按分组重绑账号，前端按 query 传。
+        '/api/proxy-routes/{name}': {'upstream_id'},
         '/api/accounts/{filename}/disabled': {'upstream_id'},
         '/api/accounts/{filename}/move': {'upstream_id'},
         # 账号导入（PR #145）：前端把分组与「是否覆盖同 uid」都按 query 传

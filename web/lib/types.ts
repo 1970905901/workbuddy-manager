@@ -170,6 +170,45 @@ export interface UpstreamStatus {
   error?: string;
 }
 
+export interface ProxyRoute {
+  name: string;
+  scheme: string;
+  host: string;
+  port: number | null;
+  has_auth: boolean;
+  masked: string;
+  local?: boolean;
+  /** 绑定账号数（列表接口一定会给） */
+  bound: number;
+}
+
+export interface ProxyRouteList {
+  routes: ProxyRoute[];
+  default: string;
+  schemes: string[];
+  bound_total: number;
+}
+
+export interface ProxyProbe {
+  ok: boolean;
+  ms: number;
+  exit_ip?: string;
+  exit_info?: string;
+  error?: string;
+}
+
+export interface ProxySettings {
+  http_proxy: string;
+  update_proxy: string;
+  http_configured: boolean;
+  update_configured: boolean;
+  env_http_proxy: string;
+  env_update_proxy: string;
+  effective: string;
+  source: 'panel' | 'env' | 'none';
+  probe_url: string;
+}
+
 export interface ModelInfo {
   id: string;
   owned_by?: string;

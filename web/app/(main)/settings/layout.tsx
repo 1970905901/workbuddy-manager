@@ -20,6 +20,7 @@ import {
   Database,
   FileText,
   KeyRound,
+  Route,
 } from 'lucide-react';
 import {usePathname} from 'next/navigation';
 import {notify} from '@/lib/toast';
@@ -50,6 +51,7 @@ import {ResetPasswordDialog} from '@/components/common/settings/ResetPasswordDia
 import {useAuth} from '@/lib/auth-context';
 import {UpdatePanel} from '@/components/common/settings/UpdatePanel';
 import {PgSyncPanel} from '@/components/common/settings/PgSyncPanel';
+import {ProxyPanel} from '@/components/common/settings/ProxyPanel';
 import {TokensPanel} from '@/components/common/settings/TokensPanel';
 import {ChangelogPanel} from '@/components/common/settings/ChangelogPanel';
 import {UpstreamReloadNotice} from '@/components/common/settings/UpstreamReloadNotice';
@@ -854,6 +856,7 @@ export default function SettingsLayout({children}: {children: React.ReactNode}) 
   // 留在外壳里就得在面板那边再抄一遍，漏抄一处不报错）。
   const TAB_META: Record<SettingsTab, {icon: React.ReactNode}> = {
     upstream: {icon: <Server className="h-3.5 w-3.5" />},
+    proxy: {icon: <Route className="h-3.5 w-3.5" />},
     models: {icon: <Shuffle className="h-3.5 w-3.5" />},
     users: {icon: <Users className="h-3.5 w-3.5" />},
     tokens: {icon: <KeyRound className="h-3.5 w-3.5" />},
@@ -2058,6 +2061,10 @@ export default function SettingsLayout({children}: {children: React.ReactNode}) 
         </TabsContent>
 
         {/* ═══ 访问令牌 ═══ */}
+        <TabsContent value="proxy" className="mt-4 space-y-4">
+          <ProxyPanel />
+        </TabsContent>
+
         <TabsContent value="tokens" className="mt-4 space-y-4">
           <TokensPanel />
         </TabsContent>

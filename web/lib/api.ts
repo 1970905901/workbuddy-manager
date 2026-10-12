@@ -11,6 +11,10 @@ import type {
   Changelog,
   CheckinLogPage,
   ClaimInfo,
+  ProxyProbe,
+  ProxyRoute,
+  ProxyRouteList,
+  ProxySettings,
   CreatedApiToken,
   CreatedRedPacket,
   CreditExpiry,
@@ -562,6 +566,32 @@ export const securityApi = {
 };
 
 /* ── 上游配置 / 用户 ───────────────────────────────── */
+/** 代理线路与全局出口代理（设置 → 代理）。凭据一律走服务端的脱敏口径。 */
+export const proxyApi = {
+  routes: (upstreamId?: number | null) =>
+    get<ProxyRouteList>('/api/proxy-routes' + groupQs(upstreamId)),
+  create: (name: string, url: string) =>
+    post<ProxyRoute>('/api/proxy-routes', {name, url}),
+  update: (name: string, body: {url?: string; new_name?: string}, upstreamId?: number | null) =>
+    put<ProxyRoute>(`/api/proxy-routes/${encodeURIComponent(name)}` + groupQs(upstreamId), body),
+  remove: (name: string, force: boolean, upstreamId?: number | null) => {
+    // 查询串自己拼：groupQs 只负责分组参数，force 是这条接口特有的
+    const qs = new URLSearchParams();
+    if (upstreamId) qs.set('upstream_id', String(upstreamId));
+    if (force) qs.set('force', '1');
+    const query = qs.toString();
+    return del<{name: string; bound_cleared: number}>(
+      `/api/proxy-routes/${encodeURIComponent(name)}${query ? `?${query}` : ''}`);
+  },
+  import: (text: string) =>
+    post<{imported: number; problems: string[]}>('/api/proxy-routes/import', {text}),
+  probe: (name: string) => post<ProxyProbe>('/api/proxy-routes/probe', {name}),
+  settings: () => get<ProxySettings>('/api/settings/proxy'),
+  saveSettings: (body: {http_proxy?: string; update_proxy?: string}) =>
+    put<ProxySettings>('/api/settings/proxy', body),
+  probeGlobal: () => post<ProxyProbe>('/api/settings/proxy/probe', {}),
+};
+
 export const settingsApi = {
   upstream: () => get<UpstreamConfig>('/api/settings/upstream'),
   saveUpstream: (body: Record<string, unknown>) =>

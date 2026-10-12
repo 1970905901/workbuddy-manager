@@ -17,9 +17,9 @@
 
 [English](README.en.md) · **简体中文** ｜ 本项目在 [LINUX DO](https://linux.do) 社区发布与交流
 
-<a href="https://proxylane.dev/?r=myfflnwxeoeyhc4zf1g2ljja"><img src="docs/images/sponsor-proxylane.png" alt="ProxyLane（赞助位）" width="100%" /></a>
+<a href="https://proxylane.dev/?utm_source=workbuddy-manager&utm_medium=partnership&utm_campaign=workbuddy-manager_sponsor_202610&utm_content=github_readme"><img src="docs/images/sponsor-proxylane.png" alt="ProxyLane（赞助位）" width="100%" /></a>
 
-**赞助位** · [ProxyLane](https://proxylane.dev/?r=myfflnwxeoeyhc4zf1g2ljja) 住宅代理：覆盖 195 个国家、95%+ IP 获 Scamalytics 低风险评级；在 `WB_HTTP_PROXY` 的用户名里写上国家、城市和会话名，每个实例走一个住宅 IP（最长 72 小时不变，换 IP 也留在同一城市）。首次购买用优惠码 `WORKBUDDY30` 享 7 折。
+**赞助位** · [ProxyLane](https://proxylane.dev/?utm_source=workbuddy-manager&utm_medium=partnership&utm_campaign=workbuddy-manager_sponsor_202610&utm_content=github_readme) 住宅代理：覆盖 195 个国家、95%+ IP 获 Scamalytics 低风险评级；在 `WB_HTTP_PROXY` 的用户名里写上国家、城市和会话名，每个实例走一个住宅 IP（最长 72 小时不变，换 IP 也留在同一城市）。首次购买用优惠码 `WORKBUDDY30` 享 7 折。
 
 <img src="docs/images/dashboard.png" alt="WorkBuddy Manager 仪表盘" width="100%" />
 

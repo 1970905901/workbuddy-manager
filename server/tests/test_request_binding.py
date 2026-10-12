@@ -175,7 +175,6 @@ class PostParamLocationAuditTest(unittest.TestCase):
         '/api/proxy-routes/{name}': {'upstream_id'},
         '/api/proxy-routes/{name}/accounts': {'upstream_id'},
         '/api/proxy-routes/{name}/auto-assign': {'upstream_id'},
-        '/api/proxy-routes/rotate': {'upstream_id'},
         '/api/accounts/{filename}/disabled': {'upstream_id'},
         '/api/accounts/{filename}/move': {'upstream_id'},
         # 账号导入（PR #145）：前端把分组与「是否覆盖同 uid」都按 query 传

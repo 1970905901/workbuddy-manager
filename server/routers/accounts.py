@@ -892,17 +892,23 @@ def _auth_dict(raw: dict) -> dict:
     device_token 是**每号**的设备风控 token（auth 文件顶层 device_token 键，
     与 workbuddy2api 的解析位置一致）；缺省留空，由 realm.device_token_for
     回退到上游 config 的全局值或文件。
+
+    `nickname` / `proxy_session` 只为**旧版线路地址里的 `{account}` 会话模板**带上
+    （`config.route_session_name` 要拿它算会话名）：会话名决定住宅代理的出口 IP，
+    不带就等于每次按 uid 现算，界面显示的会话名与真实出口对不上。
     """
     acct = raw.get('account') or {}
     auth = raw.get('auth') or {}
     return {
         'access_token': auth.get('accessToken', ''),
         'uid': acct.get('uid', ''),
+        'nickname': str(acct.get('nickname') or ''),
         'enterprise_id': acct.get('enterpriseId', ''),
         'domain': auth.get('domain', ''),
         'realm': auth.get('realm'),
         'device_token': str(raw.get('device_token') or ''),
         'proxy': str(raw.get('proxy') or ''),
+        'proxy_session': str(raw.get('proxy_session') or ''),
     }
 
 

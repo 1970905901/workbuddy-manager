@@ -180,15 +180,13 @@ export interface ProxyRoute {
   local?: boolean;
   /** 绑定账号数（列表接口一定会给） */
   bound: number;
-  /** exclusive = 带 {account} 会话模板（每个账号一个住宅 IP）；shared = 共用一条出口 */
-  mode: 'exclusive' | 'shared';
-  /** 池化选择时的权重（越大越常被选中） */
+  /** 池里的启用开关：停用的线路不会被自动挑选（显式绑定仍会报错提醒） */
+  enabled: boolean;
+  /** 按权重分摊/挑选（越大越常被选中） */
   weight: number;
   /** 前几个绑定账号的昵称（列表里显示 chips） */
   bound_names?: string[];
-  /** 独享线路的渲染示例（会话名已截断、密码已脱敏） */
-  session_preview?: string;
-  /** 共享线路绑了 ≥3 台时的风控提示 */
+  /** 绑了 ≥3 台时的风控提示（同一个出口 IP 上的号容易被上游按 IP 聚类） */
   shared_warning?: boolean;
   /** 上次测试的结果（面板里记着） */
   probe?: {ok: boolean; ms: number; at: number; exit_ip?: string; error?: string} | null;
@@ -198,16 +196,23 @@ export interface RouteAccount {
   file: string;
   uid: string;
   nickname: string;
-  routes: string[];
-  session: string;
-  session_preview: string;
-  bound: boolean;
+  /** 绑定的线路名；空 = 跟随池策略 */
+  proxy: string;
 }
 
-export interface RouteAccountsResponse {
-  name: string;
-  mode: 'exclusive' | 'shared';
+export interface ProxyPool {
+  enabled: boolean;
+  strategy: 'priority' | 'round_robin' | 'random' | 'least_connections';
+  interval_seconds: number;
+  strategies: string[];
+  routes_total: number;
+  routes_enabled: number;
+}
+
+export interface RouteBindingsResponse {
   accounts: RouteAccount[];
+  routes: string[];
+  pool: ProxyPool;
 }
 
 export interface ProxyRouteList {
@@ -215,6 +220,8 @@ export interface ProxyRouteList {
   default: string;
   schemes: string[];
   bound_total: number;
+  /** 池配置（开关 / 策略 / 间隔） */
+  pool: ProxyPool;
 }
 
 export interface ProxyProbe {
@@ -233,8 +240,9 @@ export interface ProxySettings {
   env_http_proxy: string;
   env_update_proxy: string;
   effective: string;
-  source: 'panel' | 'env' | 'none';
+  source: 'panel' | 'env' | 'none' | 'off';
   probe_url: string;
+  global_proxy_enabled: boolean;
 }
 
 export interface ModelInfo {

@@ -186,10 +186,8 @@ def list_auth_accounts(auth_dir: Path | None = None) -> list[dict]:
             {
                 'file': path.name,
                 'proxy': str(raw.get('proxy') or ''),
-                # 线路池与会话名（设置 → 代理 用）：一个账号可以挂多条线路，
-                # 会话名决定住宅代理的出口 IP，绑定后存下来（改昵称不会换 IP）。
-                'proxy_pool': [str(x) for x in (raw.get('proxy_pool') or [])
-                               if isinstance(x, (str, int))],
+                # 会话名：旧版线路地址里的 `{account}` 靠它认出口 IP（界面不展示）。
+                # 旧的 proxy_pool（一个账号挂多条线路）已废弃，不再透传。
                 'proxy_session': str(raw.get('proxy_session') or ''),
                 'uid': str(acct.get('uid', '')),
                 'nickname': acct.get('nickname') or '未命名',

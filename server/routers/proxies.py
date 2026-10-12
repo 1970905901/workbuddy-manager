@@ -2,12 +2,13 @@
 
 两处配置分属不同的存放位置，接口把它们收在同一个页面下：
 
-  · **命名线路表** → 上游 `config.json` 的 `proxies` 段。面板自己直连腾讯的请求
-    （登录 / 签到 / 积分 / 模型）按账号绑定取用；读侧每次现读文件，所以改完立即
-    生效、不必重启。聊天与上游后台任务由上游进程发出，取决于上游是否支持
-    `proxies` + 账号 `proxy` 字段（见 docs/account-proxy-routes.md）。
-  · **全局出口代理 / 更新代理** → 面板设置（SQLite），覆盖同名环境变量。环境变量
-    仍作为兜底与「没设过」时的默认值。
+  · **代理池（线路表）** → 上游 `config.json` 的 `proxies` 段：每条线路有
+    地址 / 权重 / 启用开关。面板自己直连腾讯的请求（登录 / 签到 / 积分 / 模型）
+    按「账号绑定 → 池策略 → 全局兜底」的顺序取用；读侧每次现读文件，改完立即生效。
+    聊天与上游后台任务由上游进程发出，取决于上游是否支持 `proxies` + 账号 `proxy`
+    字段（见 docs/account-proxy-routes.md）。
+  · **池配置**（开关 / 策略 / 间隔）与**全局出口代理 / 更新代理** → 面板设置
+    （SQLite），后者覆盖同名环境变量。
 
 凭据只进不出：写接口收完整地址，读接口一律回脱敏串（`***`），审计日志也只记脱敏串。
 """
@@ -57,14 +58,15 @@ def list_proxy_routes(upstream_id: int | None = Query(None),
     healthy = routesvc.health()
     for item in routes:
         item['probe'] = healthy.get(item['name'])
-        # 共享线路上挂太多账号是风控特征：界面据此给出提示（阈值 3，另见前端文案）。
-        item['shared_warning'] = item['mode'] == 'shared' and item['bound'] >= 3
+        # 一条线路上挂太多账号是风控特征（同一个出口 IP 上的号会被上游按 IP 聚类），
+        # 界面据此给出提示，阈值 3。
+        item['shared_warning'] = item['bound'] >= 3
     return {
         'routes': routes,
         'default': config.DEFAULT_ACCOUNT_PROXY,
         'schemes': list(routesvc.SCHEMES),
         'bound_total': sum(item['bound'] for item in routes),
-        'sticky_seconds': config.PROXY_STICKY_SECONDS,
+        'pool': routesvc.pool_settings(),
     }
 
 
@@ -95,7 +97,8 @@ def update_proxy_route(name: str, request: Request, body: dict = Body(...),
                            f'同步 {result["bound_updated"]} 台账号的绑定；'
                            f'来源 {client_ip(request)}')
             return {**item, 'bound_updated': result['bound_updated']}
-        item = routesvc.upsert(name, body.get('url'), weight=body.get('weight'))
+        item = routesvc.upsert(name, body.get('url'), weight=body.get('weight'),
+                               enabled=body.get('enabled'))
     except routesvc.RouteError as exc:
         raise _wrap(exc) from exc
     security.audit(user, 'update_proxy_route', item['name'],
@@ -151,38 +154,19 @@ async def probe_proxy_route(body: dict = Body(...),
     return result
 
 
-@router.get('/proxy-routes/{name}/accounts')
-def route_accounts(name: str, upstream_id: int | None = Query(None),
-                   user: dict = Depends(security.require_session_admin)) -> dict:
-    """这条线路的绑定抽屉：全部账号 + 各自当前用的线路，勾选即绑定。
+@router.get('/proxy-routes/bindings')
+def list_bindings(upstream_id: int | None = Query(None),
+                  user: dict = Depends(security.require_session_admin)) -> dict:
+    """绑定管理：全部账号 + 各自绑定的线路（空 = 跟随池策略）。
 
-    池化意味着一个账号可以同时用多条线路（按权重分摊、失败切换），所以这里返回的是
-    **每条线路各自的集合**，前端按「勾没勾」提交增量。
+    与参考项目的 `get_all_account_bindings` 同一个用途：一个弹窗里把「谁走哪条」
+    看全，逐行改。每行保存走既有的 `PUT /api/accounts/{file}/proxy`。
     """
-    try:
-        clean = routesvc.validate_name(name)
-    except routesvc.RouteError as exc:
-        raise _wrap(exc) from exc
-    table = routesvc.routes()
-    if clean not in table:
-        raise HTTPException(status_code=404, detail=f'线路 {clean!r} 不存在')
     rows = routesvc.account_rows(_auth_dir(upstream_id))
     return {
-        'name': clean,
-        'mode': 'exclusive' if config.route_is_exclusive(table[clean]) else 'shared',
-        'accounts': [
-            {
-                'file': row['file'],
-                'uid': row['uid'],
-                'nickname': row['nickname'],
-                'routes': row['routes'],
-                'session': row['session'],
-                'session_preview': (row['session'][:4] + '*'
-                                    if len(row['session']) > 4 else row['session']),
-                'bound': clean in row['routes'],
-            }
-            for row in rows
-        ],
+        'accounts': rows,
+        'routes': [item['name'] for item in routesvc.list_routes(_auth_dir(upstream_id))],
+        'pool': routesvc.pool_settings(),
     }
 
 
@@ -190,18 +174,18 @@ def route_accounts(name: str, upstream_id: int | None = Query(None),
 def bind_route_accounts(name: str, request: Request, body: dict = Body(...),
                         upstream_id: int | None = Query(None),
                         user: dict = Depends(security.require_session_admin)) -> dict:
-    """批量绑定 / 解绑：`{"files": [...], "add": true|false}`。"""
+    """批量绑定 / 解绑：`{"files": [...], "bound": true|false}`。"""
     files = body.get('files')
     if not isinstance(files, list) or not files:
         raise HTTPException(status_code=400, detail='没有选择账号')
-    add = bool(body.get('add', True))
+    bound = bool(body.get('bound', True))
     try:
-        result = routesvc.set_bindings(name, [str(f) for f in files],
-                                      auth_dir=_auth_dir(upstream_id), add=add)
+        result = routesvc.set_binding(name, [str(f) for f in files],
+                                      auth_dir=_auth_dir(upstream_id), bound=bound)
     except routesvc.RouteError as exc:
         raise _wrap(exc) from exc
-    security.audit(user, 'bind_proxy_route' if add else 'unbind_proxy_route', name,
-                   f'{"绑定" if add else "解绑"} {result["updated"]} 台；'
+    security.audit(user, 'bind_proxy_route' if bound else 'unbind_proxy_route', name,
+                   f'{"绑定" if bound else "解绑"} {result["updated"]} 台；'
                    f'来源 {client_ip(request)}')
     return result
 
@@ -230,22 +214,17 @@ def auto_assign_route_accounts(name: str, request: Request, body: dict = Body(..
     return result
 
 
-@router.post('/proxy-routes/rotate')
-def rotate_route_sessions(request: Request, body: dict = Body(...),
-                          upstream_id: int | None = Query(None),
-                          user: dict = Depends(security.require_session_admin)) -> dict:
-    """换会话（= 换出口 IP）：住宅代理的会话名决定出口，换名字就是换 IP。
-
-    做成**显式动作**而不是自动轮换：换 IP 在风控眼里是特征变化，什么时候换应该由
-    人决定（换之前之后都能在列表里看到会话名）。
-    """
-    files = body.get('files')
-    if not isinstance(files, list) or not files:
-        raise HTTPException(status_code=400, detail='没有选择账号')
-    result = routesvc.rotate_sessions([str(f) for f in files],
-                                     auth_dir=_auth_dir(upstream_id))
-    security.audit(user, 'rotate_proxy_session', '',
-                   f'{result["updated"]} 台换会话；来源 {client_ip(request)}')
+@router.put('/settings/proxy-pool')
+def save_proxy_pool(request: Request, body: dict = Body(...),
+                    user: dict = Depends(security.require_session_admin)) -> dict:
+    """保存池配置：开关 / 策略 / 间隔（间隔 = 多久重新挑一条出口）。"""
+    try:
+        result = routesvc.save_pool_settings(body)
+    except routesvc.RouteError as exc:
+        raise _wrap(exc) from exc
+    security.audit(user, 'update_proxy_pool', '',
+                   f'enabled={result["enabled"]}；策略={result["strategy"]}；'
+                   f'间隔={result["interval_seconds"]}s；来源 {client_ip(request)}')
     return result
 
 
@@ -256,9 +235,12 @@ def get_proxy_settings(user: dict = Depends(security.require_session_admin)) -> 
     """当前出口代理配置（脱敏）+ 生效来源。"""
     stored_http = config.stored_http_proxy()
     stored_update = str(db.get_setting('update_proxy', '') or '')
+    enabled = db.get_setting('global_proxy_enabled', True) is not False
     effective = config.effective_http_proxy()
-    source = 'panel' if stored_http else ('env' if config.HTTP_PROXY else 'none')
+    source = ('off' if not enabled else
+              'panel' if stored_http else 'env' if config.HTTP_PROXY else 'none')
     return {
+        'global_proxy_enabled': bool(enabled),
         'http_proxy': _masked(stored_http),
         'update_proxy': _masked(stored_update),
         'http_configured': bool(stored_http),
@@ -280,6 +262,9 @@ def save_proxy_settings(request: Request, body: dict = Body(...),
     传空串表示清除（回落到环境变量）。
     """
     changed: list[str] = []
+    if 'global_proxy_enabled' in body:
+        db.set_setting('global_proxy_enabled', bool(body.get('global_proxy_enabled')))
+        changed.append(f"global_proxy_enabled={bool(body.get('global_proxy_enabled'))}")
     for field, key in (('http_proxy', 'http_proxy'), ('update_proxy', 'update_proxy')):
         if field not in body:
             continue

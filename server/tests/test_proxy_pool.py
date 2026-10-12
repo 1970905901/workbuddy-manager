@@ -1,12 +1,13 @@
-"""会话模板 + 池化（P0/P1）的行为测试。
+"""代理池方案的行为测试（参照 Antigravity-Manager 的池 + 权重 + 绑定 + 全局兜底）。
 
-锁四件事：
-  1. **独享**：带 `{account}` 的线路，每个账号渲染出自己的会话名（= 各自的住宅 IP）；
-     **共享**：不带占位符的线路，所有绑定账号拿同一条出口；
-  2. 会话名**存下来**：绑定后改昵称不会悄悄换掉出口 IP（要换就显式「换会话」）；
-  3. **池化**：一个账号可以挂多条线路，按权重挑，且窗口内粘住同一条
-     （一会儿换一个出口在风控眼里就是特征）；
-  4. 绑定/解绑/换会话/改名/删除都只动该动的字段 —— 池里别的线路不能跟着丢。
+锁五件事：
+  1. **优先级**：账号绑定的线路 > 代理池（按策略挑）> 全局上游代理 > 直连；
+  2. **绑定的线路不可用要报错**（删了 / 停用了），而不是悄悄换出口 —— 出口被换掉
+     在风控里就是特征变化；
+  3. **池策略**：priority（按权重降序取第一）/ round_robin（依次轮）/
+     random（加权随机）/ least_connections（最近调用最少）；
+  4. **间隔内粘住**：同一个账号在间隔窗口内固定走同一条（别一会儿换一个出口）；
+  5. **单绑定语义**：绑定就是覆盖原来那条；解除 = 跟随池策略。
 """
 from __future__ import annotations
 
@@ -24,8 +25,8 @@ from server.routers import proxies
 from server.services import proxyroutes as pr
 
 ADMIN = {'username': 'admin', 'role': 'admin'}
-EXCLUSIVE = 'socks5://demo_c_CN_city_Shanghai_s_{account}:pw@gw.example.dev:10000'
-SHARED = 'socks5://demo_c_CN_city_Shanghai_s_fixed:pw@gw.example.dev:10000'
+A = 'socks5://u:pw@a.example.dev:10000'
+B = 'socks5://u:pw@b.example.dev:10000'
 
 
 class _Base(unittest.TestCase):
@@ -36,9 +37,9 @@ class _Base(unittest.TestCase):
         self.auth_dir = self.root / 'auths'
         self.auth_dir.mkdir()
         self.cfg = self.root / 'config.json'
-        self._write_config({'px-sh': EXCLUSIVE, 'px-jp': SHARED})
+        self._write_config({'px-a': A, 'px-b': B})
         for name, value in (('AUTH_DIR', self.auth_dir), ('UPSTREAM_CONFIG', self.cfg),
-                            ('PROXY_STICKY_SECONDS', 1800)):
+                            ('HTTP_PROXY', '')):
             patch = mock.patch.object(config, name, value)
             patch.start()
             self.addCleanup(patch.stop)
@@ -48,10 +49,12 @@ class _Base(unittest.TestCase):
         db._conn = None
         db.connect()
         self.addCleanup(self._close_db)
-        db.set_setting('proxy_sticky', {})
+        for key in ('proxy_pool', 'proxy_sticky', 'http_proxy', 'global_proxy_enabled'):
+            db.set_setting(key, None if key == 'proxy_pool' else {})
+        db.set_setting('proxy_pool', {})
 
-        self._account('workbuddy-a.json', 'uid-aaa', '小王')
-        self._account('workbuddy-b.json', 'uid-bbb', '小李')
+        self._account('workbuddy-a.json', 'uid-aaa', '账号A')
+        self._account('workbuddy-b.json', 'uid-bbb', '账号B')
 
         app = FastAPI()
         app.include_router(proxies.router)
@@ -76,263 +79,250 @@ class _Base(unittest.TestCase):
     def _read(self, name: str) -> dict:
         return json.loads((self.auth_dir / name).read_text(encoding='utf-8'))
 
+    def _auth(self, name: str) -> dict:
+        """账号文件 → 路由层实际传下去的**扁平**字典（uid / 昵称 / 线路 / 会话名）。"""
+        doc = self._read(name)
+        account = doc.get('account') or {}
+        return {'uid': str(account.get('uid') or ''),
+                'nickname': str(account.get('nickname') or ''),
+                'proxy': str(doc.get('proxy') or ''),
+                'proxy_session': str(doc.get('proxy_session') or '')}
 
-class SessionTemplateTest(_Base):
-    def test_exclusive_route_renders_per_account_session(self) -> None:
-        pr.set_bindings('px-sh', ['workbuddy-a.json', 'workbuddy-b.json'],
-                        auth_dir=self.auth_dir)
-        a = config.resolve_account_proxy(self._read('workbuddy-a.json'))
-        b = config.resolve_account_proxy(self._read('workbuddy-b.json'))
-        self.assertIn('_s_uid-aaa', a, a)   # 中文昵称 → 退回 uid 前缀（ASCII）
-        self.assertIn('_s_uid-bbb', b, b)
-        self.assertNotEqual(a, b, '独享线路的两个账号拿到了同一个会话')
-        self.assertNotIn('{account}', a, '占位符没被替换')
-
-    def test_session_survives_nickname_change(self) -> None:
-        """绑定后改昵称不能换掉出口 IP —— 这正是把会话名存下来的原因。"""
-        pr.set_bindings('px-sh', ['workbuddy-a.json'], auth_dir=self.auth_dir)
-        before = config.resolve_account_proxy(self._read('workbuddy-a.json'))
-        doc = self._read('workbuddy-a.json')
-        doc['account']['nickname'] = '换了个名字'
-        (self.auth_dir / 'workbuddy-a.json').write_text(json.dumps(doc, ensure_ascii=False),
-                                                        encoding='utf-8')
-        after = config.resolve_account_proxy(self._read('workbuddy-a.json'))
-        self.assertEqual(before, after, '改昵称把出口 IP 悄悄换了')
-
-    def test_shared_route_is_one_egress_for_all(self) -> None:
-        pr.set_bindings('px-jp', ['workbuddy-a.json', 'workbuddy-b.json'],
-                        auth_dir=self.auth_dir)
-        a = config.resolve_account_proxy(self._read('workbuddy-a.json'))
-        b = config.resolve_account_proxy(self._read('workbuddy-b.json'))
-        self.assertEqual(a, b, '共享线路的两个账号出口不一致')
-        self.assertIn('_s_fixed', a)
-
-    def test_rotate_gives_a_new_session(self) -> None:
-        pr.set_bindings('px-sh', ['workbuddy-a.json'], auth_dir=self.auth_dir)
-        before = self._read('workbuddy-a.json')['proxy_session']
-        result = pr.rotate_sessions(['workbuddy-a.json'], auth_dir=self.auth_dir)
-        after = self._read('workbuddy-a.json')['proxy_session']
-        self.assertEqual(result['updated'], 1)
-        self.assertNotEqual(before, after, '换会话没有换掉会话名')
-        self.assertTrue(after.startswith(before.split('-')[0]), f'新会话名不可读：{after}')
-
-    def test_invalid_binding_raises_instead_of_falling_back(self) -> None:
-        self._account('workbuddy-c.json', 'uid-ccc', '小张', proxy='does-not-exist')
-        with self.assertRaises(ValueError):
-            config.resolve_account_proxy(self._read('workbuddy-c.json'))
+    def _pool(self, **over) -> None:
+        db.set_setting('proxy_pool', {'enabled': True, 'strategy': 'priority',
+                                      'interval_seconds': 300, **over})
+        config._RECENT_CALLS.clear()
+        config._ROUND_ROBIN['cursor'] = 0
 
 
-class SessionNamingTest(_Base):
-    def test_ascii_nickname_becomes_the_session(self) -> None:
-        """昵称是 ASCII 时按昵称派生（好看好认）；中文昵称退回 uid 前缀。"""
-        self._account('workbuddy-en.json', 'uid-en-1', 'Xiao Wang')
-        self.assertEqual(config.route_session_name({'nickname': 'Xiao Wang',
-                                                    'uid': 'uid-en-1'}),
-                         'xiao-wang')
-        self.assertEqual(config.route_session_name({'nickname': '小王',
-                                                    'uid': 'uid-aaa'}), 'uid-aaa')
+class PriorityOrderTest(_Base):
+    def test_bound_route_wins_over_pool_and_global(self) -> None:
+        self._pool()
+        db.set_setting('http_proxy', 'socks5://global:pw@g.example.dev:1080')
+        self._account('workbuddy-a.json', 'uid-aaa', '账号A', proxy='px-b')
+        chosen = config.resolve_account_proxy(self._auth('workbuddy-a.json'))
+        self.assertEqual(chosen, B, '绑定优先于池与全局')
 
+    def test_pool_beats_global(self) -> None:
+        self._pool()
+        db.set_setting('http_proxy', 'socks5://global:pw@g.example.dev:1080')
+        self.assertIn(config.resolve_account_proxy(self._auth('workbuddy-a.json')), (A, B))
 
-class PoolTest(_Base):
-    def _bind_pool(self, names: list[str], file: str = 'workbuddy-a.json') -> None:
-        doc = self._read(file)
-        doc['proxy'] = names[0]
-        doc['proxy_pool'] = names
-        (self.auth_dir / file).write_text(json.dumps(doc, ensure_ascii=False), encoding='utf-8')
+    def test_global_proxy_is_the_fallback(self) -> None:
+        db.set_setting('http_proxy', 'socks5://global:pw@g.example.dev:1080')
+        chosen = config.resolve_account_proxy(self._auth('workbuddy-a.json'))
+        self.assertEqual(chosen, 'socks5://global:pw@g.example.dev:1080')
 
-    def test_pool_picks_by_weight(self) -> None:
-        self._write_config({'heavy': SHARED, 'light': SHARED.replace('fixed', 'other')})
-        self._bind_pool(['heavy', 'light'])
-        account = self._read('workbuddy-a.json')
-        picks = [config.resolve_account_proxy(account) for _ in range(1)]
-        # 窗口内会粘住第一次的选择；把窗口关掉才看得到概率分布
-        with mock.patch.object(config, 'PROXY_STICKY_SECONDS', 0):
-            db.set_setting('proxy_sticky', {})
-            weights = {'heavy': 1000, 'light': 1}
-            with mock.patch.object(config, 'proxy_route_weights', return_value=weights):
-                counts = {'heavy': 0, 'light': 0}
-                for _ in range(200):
-                    db.set_setting('proxy_sticky', {})
-                    url = config.resolve_account_proxy(account)
-                    counts['heavy' if 'fixed' in url else 'light'] += 1
-        self.assertTrue(picks)
-        self.assertGreater(counts['heavy'], 150, f'权重没起作用：{counts}')
+    def test_global_proxy_switch_off_falls_back_to_direct(self) -> None:
+        db.set_setting('http_proxy', 'socks5://global:pw@g.example.dev:1080')
+        db.set_setting('global_proxy_enabled', False)
+        self.assertIsNone(config.resolve_account_proxy(self._auth('workbuddy-a.json')))
 
-    def test_pool_choice_sticks_within_window(self) -> None:
-        self._write_config({'r1': SHARED, 'r2': SHARED.replace('fixed', 'two')})
-        self._bind_pool(['r1', 'r2'])
-        account = self._read('workbuddy-a.json')
-        first = config.resolve_account_proxy(account)
-        for _ in range(5):
-            self.assertEqual(config.resolve_account_proxy(account), first,
-                             '粘性窗口内换了出口 —— 风控里这就是特征')
+    def test_nothing_configured_is_direct(self) -> None:
+        self.assertIsNone(config.resolve_account_proxy(self._auth('workbuddy-a.json')))
 
-    def test_unreachable_route_is_reported_loudly(self) -> None:
-        self._bind_pool(['ghost'])
+    def test_disabled_or_missing_binding_raises(self) -> None:
+        """绑定的线路被停用 / 被删：报错，不静默换出口。"""
+        self._account('workbuddy-a.json', 'uid-aaa', '账号A', proxy='px-a')
+        self._write_config({'px-a': {'url': A, 'enabled': False}})
         with self.assertRaises(ValueError) as ctx:
-            config.resolve_account_proxy(self._read('workbuddy-a.json'))
-        self.assertIn('ghost', str(ctx.exception))
+            config.resolve_account_proxy(self._auth('workbuddy-a.json'))
+        self.assertIn('停用', str(ctx.exception))
+
+        self._write_config({'px-b': B})
+        with self.assertRaises(ValueError) as ctx2:
+            config.resolve_account_proxy(self._auth('workbuddy-a.json'))
+        self.assertIn('不存在', str(ctx2.exception))
 
 
-class AutoAssignTest(_Base):
-    """「自动分配 N 台」：挑人顺序不能漂移，否则每次挑到的一批不一样（= 换出口）。"""
+class StrategyTest(_Base):
+    def test_priority_prefers_the_heaviest_weight(self) -> None:
+        self._write_config({'px-a': {'url': A, 'weight': 10}, 'px-b': {'url': B, 'weight': 500}})
+        self._pool(strategy='priority')
+        self.assertEqual(config.resolve_account_proxy(self._auth('workbuddy-a.json')), B)
 
-    def _many(self, n: int, *, bound: str = '') -> None:
-        for i in range(n):
-            name = f'workbuddy-m{i:02d}.json'
-            self._account(name, f'uid-m{i:02d}', f'账号{i:02d}', **({'proxy': bound} if bound else {}))
+    def test_round_robin_cycles(self) -> None:
+        self._pool(strategy='round_robin', interval_seconds=0)
+        seen = [config.resolve_account_proxy(self._auth('workbuddy-a.json')) for _ in range(4)]
+        self.assertEqual(set(seen), {A, B}, f'轮询没轮到两条：{seen}')
+        self.assertNotEqual(seen[0], seen[1], '连续两次应当换一条')
 
-    def test_prefers_unbound_then_least_bound_and_is_stable(self) -> None:
-        self._many(6)                                  # 6 台未绑定（账号00..05）
-        # 两台已经绑了别的线路：其中一台还绑了两条 —— 它们应当排在未绑定之后
-        self._account('workbuddy-m06.json', 'uid-m06', '账号06', proxy='px-jp')
-        self._account('workbuddy-m07.json', 'uid-m07', '账号07', proxy='px-jp')
-        self._account('workbuddy-m08.json', 'uid-m08', '账号08')
-        pr.set_bindings('px-sh', ['workbuddy-m08.json'], auth_dir=self.auth_dir)
-        pr.set_bindings('px-jp', ['workbuddy-m08.json'], auth_dir=self.auth_dir)
+    def test_random_respects_weights(self) -> None:
+        self._write_config({'px-a': {'url': A, 'weight': 1000}, 'px-b': {'url': B, 'weight': 1}})
+        self._pool(strategy='random', interval_seconds=0)
+        picks = [config.resolve_account_proxy(self._auth('workbuddy-a.json')) for _ in range(80)]
+        self.assertGreater(picks.count(A), 60, f'权重没起作用：{picks.count(A)}/80')
 
-        first = pr.auto_assign('px-sh', 3, auth_dir=self.auth_dir)
-        self.assertEqual(first['requested'], 3)
-        picked = {row['file'] for row in pr.account_rows(self.auth_dir)
-                  if 'px-sh' in row['routes']}
-        # 三台候选应当是「未绑定里按昵称排前」的三个，而不是已绑过线路的那几台
-        self.assertIn('workbuddy-a.json', picked)
-        self.assertIn('workbuddy-b.json', picked)
-        self.assertIn('workbuddy-m00.json', picked)
-        self.assertNotIn('workbuddy-m06.json', picked, '优先挑了已绑定的账号')
-        self.assertEqual(first['unbound_left'], 5, '未绑定剩余的台数不对')
+    def test_least_connections_prefers_the_idle_route(self) -> None:
+        self._pool(strategy='least_connections')
+        # 先让 A 被用掉一次，下一次应当轮到 B
+        first = config.resolve_account_proxy(self._auth('workbuddy-a.json'))
+        second = config.resolve_account_proxy(self._auth('workbuddy-b.json'))
+        self.assertNotEqual(first, second, 'least_connections 没挑空闲的那条')
 
-        # 再分一批：应当接着同一顺序往下挑（挑到不同批次 = 给它们换了出口 IP）
-        second = pr.auto_assign('px-sh', 2, auth_dir=self.auth_dir)
-        self.assertEqual(second['updated'], 2)
-        picked2 = ({row['file'] for row in pr.account_rows(self.auth_dir)
-                    if 'px-sh' in row['routes']} - picked)
-        self.assertEqual(picked2, {'workbuddy-m01.json', 'workbuddy-m02.json'},
-                         '第二批没按同一顺序挑（顺序漂移就是给别的账号换了出口）')
+    def test_interval_keeps_the_same_route(self) -> None:
+        self._pool(strategy='round_robin', interval_seconds=300)
+        first = config.resolve_account_proxy(self._auth('workbuddy-a.json'))
+        for _ in range(4):
+            self.assertEqual(config.resolve_account_proxy(self._auth('workbuddy-a.json')), first,
+                             '间隔窗口内换了出口 —— 风控里这就是特征')
 
-    def test_count_is_capped_by_available_accounts(self) -> None:
-        self._many(2)                                  # 只有 2 台可挑
-        result = pr.auto_assign('px-sh', 10, auth_dir=self.auth_dir)
-        self.assertEqual(result['requested'], 10)
-        self.assertEqual(result['updated'], 4, '应把能挑的都挑上（含 fixture 的两台）')
-        self.assertEqual(result['unbound_left'], 0)
-
-    def test_exclusive_route_generates_sessions_for_auto_picked(self) -> None:
-        self._many(2)
-        pr.auto_assign('px-sh', 2, auth_dir=self.auth_dir)
-        sessions = [row['session'] for row in pr.account_rows(self.auth_dir)
-                    if 'px-sh' in row['routes']]
-        self.assertTrue(all(sessions), f'自动分配没生成会话名：{sessions}')
-        self.assertEqual(len(set(sessions)), len(sessions), '会话名重复（IP 会撞）')
-
-    def test_invalid_count_and_missing_route(self) -> None:
-        for bad in (0, -1, 100000):
-            with self.subTest(count=bad):
-                with self.assertRaises(pr.RouteError):
-                    pr.auto_assign('px-sh', bad, auth_dir=self.auth_dir)
-        with self.assertRaises(pr.RouteError):
-            pr.auto_assign('ghost', 1, auth_dir=self.auth_dir)
-
-    def test_endpoint_audits_and_reports(self) -> None:
-        self._many(3)
-        response = self.client.post('/api/proxy-routes/px-sh/auto-assign', json={'count': 3})
-        self.assertEqual(response.status_code, 200, response.text)
-        body = response.json()
-        self.assertEqual(body['updated'], 3)
-        self.assertEqual(body['requested'], 3)
-        rows = db.query("SELECT action, target FROM audit_logs ORDER BY id DESC LIMIT 1")
-        self.assertEqual(rows[0]['action'], 'auto_assign_proxy_route')
-        self.assertEqual(rows[0]['target'], 'px-sh')
-        bad = self.client.post('/api/proxy-routes/px-sh/auto-assign', json={'count': 0})
-        self.assertEqual(bad.status_code, 400)
+    def test_pool_skips_disabled_routes(self) -> None:
+        self._write_config({'px-a': {'url': A, 'enabled': False}, 'px-b': B})
+        self._pool()
+        self.assertEqual(config.resolve_account_proxy(self._auth('workbuddy-a.json')), B,
+                         '池里挑到了停用的线路')
 
 
 class BindingApiTest(_Base):
-    def test_batch_bind_and_unbind_only_touches_this_route(self) -> None:
-        pr.set_bindings('px-jp', ['workbuddy-a.json'], auth_dir=self.auth_dir)
-        self.assertEqual(self._read('workbuddy-a.json')['proxy'], 'px-jp')
-
-        response = self.client.post('/api/proxy-routes/px-sh/accounts',
-                                    json={'files': ['workbuddy-a.json', 'workbuddy-b.json'],
-                                          'add': True})
+    def test_bind_and_unbind_are_single_and_keep_other_fields(self) -> None:
+        response = self.client.post('/api/proxy-routes/px-a/accounts',
+                                    json={'files': ['workbuddy-a.json'], 'bound': True})
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()['updated'], 2)
-        doc = self._read('workbuddy-a.json')
-        self.assertEqual(doc['proxy_pool'], ['px-jp', 'px-sh'], '绑定没进池')
-        self.assertTrue(doc.get('proxy_session'), '独享线路没给账号生成会话名')
+        self.assertEqual(self._read('workbuddy-a.json')['proxy'], 'px-a')
+        again = self.client.post('/api/proxy-routes/px-b/accounts',
+                                 json={'files': ['workbuddy-a.json'], 'bound': True})
+        self.assertEqual(again.status_code, 200, again.text)
+        self.assertEqual(self._read('workbuddy-a.json')['proxy'], 'px-b', '绑定应覆盖原来那条')
 
-        out = self.client.post('/api/proxy-routes/px-sh/accounts',
-                               json={'files': ['workbuddy-a.json'], 'add': False}).json()
-        self.assertEqual(out['updated'], 1)
-        doc = self._read('workbuddy-a.json')
-        self.assertEqual(doc['proxy'], 'px-jp', '解绑把别的线路也弄丢了')
-        # 只剩一条时不必再写 proxy_pool（老字段就是单条）
-        self.assertIn(doc.get('proxy_pool'), (None, ['px-jp']))
+        cleared = self.client.post('/api/proxy-routes/px-b/accounts',
+                                   json={'files': ['workbuddy-a.json'], 'bound': False}).json()
+        self.assertEqual(cleared['updated'], 1)
+        self.assertNotIn('proxy', self._read('workbuddy-a.json'),
+                         '解除绑定后应跟随池策略')
 
-    def test_binding_drawer_lists_accounts(self) -> None:
-        pr.set_bindings('px-sh', ['workbuddy-a.json'], auth_dir=self.auth_dir)
-        body = self.client.get('/api/proxy-routes/px-sh/accounts').json()
-        self.assertEqual(body['mode'], 'exclusive')
+    def test_binding_manager_lists_accounts_and_routes(self) -> None:
+        self.client.post('/api/proxy-routes/px-a/accounts',
+                         json={'files': ['workbuddy-a.json'], 'bound': True})
+        body = self.client.get('/api/proxy-routes/bindings').json()
         by_file = {a['file']: a for a in body['accounts']}
-        self.assertTrue(by_file['workbuddy-a.json']['bound'])
-        self.assertFalse(by_file['workbuddy-b.json']['bound'])
-        self.assertTrue(by_file['workbuddy-a.json']['session_preview'])
-        self.assertNotIn('pw', json.dumps(body), '抽屉里泄露了代理密码')
+        self.assertEqual(by_file['workbuddy-a.json']['proxy'], 'px-a')
+        self.assertEqual(by_file['workbuddy-b.json']['proxy'], '')
+        self.assertEqual(body['routes'], ['px-a', 'px-b'])
+        self.assertIn('pool', body)
 
-    def test_rotate_endpoint_rotates_only_selected(self) -> None:
-        pr.set_bindings('px-sh', ['workbuddy-a.json', 'workbuddy-b.json'],
-                        auth_dir=self.auth_dir)
-        before_b = self._read('workbuddy-b.json')['proxy_session']
-        response = self.client.post('/api/proxy-routes/rotate',
-                                    json={'files': ['workbuddy-a.json']})
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()['updated'], 1)
-        self.assertEqual(self._read('workbuddy-b.json')['proxy_session'], before_b,
-                         '换会话影响到了没选中的账号')
+    def test_legacy_pool_field_is_cleaned_and_session_kept(self) -> None:
+        """上一版的 proxy_pool 绑定时清掉；proxy_session 留着（`{account}` 模板还靠它）。"""
+        self._account('workbuddy-a.json', 'uid-aaa', '账号A',
+                      proxy_pool=['px-a', 'px-b'], proxy_session='old')
+        self.client.post('/api/proxy-routes/px-a/accounts',
+                         json={'files': ['workbuddy-a.json'], 'bound': True})
+        doc = self._read('workbuddy-a.json')
+        self.assertNotIn('proxy_pool', doc)
+        self.assertEqual(doc.get('proxy_session'), 'old')
 
-    def test_weight_roundtrip(self) -> None:
-        created = self.client.put('/api/proxy-routes/px-jp', json={'weight': 30}).json()
-        self.assertEqual(created['weight'], 30)
-        stored = json.loads(self.cfg.read_text(encoding='utf-8'))['proxies']['px-jp']
-        self.assertEqual(stored, {'url': SHARED, 'weight': 30}, '权重没落盘成对象形态')
+    def test_weight_and_enabled_roundtrip(self) -> None:
+        self.client.put('/api/proxy-routes/px-a', json={'weight': 30, 'enabled': False})
+        stored = json.loads(self.cfg.read_text(encoding='utf-8'))['proxies']['px-a']
+        self.assertEqual(stored, {'url': A, 'weight': 30, 'enabled': False})
         listing = self.client.get('/api/proxy-routes').json()
-        self.assertEqual({r['name']: r['weight'] for r in listing['routes']}['px-jp'], 30)
-        bad = self.client.put('/api/proxy-routes/px-jp', json={'weight': 0})
+        item = {r['name']: r for r in listing['routes']}['px-a']
+        self.assertEqual(item['weight'], 30)
+        self.assertFalse(item['enabled'])
+        self.assertIn('pool', listing)
+        bad = self.client.put('/api/proxy-routes/px-a', json={'weight': 0})
         self.assertEqual(bad.status_code, 400)
 
-    def test_rename_and_delete_follow_pool_membership(self) -> None:
-        pr.set_bindings('px-jp', ['workbuddy-a.json'], auth_dir=self.auth_dir)
-        pr.set_bindings('px-sh', ['workbuddy-a.json'], auth_dir=self.auth_dir)
-        self.client.put('/api/proxy-routes/px-sh', json={'new_name': 'px-cn'})
-        self.assertEqual(self._read('workbuddy-a.json')['proxy_pool'], ['px-jp', 'px-cn'],
-                         '改名没有同步池里的引用')
-        out = self.client.delete('/api/proxy-routes/px-cn?force=1').json()
-        self.assertEqual(out['bound_cleared'], 1)
-        self.assertEqual(self._read('workbuddy-a.json')['proxy_pool'], ['px-jp'],
-                         '删除把池里别的线路带走了') if 'proxy_pool' in self._read(
-            'workbuddy-a.json') else self.assertEqual(self._read('workbuddy-a.json')['proxy'],
-                                                       'px-jp')
+    def test_pool_settings_are_saved_and_validated(self) -> None:
+        saved = self.client.put('/api/settings/proxy-pool',
+                                json={'enabled': True, 'strategy': 'round_robin',
+                                      'interval_seconds': 60}).json()
+        self.assertTrue(saved['enabled'])
+        self.assertEqual(saved['strategy'], 'round_robin')
+        self.assertEqual(config.proxy_pool_config()['interval_seconds'], 60)
+        bad = self.client.put('/api/settings/proxy-pool', json={'strategy': 'nope'})
+        self.assertEqual(bad.status_code, 400)
 
-    def test_list_reports_mode_health_and_shared_warning(self) -> None:
-        for name in ('workbuddy-a.json', 'workbuddy-b.json'):
-            pr.set_bindings('px-jp', [name], auth_dir=self.auth_dir)
-        self._account('workbuddy-c.json', 'uid-ccc', '小张')
-        pr.set_bindings('px-jp', ['workbuddy-c.json'], auth_dir=self.auth_dir)
-        pr.record_probe('px-jp', {'ok': False, 'ms': 12, 'error': 'ConnectError: boom'})
-        # 独享线路的预览要能看出「每个号一个会话」，所以先给它绑一台账号
-        pr.set_bindings('px-sh', ['workbuddy-a.json'], auth_dir=self.auth_dir)
-        listing = self.client.get('/api/proxy-routes').json()
-        by_name = {r['name']: r for r in listing['routes']}
-        self.assertEqual(by_name['px-sh']['mode'], 'exclusive')
-        self.assertIn('uid-*', by_name['px-sh']['session_preview'],
-                      '独享线路没给出会话预览')
-        self.assertEqual(by_name['px-jp']['mode'], 'shared')
-        self.assertEqual(by_name['px-jp']['session_preview'], '',
-                         '共享线路不该有「每个账号一个会话」的预览')
-        self.assertTrue(by_name['px-jp']['shared_warning'], '三台共用没给提示')
-        self.assertEqual(by_name['px-jp']['bound'], 3)
-        self.assertFalse(by_name['px-jp']['probe']['ok'])
-        self.assertEqual(by_name['px-jp']['probe']['error'], 'ConnectError: boom')
+    def test_global_proxy_switch_roundtrip(self) -> None:
+        self.client.put('/api/settings/proxy', json={'http_proxy': 'http://p:1', 'global_proxy_enabled': True})
+        self.assertTrue(self.client.get('/api/settings/proxy').json()['global_proxy_enabled'])
+        self.client.put('/api/settings/proxy', json={'global_proxy_enabled': False})
+        self.assertFalse(self.client.get('/api/settings/proxy').json()['global_proxy_enabled'])
+        self.assertEqual(self.client.get('/api/settings/proxy').json()['source'], 'off')
+
+    def test_delete_and_rename_follow_bindings(self) -> None:
+        self.client.post('/api/proxy-routes/px-a/accounts',
+                         json={'files': ['workbuddy-a.json'], 'bound': True})
+        self.client.put('/api/proxy-routes/px-a', json={'new_name': 'px-cn'})
+        self.assertEqual(self._read('workbuddy-a.json')['proxy'], 'px-cn', '改名没跟着绑定')
+        blocked = self.client.delete('/api/proxy-routes/px-cn')
+        self.assertEqual(blocked.status_code, 409)
+        forced = self.client.delete('/api/proxy-routes/px-cn?force=1').json()
+        self.assertEqual(forced['bound_cleared'], 1)
+        self.assertNotIn('proxy', self._read('workbuddy-a.json'))
+
+    def test_auto_assign_fills_unbound_first(self) -> None:
+        self.client.post('/api/proxy-routes/px-b/accounts',
+                         json={'files': ['workbuddy-b.json'], 'bound': True})
+        result = self.client.post('/api/proxy-routes/px-a/auto-assign',
+                                  json={'count': 1}).json()
+        self.assertEqual(result['updated'], 1)
+        self.assertEqual(self._read('workbuddy-a.json')['proxy'], 'px-a',
+                         '自动分配应优先挑没绑线路的账号')
+        self.assertEqual(result['unbound_left'], 0)
+
+    def test_health_is_recorded_and_listed(self) -> None:
+        pr.record_probe('px-a', {'ok': False, 'ms': 12, 'error': 'ConnectError: boom'})
+        item = {r['name']: r for r in self.client.get('/api/proxy-routes').json()['routes']}
+        self.assertFalse(item['px-a']['probe']['ok'])
+        self.assertEqual(item['px-a']['probe']['error'], 'ConnectError: boom')
+        self.assertEqual(item['px-a']['bound'], 0)
+
+
+class LegacyTemplateTest(_Base):
+    """1.0.84 的 `{account}` 会话模板地址：新界面不再提供，但**必须还能用**。
+
+    那一版已经发布过，用户可能照着写了这种地址。现在换成池方案后，如果不再渲染
+    占位符，这些账号的请求会拿着字面量 `{account}` 去代理认证 → 直接挂掉。所以
+    渲染保留（会话名沿用账号文件里存下来的 `proxy_session`），只是界面不再教。
+    """
+
+    TPL = 'socks5://demo_s_{account}:pw@gw.example.dev:10000'
+
+    def test_bound_template_renders_per_account(self) -> None:
+        self._write_config({'px-tpl': self.TPL})
+        self._account('workbuddy-a.json', 'uid-aaa', '账号A', proxy='px-tpl',
+                      proxy_session='sess-a')
+        self._account('workbuddy-b.json', 'uid-bbb', '账号B', proxy='px-tpl',
+                      proxy_session='sess-b')
+        a = config.resolve_account_proxy(self._auth('workbuddy-a.json'))
+        b = config.resolve_account_proxy(self._auth('workbuddy-b.json'))
+        self.assertEqual(a, 'socks5://demo_s_sess-a:pw@gw.example.dev:10000')
+        self.assertEqual(b, 'socks5://demo_s_sess-b:pw@gw.example.dev:10000')
+        self.assertNotEqual(a, b, '两个账号各自一个会话名 = 各自一个出口 IP')
+
+    def test_pool_route_renders_too(self) -> None:
+        self._write_config({'px-tpl': self.TPL})
+        self._pool()
+        self._account('workbuddy-a.json', 'uid-aaa', '账号A', proxy_session='sess-a')
+        self.assertEqual(config.resolve_account_proxy(self._auth('workbuddy-a.json')),
+                         'socks5://demo_s_sess-a:pw@gw.example.dev:10000')
+
+    def test_session_name_falls_back_to_nickname_then_uid(self) -> None:
+        self._write_config({'px-tpl': self.TPL})
+        self._account('workbuddy-a.json', 'uid-aaa', 'Account-A', proxy='px-tpl')
+        self.assertEqual(config.resolve_account_proxy(self._auth('workbuddy-a.json')),
+                         'socks5://demo_s_account-a:pw@gw.example.dev:10000')
+        self._account('workbuddy-b.json', 'uid-bbb', '中文昵称', proxy='px-tpl')
+        self.assertEqual(config.resolve_account_proxy(self._auth('workbuddy-b.json')),
+                         'socks5://demo_s_uid-bbb:pw@gw.example.dev:10000')
+
+    def test_placeholder_survives_storage_and_masking(self) -> None:
+        """写进去、读出来都不能把它百分号编码 —— 否则再也渲染不出来。"""
+        created = self.client.post('/api/proxy-routes',
+                                   json={'name': 'px-tpl', 'url': self.TPL})
+        self.assertEqual(created.status_code, 200, created.text)
+        stored = json.loads(self.cfg.read_text(encoding='utf-8'))['proxies']['px-tpl']
+        self.assertEqual(stored, self.TPL)
+        item = {r['name']: r for r in self.client.get('/api/proxy-routes').json()['routes']}
+        self.assertEqual(item['px-tpl']['masked'],
+                         'socks5://demo_s_{account}:***@gw.example.dev:10000',
+                         '列表里显示的应是用户当初写的那串（密码脱敏）')
+
+    def test_plain_route_is_untouched(self) -> None:
+        self._pool()
+        self.assertIn(config.resolve_account_proxy(self._auth('workbuddy-a.json')), (A, B),
+                      '没有占位符的线路按原样使用（池策略挑一条）')
 
 
 if __name__ == '__main__':

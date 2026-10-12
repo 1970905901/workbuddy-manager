@@ -69,20 +69,28 @@ def main() -> int:
     if DATA.exists():
         shutil.rmtree(DATA, ignore_errors=True)
     (DATA / 'auths').mkdir(parents=True)
-    # 线路表：一条绑着账号（用来看「绑定 N 台」与删除提示），一条没绑
+    # 线路表：一条绑着账号（看「绑定 N 台」与删除提示会影响到谁），其余没绑
     (DATA / 'config.json').write_text(json.dumps({
         'api_key': 'wbk_keep-me',
         'proxies': {
             'px-dead': 'socks5://user:supersecret@127.0.0.1:1',
             'px-free': 'http://user2:pw2@proxy.example:8080',
-            'px-shanghai': 'socks5://demo_c_CN_city_Shanghai_s_{account}:pw@gateway.example.dev:10000',
-            'px-tokyo': 'socks5://demo_c_JP_city_Tokyo_s_wb02:pw@gateway.example.dev:10000',
+            # 住宅代理的真实形态：国家与会话写在用户名里，换会话名就是换出口 IP
+            'px-shanghai': 'socks5://demo_c_CN_city_Shanghai_s_wb01:pw@gateway.example.dev:10000',
+            # 对象形态（带权重、已停用）：老键名是纯字符串，两种都要能读
+            'px-tokyo': {'url': 'socks5://demo_c_JP_city_Tokyo_s_wb02:pw@gateway.example.dev:10000',
+                         'weight': 30, 'enabled': False},
         },
     }, ensure_ascii=False, indent=2), encoding='utf-8')
+    # 一个已绑定、一个未绑定 —— 自动分配要有人可分，而绑定数要看得见
     (DATA / 'auths' / 'workbuddy-demo.json').write_text(json.dumps({
         'account': {'uid': 'demo-uid', 'nickname': '演示号'},
         'auth': {'accessToken': 'x'},
         'proxy': 'px-dead',
+    }, ensure_ascii=False), encoding='utf-8')
+    (DATA / 'auths' / 'workbuddy-demo2.json').write_text(json.dumps({
+        'account': {'uid': 'demo2-uid', 'nickname': '备用号'},
+        'auth': {'accessToken': 'y'},
     }, ensure_ascii=False), encoding='utf-8')
     seed()
 
@@ -147,27 +155,29 @@ def run_checks(env: dict) -> int:
     # 落盘核对：浏览器里做的操作必须真的写进配置文件
     cfg = json.loads((DATA / 'config.json').read_text(encoding='utf-8'))
     proxies = cfg.get('proxies') or {}
-    if 'px-hk-hongkong' not in proxies:
+    if 'px-hk' not in proxies:
         findings.append('浏览器里新增的线路没有写进上游 config.json')
     if proxies.get('px-import') != 'http://u:pw@imp.example:3128':
         findings.append(f'导入的线路没落盘或地址不对：{proxies.get("px-import")}')
     if cfg.get('api_key') != 'wbk_keep-me':
         findings.append('写线路把 config.json 里别的键弄丢了')
+    if (proxies.get('px-tokyo') or {}).get('enabled') is not False:
+        findings.append('对象形态的线路（权重/停用）没被原样保留')
     account = json.loads((DATA / 'auths' / 'workbuddy-demo.json').read_text(encoding='utf-8'))
-    routes_of = [account.get('proxy') or ''] + list(account.get('proxy_pool') or [])
-    if 'px-shanghai' not in routes_of:
-        findings.append(f'抽屉里勾选的线路没写进账号文件：{routes_of}')
-    if not account.get('proxy_session'):
-        findings.append('独享线路没有给账号生成会话名（每号一个 IP 就不成立）')
-    settings = json.loads((DATA / 'manager.db').read_text(encoding='latin-1') and '{}') \
-        if False else None  # DB 是二进制，设置项在下面用 sqlite 读
+    if account.get('proxy') != 'px-shanghai':
+        findings.append(f'绑定管理里选的线路没写进账号文件：{account.get("proxy")!r}')
+    if 'proxy_pool' in account or 'proxy_session' in account:
+        findings.append('上一版的 proxy_pool / proxy_session 没被清掉')
+    spare = json.loads((DATA / 'auths' / 'workbuddy-demo2.json').read_text(encoding='utf-8'))
+    if spare.get('proxy') != 'px-hk':
+        findings.append(f'自动分配的线路没写进账号文件：{spare.get("proxy")!r}')
 
     import sqlite3
     conn = sqlite3.connect(DATA / 'manager.db')
     row = conn.execute("SELECT value FROM settings WHERE key = 'http_proxy'").fetchone()
     conn.close()
     stored = json.loads(row[0]) if row and row[0] else ''
-    if stored != 'socks5://ui:uipass@ui.example:1080':
+    if stored != 'socks5://global:pw@g.example.dev:1080':
         findings.append(f'面板设置里的出口代理不对：{stored!r}')
 
     if findings:
@@ -188,102 +198,101 @@ const BASE = process.env.BASE, OUT = process.env.OUT;
   const root = path.join(process.env.LOCALAPPDATA,'ms-playwright');
   const dir = fs.readdirSync(root).filter(d=>d.startsWith('chromium-')&&!d.includes('headless_shell')).sort().pop();
   const b = await chromium.launch({executablePath: path.join(root,dir,'chrome-win64','chrome.exe')});
-  const ctx = await b.newContext({viewport:{width:1500,height:1100}, deviceScaleFactor:2});
+  const ctx = await b.newContext({viewport:{width:1440,height:1000}, deviceScaleFactor:2});
   const p = await ctx.newPage();
   const findings = [];
   const step = (ok, label, extra='') => {
     console.log(`  ${ok?'PASS':'FAIL'}  ${label}${extra?` -- ${extra}`:''}`);
     if (!ok) findings.push(label + (extra?': '+extra:''));
   };
+  const body = () => p.evaluate(() => document.body.innerText);
 
   await p.goto(`${BASE}/login`,{waitUntil:'domcontentloaded'});
+  // 首次访问会弹「菜单栏引导」气泡，正好盖在下面要截图的卡片上：先标成已看过
+  await p.addInitScript(() => {
+    try { window.localStorage.setItem('workbuddy-manager:dock-tip-dismissed', 'true'); } catch {}
+  });
   await p.fill('#username','admin'); await p.fill('#password', process.env.PASS);
   await Promise.all([p.waitForURL(/dashboard/).catch(()=>{}), p.click('button[type=submit]')]);
-
   await p.goto(`${BASE}/settings/proxy`,{waitUntil:'load'});
-  await p.waitForTimeout(3000);
+  await p.waitForTimeout(2500);
+  // mock 上游没有 docker，页面顶部会挂一条「上游重载失败」——截图前关掉它
+  const notice = p.locator('button[aria-label="关闭提示"]').first();
+  if (await notice.count()) await notice.click().catch(() => {});
+  await p.waitForTimeout(300);
 
-  const body = () => p.evaluate(() => document.body.innerText);
   let text = await body();
   step(text.includes('代理线路'), '页面渲染出「代理线路」卡片');
+  step(text.includes('优先级') || text.includes('轮询'), '池策略控件在（下拉）');
+  step(text.includes('池内启用'), '显示池内启用线路数');
   step(text.includes('px-dead') && text.includes('px-free'), '两条线路都在列表里');
-  step(text.includes('user:***@127.0.0.1:1'), '列表里的地址是脱敏的（密码显示为 ***）');
+  step(text.includes('user:***@127.0.0.1:1'), '列表里的地址是脱敏的');
   step(!text.includes('supersecret'), '密码没有出现在页面文本里');
-  step(/\b1\b/.test(text) && text.includes('绑定账号'), '显示了绑定账号列');
+  const tokyoText = await p.locator('tr', {hasText: 'px-tokyo'}).first().innerText();
+  step(tokyoText.includes('30') && tokyoText.includes('已停用'),
+       '对象形态线路的权重与停用状态都读出来了', tokyoText.replace(/\s+/g,' ').slice(0, 60));
   await p.screenshot({path:`${OUT}/proxy-list.png`, fullPage:true});
 
-  // 新增一条线路
+  // 新增一条线路（弹窗里改名 / 地址 / 权重 / 是否入池）
   await p.locator('button', {hasText: '添加线路'}).first().click();
   await p.waitForTimeout(600);
-  const dialog = p.locator('[role=dialog]').first();
-  const inputs = dialog.locator('input');
-  await inputs.nth(0).fill('px-hk-hongkong');
-  await inputs.nth(1).fill('socks5://demo_c_HK_city_HongKong_s_wb03:pw@gateway.example.dev:10000');
-  await dialog.screenshot({path:`${OUT}/proxy-add.png`});
-  await dialog.locator('button', {hasText: '保存'}).first().click();
-  await p.waitForTimeout(2000);
+  const dlg = p.locator('[role=dialog]').first();
+  await dlg.locator('input').nth(0).fill('px-hk');
+  await dlg.locator('input').nth(1).fill('socks5://demo:pw@hk.example.dev:10000');
+  await dlg.screenshot({path:`${OUT}/proxy-add.png`});
+  await dlg.locator('button', {hasText: '保存'}).first().click();
+  await p.waitForTimeout(1800);
   text = await body();
-  step(text.includes('px-hk-hongkong'), '新增的线路出现在列表里');
+  step(text.includes('px-hk'), '新增的线路出现在列表里');
 
   // 批量导入
   await p.locator('button', {hasText: '导入'}).first().click();
   await p.waitForTimeout(600);
   const imp = p.locator('[role=dialog]').first();
-  await imp.locator('textarea').fill('px-import=http://u:pw@imp.example:3128\n坏名字!=http://x:1');
-  await imp.screenshot({path:`${OUT}/proxy-import.png`});
+  await imp.locator('textarea').fill('px-import=http://u:pw@imp.example:3128');
   await imp.locator('button', {hasText: '开始导入'}).first().click();
-  await p.waitForTimeout(2500);
-  text = await body();
-  step(text.includes('px-import'), '导入的线路出现在列表里');
-
-  // 绑定抽屉（池化）：把演示号绑到独享线路 px-shanghai，顺便看会话名预览
-  const row = p.locator('tr', {hasText: 'px-shanghai'}).first();
-  // 未绑定的行按钮写的是「未绑定」，两种都认
-  await row.locator('button', {hasText: /绑定账号|未绑定/}).first().click();
-  await p.waitForTimeout(1200);
-  const drawer = p.locator('[role=dialog]').last();
-  const drawerText = await drawer.innerText();
-  step(drawerText.includes('绑定账号'), '打开绑定抽屉');
-  step(drawerText.includes('演示号'), '抽屉里列出了账号');
-  step(drawerText.includes('换会话'), '抽屉提供「换会话」（换 IP）动作');
-  await drawer.screenshot({path: `${OUT}/proxy-bindings.png`});
-  // 自动分配：填 1 台，按下去应当真的挑一台绑上（挑人规则由服务端用例钉住）
-  const autoInput = drawer.locator('input.tabular-nums').first();
-  await autoInput.fill('1');
-  await drawer.locator('button', {hasText: '开始分配'}).first().click();
   await p.waitForTimeout(2000);
-  const afterAuto = await drawer.innerText();
-  step(/已自动分配 1 台/.test(afterAuto) || /已勾选 1 个账号/.test(afterAuto),
-       '自动分配按钮可用（挑到 1 台）', afterAuto.slice(0, 80));
-  await drawer.screenshot({path: `${OUT}/proxy-auto-assign.png`});
-  await drawer.locator('button', {hasText: '保存'}).first().click();
-  await p.waitForTimeout(1800);
-  text = await body();
-  step(text.includes('px-shanghai'), '保存后线路仍在列表里');
-  await p.screenshot({path: `${OUT}/proxy-list-bound.png`, fullPage: true});
 
-  // 抽屉里的勾选框（项目自制的动画 Checkbox）要真的能勾
-  await row.locator('button', {hasText: /绑定账号|未绑定/}).first().click();
-  await p.waitForTimeout(1200);
-  const drawer2 = p.locator('[role=dialog]').last();
-  const before = await drawer2.innerText();
-  await drawer2.locator('[role=checkbox]').first().click();
+  // 绑定管理：逐行「默认（跟随池策略）/ 某条线路」
+  await p.locator('button', {hasText: '绑定账号'}).first().click();
+  await p.waitForTimeout(1500);
+  const bind = p.locator('[role=dialog]').last();
+  const bindText = await bind.innerText();
+  step(bindText.includes('演示号') && bindText.includes('备用号'), '绑定管理里列出了账号');
+  step(bindText.includes('默认（跟随池策略）'), '提供「默认（跟随池策略）」选项');
+  await bind.screenshot({path:`${OUT}/proxy-bindings.png`});
+  // 把演示号从 px-dead 改绑到 px-shanghai（按行定位，顺序变了也不会挑错人）
+  const demoRow = bind.locator('div.flex.items-center.gap-3').filter({hasText: '演示号'}).first();
+  await demoRow.locator('button[role=combobox]').first().click();
+  await p.waitForTimeout(400);
+  await p.locator('[role=option]', {hasText: 'px-shanghai'}).first().click();
+  await p.waitForTimeout(1500);
+  await bind.locator('button', {hasText: '关闭'}).first().click();
   await p.waitForTimeout(500);
-  const after = await drawer2.innerText();
-  step(before !== after, '勾选框能切换（已勾选数量变化）', after.slice(0, 40));
-  await drawer2.locator('button', {hasText: '取消'}).first().click();
 
-  // 全局出口代理
-  const globalInput = p.locator('input[placeholder*="socks5"]').first();
-  await globalInput.fill('socks5://ui:uipass@ui.example:1080');
+  // 自动分配：给 px-hk 分 1 台（未绑的「备用号」应当被挑中）
+  const row = p.locator('tr', {hasText: 'px-hk'}).first();
+  await row.locator('button[title="自动分配"]').first().click();
+  await p.waitForTimeout(600);
+  const auto = p.locator('[role=dialog]').last();
+  await auto.locator('input.tabular-nums').first().fill('1');
+  await auto.locator('button', {hasText: '开始分配'}).first().click();
+  await p.waitForTimeout(1800);
+  const hkText = await p.locator('tr', {hasText: 'px-hk'}).first().innerText();
+  step(hkText.includes('备用号'), '自动分配把未绑定的账号挂到线路上', hkText.replace(/\s+/g,' ').slice(0, 60));
+
+  // 全局上游代理：开关 + 地址 + 保存
+  await p.locator('input[placeholder*="socks5"]').first()
+         .fill('socks5://global:pw@g.example.dev:1080');
   await p.locator('button', {hasText: '保存'}).first().click();
-  await p.waitForTimeout(2000);
+  await p.waitForTimeout(4200);          // 等「已保存」提示自己消失，截图干净
   text = await body();
-  step(text.includes('面板设置生效') || text.includes('ui.example:1080'),
-       '全局代理保存后显示「由面板设置生效」', text.slice(0, 60));
+  step(/由面板设置生效|global:pw/.test(text), '全局代理保存后显示生效来源', text.slice(0, 60));
+  if (await notice.count()) await notice.click().catch(() => {});   // 保存又会触发重载提醒
+  await p.waitForTimeout(400);
   await p.screenshot({path:`${OUT}/proxy-global.png`, fullPage:true});
 
-  // 测试（线路指向一个不监听的端口 → 必须如实报失败）
+  // 不可达线路的测试按钮不能报「出口正常」
   await p.locator('tr', {hasText: 'px-dead'}).first()
          .locator('button[title="测试"]').first().click();
   await p.waitForTimeout(9000);
@@ -291,11 +300,11 @@ const BASE = process.env.BASE, OUT = process.env.OUT;
   step(!/出口正常/.test(text), '不可达的线路没有报「出口正常」');
 
   await b.close();
-  if (findings.length) { console.log('\nFAILURES:\n'+findings.join('\n')); process.exit(1); }
-  console.log('\nALL CHECKS PASSED');
+  if (findings.length) { console.log('\\nFAILURES:\\n'+findings.join('\\n')); process.exit(1); }
+  console.log('\\nALL CHECKS PASSED');
 })().catch(e=>{console.error('harness error:',e);process.exit(2)});
 '''
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     raise SystemExit(main())

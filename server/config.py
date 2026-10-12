@@ -113,12 +113,6 @@ AUDIT_ALL_ACCESS = _env('WB_AUDIT_ALL_ACCESS', '0') == '1'
 # 留空时所有请求都不使用任何代理：httpx 默认 trust_env=True 会读取系统/环境代理，
 # 会把内网请求（如 127.0.0.1:7863）也交给系统代理，导致连接被劫持或长时间超时。
 HTTP_PROXY = _env('WB_HTTP_PROXY', '')
-# 线路池的粘性窗口（秒）：同一账号在这个窗口内固定走上次那条线路
-# （一会儿换一个出口在风控眼里就是特征）。0 = 每次都重新按权重挑。
-try:
-    PROXY_STICKY_SECONDS = int(_env('WB_PROXY_STICKY_SECONDS', '1800') or '0')
-except ValueError:            # 环境变量写错不该让面板起不来
-    PROXY_STICKY_SECONDS = 1800
 # 出口代理探测用的地址（界面上「测试」按钮；默认回出口 IP 与归属地）
 PROXY_PROBE_URL = _env('WB_PROXY_PROBE_URL', 'https://ipinfo.io/json')
 DEFAULT_ACCOUNT_PROXY = _env('WB_DEFAULT_ACCOUNT_PROXY', '')
@@ -193,14 +187,28 @@ def upstream_api_key() -> str:
         return ''
 
 
-SESSION_PLACEHOLDER = '{account}'
+DEFAULT_POOL = {
+    'enabled': False,
+    'strategy': 'priority',
+    'interval_seconds': 300,
+}
+STRATEGIES = ('priority', 'round_robin', 'random', 'least_connections')
+
+# least_connections 用「最近调用次数」近似连接数：面板发出的都是短请求（登录/签到/
+# 积分/模型），排队长度基本等于最近这段时间的调用量 —— 与其报一个假的并发数，
+# 不如用这个能自圆其说的近似，并在界面上写明口径。
+_RECENT_CALLS: dict[str, list[float]] = {}
+_RECENT_WINDOW = 60.0
+_ROUND_ROBIN = {'cursor': 0}
 
 
 def _raw_routes() -> dict[str, dict]:
-    """线路表的**原始**形态：名字 → {url, weight}。
+    """线路表的**原始**形态：名字 → {url, weight, enabled}。
 
-    值允许两种写法：`"名字": "地址"`（老写法，权重按默认 100）或
-    `"名字": {"url": "地址", "weight": 30}`（多家线路按权重分摊时用）。
+    值允许三种写法（老配置不用动）：
+      `"名字": "地址"`                      → 权重 100、启用
+      `"名字": {"url": "地址", "weight": 30}` → 权重 30、启用
+      `"名字": {"url": "地址", "enabled": false}` → 停用（池里跳过，绑定它的账号报错）
     """
     try:
         table = json.loads(UPSTREAM_CONFIG.read_text(encoding='utf-8')).get('proxies') or {}
@@ -214,7 +222,7 @@ def _raw_routes() -> dict[str, dict]:
             continue
         if isinstance(value, str):
             if value.strip():
-                out[name] = {'url': value, 'weight': 100}
+                out[name] = {'url': value, 'weight': 100, 'enabled': True}
         elif isinstance(value, dict):
             url = value.get('url')
             if not isinstance(url, str) or not url.strip():
@@ -222,18 +230,52 @@ def _raw_routes() -> dict[str, dict]:
             weight = value.get('weight', 100)
             if isinstance(weight, bool) or not isinstance(weight, (int, float)) or weight <= 0:
                 weight = 100
-            out[name] = {'url': url, 'weight': int(weight)}
+            out[name] = {'url': url, 'weight': int(weight),
+                         'enabled': value.get('enabled', True) is not False}
     return out
 
 
 def proxy_routes() -> dict[str, str]:
-    """读取共享命名线路（名字 → 地址）。客户端只能取得线路名，不能取得凭据。"""
+    """读取线路表（名字 → 地址）。客户端只能取得线路名，不能取得凭据。"""
     return {name: entry['url'] for name, entry in _raw_routes().items()}
 
 
 def proxy_route_weights() -> dict[str, int]:
-    """线路名 → 权重（池化选择时按它分摊；老写法默认 100）。"""
+    """线路名 → 权重（按权重分摊/挑选时用；老写法默认 100）。"""
     return {name: entry['weight'] for name, entry in _raw_routes().items()}
+
+
+def proxy_route_enabled() -> dict[str, bool]:
+    """线路名 → 是否启用（池里只挑启用的；停用的线路仍可被账号显式绑定）。"""
+    return {name: entry['enabled'] for name, entry in _raw_routes().items()}
+
+
+def proxy_pool_config() -> dict:
+    """代理池配置：开关 / 策略 / 间隔（存面板设置，缺项补默认值）。"""
+    try:
+        from . import db
+        stored = db.get_setting('proxy_pool', {}) or {}
+    except Exception:            # noqa: BLE001 —— 读不到就用默认（池默认关闭）
+        stored = {}
+    if not isinstance(stored, dict):
+        stored = {}
+    strategy = str(stored.get('strategy') or DEFAULT_POOL['strategy'])
+    if strategy not in STRATEGIES:
+        strategy = DEFAULT_POOL['strategy']
+    try:
+        interval = int(stored.get('interval_seconds', DEFAULT_POOL['interval_seconds']))
+    except (TypeError, ValueError):
+        interval = DEFAULT_POOL['interval_seconds']
+    return {
+        'enabled': bool(stored.get('enabled', DEFAULT_POOL['enabled'])),
+        'strategy': strategy,
+        'interval_seconds': max(0, interval),
+    }
+
+
+def pool_routes() -> dict[str, str]:
+    """池里**可供自动挑选**的线路（启用中）。"""
+    return {name: entry['url'] for name, entry in _raw_routes().items() if entry['enabled']}
 
 
 def _validate_route(name: str, url: str) -> None:
@@ -249,20 +291,98 @@ def _validate_route(name: str, url: str) -> None:
         raise ValueError(f'代理线路 {name!r} 配置无效（需要 HTTP/HTTPS/SOCKS5 代理）')
 
 
-def route_session_name(auth: dict) -> str:
-    """这个账号在会话模板里用的会话名。
+def note_route_use(name: str) -> None:
+    """记一次调用（least_connections 策略用它做近似）。"""
+    if not name:
+        return
+    now = time.time()
+    bucket = _RECENT_CALLS.setdefault(name, [])
+    bucket.append(now)
+    cutoff = now - _RECENT_WINDOW
+    while bucket and bucket[0] < cutoff:
+        bucket.pop(0)
+    if len(_RECENT_CALLS) > 500:
+        for key in [k for k, v in _RECENT_CALLS.items() if not v][:100]:
+            _RECENT_CALLS.pop(key, None)
 
-    优先用账号文件里**存下来的** `proxy_session`（绑定或轮换时生成），其次按昵称
-    取 slug，最后退回 uid 前缀。为什么存下来：模板里的会话名决定出口 IP，而昵称
-    是可改的 —— 直接按昵称现算，用户改个昵称就会**悄悄换掉出口 IP**（在风控眼里
-    是特征变化）。存下来的值可以在界面上显式「换会话」（= 换 IP）。
+
+def choose_pool_route(names: list[str]) -> str:
+    """按池策略从候选里挑一条（names 都已确认可用且启用）。"""
+    pool = proxy_pool_config()
+    strategy = pool['strategy']
+    weights = proxy_route_weights()
+    ordered = sorted(names, key=lambda n: (-weights.get(n, 100), n))
+    if strategy == 'priority':
+        return ordered[0]
+    if strategy == 'round_robin':
+        cursor = _ROUND_ROBIN['cursor'] = (_ROUND_ROBIN['cursor'] + 1) % len(ordered)
+        return ordered[cursor]
+    if strategy == 'least_connections':
+        return min(ordered, key=lambda n: (len(_RECENT_CALLS.get(n, [])), ordered.index(n)))
+    # random：按权重加权随机（权重越大越常被选中）
+    total = sum(max(1, int(weights.get(n, 100))) for n in ordered)
+    point = secrets.randbelow(total)
+    for name in ordered:
+        point -= max(1, int(weights.get(name, 100)))
+        if point < 0:
+            return name
+    return ordered[-1]
+
+
+def _sticky_pick(auth: dict, candidates: list[str]) -> str:
+    """池内选择：间隔窗口内沿用上次那条，窗口过了再按策略重挑并记下。
+
+    为什么要有窗口：一会儿换一个出口在风控眼里就是特征（mihomo 的 sticky-sessions
+    是同一个道理）。窗口长度就是池配置里的「间隔」。
     """
+    interval = proxy_pool_config()['interval_seconds']
+    if len(candidates) == 1 or interval <= 0:
+        return choose_pool_route(candidates)
+    uid = str(auth.get('uid') or '').strip() or '?'
+    try:
+        from . import db
+        table = db.get_setting('proxy_sticky', {}) or {}
+    except Exception:            # noqa: BLE001 —— 读不到就当作没有粘性
+        table = {}
+    entry = table.get(uid) if isinstance(table, dict) else None
+    if isinstance(entry, dict):
+        last = str(entry.get('route') or '')
+        at = int(entry.get('at') or 0)
+        if last in candidates and time.time() - at < interval:
+            return last
+    chosen = choose_pool_route(candidates)
+    try:
+        from . import db
+        table = db.get_setting('proxy_sticky', {}) or {}
+        if not isinstance(table, dict):
+            table = {}
+        table[uid] = {'route': chosen, 'at': int(time.time())}
+        if len(table) > 2000:      # 上限：粘性过期后自然被覆盖，不会无限膨胀
+            keep = sorted(table.items(), key=lambda kv: int(kv[1].get('at') or 0),
+                          reverse=True)[:2000]
+            table = dict(keep)
+        db.set_setting('proxy_sticky', table)
+    except Exception:            # noqa: BLE001 —— 写不进去只是少了粘性
+        pass
+    return chosen
+
+
+# ── 兼容 1.0.84 的 `{account}` 会话模板 ─────────────────────────────────
+# 那一版让用户把 `{account}` 写在线路地址里，每个账号渲染出自己的会话名（住宅代理
+# 按会话名给粘性 IP）。现在的方案是「池策略 + 账号绑定」，界面上不再有会话这个概念；
+# 但**已经那么写过的地址不能突然发不出去**，所以命中占位符时仍按账号渲染。会话名
+# 沿用账号文件里存下来的 `proxy_session`（那正是它当初被存下来的原因：改昵称不该
+# 悄悄换掉出口 IP），没有就按昵称 / uid 现算。
+SESSION_PLACEHOLDER = '{account}'
+
+
+def route_session_name(auth: dict) -> str:
+    """这个账号在会话模板里用的会话名。"""
     stored = str(auth.get('proxy_session') or '').strip()
     if stored:
         return stored
     nickname = str(auth.get('nickname') or '').strip()
     # 只留 ASCII 字母数字：住宅代理的用户名里带中文会被百分号编码，多数服务商不认
-    # （面板里可以随时把这个会话名改成好记的名字 —— 见「绑定账号」抽屉）。
     slug = ''.join(ch.lower() if (ch.isascii() and ch.isalnum()) else '-'
                    for ch in nickname)
     while '--' in slug:
@@ -270,105 +390,75 @@ def route_session_name(auth: dict) -> str:
     slug = slug.strip('-')[:24]
     if len(slug) >= 3:
         return slug
-    uid = str(auth.get('uid') or '').strip()
-    return uid[:8] or 'acct'
+    return str(auth.get('uid') or '').strip()[:8] or 'acct'
 
 
 def render_route_url(template: str, session: str) -> str:
-    """把 `{account}` 换成这个账号的会话名。没有占位符就原样返回（= 共享一条出口）。"""
-    return template.replace(SESSION_PLACEHOLDER, session) if SESSION_PLACEHOLDER in template \
-        else template
+    """把 `{account}` 换成会话名；没有占位符就原样返回（= 这条线路人人都一样）。"""
+    return template.replace(SESSION_PLACEHOLDER, session)
 
 
-def route_is_exclusive(url: str) -> bool:
-    """带 `{account}` 的线路是**独享**（每个账号一个会话 = 一个住宅 IP）。"""
-    return SESSION_PLACEHOLDER in url
-
-
-def _pick_weighted(names: list[str], weights: dict[str, int]) -> str:
-    total = sum(max(1, int(weights.get(n, 100))) for n in names)
-    point = secrets.randbelow(total)
-    for name in names:
-        point -= max(1, int(weights.get(name, 100)))
-        if point < 0:
-            return name
-    return names[-1]
+def _render_for(auth: dict, url: str) -> str:
+    return render_route_url(url, route_session_name(auth)) \
+        if SESSION_PLACEHOLDER in url else url
 
 
 def resolve_account_proxy(auth: dict) -> str | None:
-    """这个账号这次该用哪条线路（已渲染好会话名）。
+    """这个账号这次该走哪条线路。顺序（与参考项目的语义一致）：
 
-    选择规则（P1 池化）：
-      · 账号可以绑**一组**线路（`proxy_pool`）或单条（`proxy`）；
-      · 同一条粘性窗口内固定走上次那条 —— 一会儿换一个出口在风控眼里就是特征
-        （mihomo 的 sticky-sessions 是同一个道理），所以选择结果按 uid 存在设置里；
-      · 窗口到期或上次那条已不可用时，按**权重**重新挑一条。
-
-    绑定无效（名字不存在 / 地址非法）时抛错而不是悄悄直连：出口被悄悄换掉比报错
-    危险得多（与既有 `account_proxy` 的口径一致）。
+      1. **账号绑定的线路**（「指定代理」）—— 存在就必须可用：线路被删或地址非法时
+         抛错，而不是悄悄换出口（出口被换掉在风控里是特征变化）；
+         绑定的线路被**停用**同样报错，让用户明确知道「这条线暂停了」。
+      2. **代理池**（开启且有启用中的线路）→ 按策略挑一条（间隔内粘住）。
+      3. **全局上游代理**（开启且配了地址）。
+      4. 直连。
     """
-    names: list[str] = []
-    single = str(auth.get('proxy') or '').strip()
-    pool = auth.get('proxy_pool')
-    if isinstance(pool, (list, tuple)):
-        names = [str(n).strip() for n in pool if str(n).strip()]
-        if single and single not in names:
-            names.insert(0, single)
-    elif single:
-        names = [single]
-    if not names:
-        return None
+    bound = str(auth.get('proxy') or '').strip()
+    if bound:
+        # 走公开访问器（而不是自己重读文件）：既有调用点/测试按这两个函数打桩，
+        # 绕过它们会出现「线路表长什么样」的第二个真相来源。
+        on = proxy_route_enabled()
+        table = {name: {'url': url, 'enabled': on.get(name, True)}
+                 for name, url in proxy_routes().items()}
+        entry = table.get(bound)
+        if entry is None:
+            raise ValueError(f'账号绑定的代理线路 {bound!r} 不存在')
+        if not entry['enabled']:
+            raise ValueError(f'账号绑定的代理线路 {bound!r} 已停用')
+        _validate_route(bound, entry['url'])
+        note_route_use(bound)
+        return _render_for(auth, entry['url'])
 
-    # 走公开访问器（而不是自己重读文件）：既有的调用点/测试都按这两个函数打桩，
-    # 服务层绕过它们会让「线路表长什么样」出现第二个真相来源。
-    table = {name: {'url': url, 'weight': proxy_route_weights().get(name, 100)}
-             for name, url in proxy_routes().items()}
-    known = [n for n in names if n in table]
-    if not known:
-        raise ValueError(f'账号绑定的代理线路 {names[0]!r} 不存在')
+    pool = proxy_pool_config()
+    if pool['enabled']:
+        available = pool_routes()
+        if available:
+            chosen = _sticky_pick(auth, list(available))
+            _validate_route(chosen, available[chosen])
+            note_route_use(chosen)
+            return _render_for(auth, available[chosen])
 
-    chosen = _sticky_choice(auth, known)
-    url = table[chosen]['url']
-    _validate_route(chosen, url)
-    return render_route_url(url, route_session_name(auth))
+    global_proxy = global_http_proxy()
+    if global_proxy:
+        _validate_route('全局上游代理', global_proxy)
+        return global_proxy
+    return None
 
 
-def _sticky_choice(auth: dict, names: list[str]) -> str:
-    """在窗口内沿用上次的选择；否则按权重重挑并记下。"""
-    weights = proxy_route_weights()
-    if len(names) == 1:
-        return names[0]
-    uid = str(auth.get('uid') or '').strip() or '?'
-    window = max(0, int(PROXY_STICKY_SECONDS))
-    if window:
-        try:
-            from . import db
-            table = db.get_setting('proxy_sticky', {}) or {}
-        except Exception:            # noqa: BLE001 —— 读不到就当没有粘性，不影响出站
-            table = {}
-        entry = table.get(uid) if isinstance(table, dict) else None
-        if isinstance(entry, dict):
-            last = str(entry.get('route') or '')
-            at = int(entry.get('at') or 0)
-            if last in names and time.time() - at < window:
-                return last
-    chosen = _pick_weighted(names, weights)
-    if window:
-        try:
-            from . import db
-            table = db.get_setting('proxy_sticky', {}) or {}
-            if not isinstance(table, dict):
-                table = {}
-            table[uid] = {'route': chosen, 'at': int(time.time())}
-            # 只留最近 2000 条：账号池再大也不会无限膨胀（粘性过期后自然被覆盖）
-            if len(table) > 2000:
-                keep = sorted(table.items(), key=lambda kv: int(kv[1].get('at') or 0),
-                              reverse=True)[:2000]
-                table = dict(keep)
-            db.set_setting('proxy_sticky', table)
-        except Exception:            # noqa: BLE001 —— 写不进去只是少了粘性
-            pass
-    return chosen
+def global_http_proxy() -> str:
+    """全局上游代理：面板设置里配了且开启时生效，否则回落环境变量 WB_HTTP_PROXY。
+
+    位置与参考项目的「Global Proxy」一致：池不可用（关了 / 没有启用中的线路）时的
+    兜底出口。
+    """
+    try:
+        from . import db
+        if db.get_setting('global_proxy_enabled', True) is False:
+            return ''
+        stored = str(db.get_setting('http_proxy', '') or '').strip()
+    except Exception:            # noqa: BLE001
+        stored = ''
+    return stored or HTTP_PROXY
 
 
 def account_proxy(auth: dict) -> str | None:
@@ -533,13 +623,12 @@ def stored_http_proxy() -> str:
 
 
 def effective_http_proxy() -> str:
-    """当前生效的出口代理：**面板设置优先，其次环境变量**。
+    """当前生效的**全局**出口代理（面板设置优先、环境变量兜底，开关可关）。
 
-    为什么要这一层：`WB_HTTP_PROXY` 是环境变量，界面上填不了（容器里还得改
-    compose）。有了它，页面上的设置改完立即生效（客户端池按代理串缓存，
-    新值自然建新客户端），环境变量仍作为兜底与「未设置」时的默认。
+    注意它只影响「没有走账号线路/代理池」的那部分请求；账号出口的优先级见
+    `resolve_account_proxy`（绑定线路 → 代理池 → 这里 → 直连）。
     """
-    return stored_http_proxy() or HTTP_PROXY
+    return global_http_proxy()
 
 
 def http_client(timeout, *, connect: float | None = None, proxy: str | None = None):

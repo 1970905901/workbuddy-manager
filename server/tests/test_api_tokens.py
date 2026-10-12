@@ -290,7 +290,7 @@ class WriteEndpointScopeMatrixTest(unittest.TestCase):
         'POST /api/proxy-routes/import',
         'POST /api/proxy-routes/{name}/accounts',
         'POST /api/proxy-routes/{name}/auto-assign',
-        'POST /api/proxy-routes/rotate',
+        'PUT /api/settings/proxy-pool',
         'POST /api/proxy-routes/probe',
         'PUT /api/settings/proxy',
         'POST /api/settings/proxy/probe',

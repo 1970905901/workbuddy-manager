@@ -1,18 +1,22 @@
-"""命名代理线路表：读写上游 `config.json` 里的 `proxies` 段。
+"""代理线路表（代理池）：读写上游 `config.json` 里的 `proxies` 段。
 
-为什么要有这个模块（而不是让用户手改 JSON）：线路表是「账号 → 出口」的配置，
-面板里早就有「出口线路」下拉，但下拉里的名字只能靠手工编辑上游配置文件才能新增
-—— 界面上看得见、改不了。这里把那份读写收成一处，供 API 与页面使用。
+方案参照 Antigravity-Manager 的代理池：**池 + 权重 + 启用开关 + 账号单绑定 + 全局兜底**
+（其 `ProxyPoolSettings` / `ProxyBindingManager`）。要点：
+
+  · 线路表 = 池：每条有 `url` / `weight` / `enabled`；
+  · **每个账号最多绑一条**线路，不绑 = 跟随池策略（见 `config.resolve_account_proxy`）；
+  · 「几个号共用一条出口」= 把它们绑到同一条线路；「各自一个 IP」= 各自绑不同线路
+    （页面上的「自动分配 N 台」可以批量铺）；
+  · 池开关 / 策略 / 间隔存在面板设置里（`config.proxy_pool_config`）。
 
 三条必须守住的性质：
 
 1. **只动 `proxies` 段**：上游 config.json 里还有 api_key、schedule、prompt 等，
-   写线路时一个键都不能碰（照旧保留未知键），否则用户的口令 / 调度配置会被抹掉。
-2. **凭据不出网**：代理地址通常带用户名密码，列表一律回脱敏串（`***`）；编辑时
-   若提交的仍是脱敏串，就沿用原来那份密码 —— 为了改个域名不必重新输密码。
-3. **改名 / 删除要管绑定**：线路被改名或删除后，仍绑着它的账号会**直接失败**
-   （按设计不回退到默认出口），所以这两条路径要把绑定一并改掉 / 清掉，并回报
-   影响了几台账号。
+   写线路时一个键都不能碰。
+2. **凭据不出网**：地址通常带用户名密码，列表一律回脱敏串（`***`）；编辑时若提交的
+   仍是脱敏串，就沿用原来那份密码 —— 为了改个域名不必重新输密码。
+3. **删除 / 改名要管绑定**：绑着它的账号在它消失后会直接失败（按设计不静默换出口），
+   所以这两条路径要把绑定一并处理，并回报影响了几台账号。
 """
 from __future__ import annotations
 
@@ -27,8 +31,7 @@ from .. import config
 from . import wb2api
 from .tencent import _atomic_write_json
 
-# 线路名会出现在账号文件与界面上：限字母数字与 . _ -（1~32 位），免得引号 / 换行
-# 拼出误导性的名字（也会让日志列宽失控）。
+# 线路名会出现在账号文件与界面上：限字母、数字与 . _ -（1~32 位）。
 NAME_RE = re.compile(r'^[A-Za-z0-9._-]{1,32}$')
 
 SCHEMES = ('http', 'https', 'socks5', 'socks5h')
@@ -103,16 +106,22 @@ def normalize_url(url: object) -> str:
     return urlunsplit((parts.scheme, netloc, '', '', ''))
 
 
-def _quote_userinfo(parts) -> str:  # noqa: ANN001 —— urlsplit 结果
-    """用户名 / 密码按 URL 规则转义：不转义的话特殊字符会让拼回去的地址变样。
+def _restore_placeholder(text: str) -> str:
+    """把被百分号编码的 `{account}` 还原成字面量（旧版会话模板的占位符）。
 
-    `{}` 要放进 safe：会话模板用的是 `{account}` 占位符，转义成 `%7Baccount%7D`
-    就再也匹配不上了（症状是"每个账号都拿同一个会话"）。
+    用户名与地址都要经过 `quote`，而占位符一旦变成 `%7Baccount%7D` 就再也渲染不
+    出来了（`config.render_route_url` 只认字面量）。列表展示同理：界面该显示用户
+    当初写的那串，而不是转义后的样子。
     """
-    user = quote(unquote(parts.username or ''), safe='{}')
+    return text.replace(quote(config.SESSION_PLACEHOLDER, safe=''), config.SESSION_PLACEHOLDER)
+
+
+def _quote_userinfo(parts) -> str:  # noqa: ANN001 —— urlsplit 结果
+    """用户名 / 密码按 URL 规则转义：不转义的话特殊字符会让拼回去的地址变样。"""
+    user = _restore_placeholder(quote(unquote(parts.username or ''), safe=''))
     if not parts.password:
         return user
-    return f'{user}:{quote(unquote(parts.password), safe="{}")}'
+    return f'{user}:{quote(unquote(parts.password), safe="")}'
 
 
 def mask_url(url: str) -> str:
@@ -123,9 +132,7 @@ def mask_url(url: str) -> str:
         return MASK
     if not parts.password:
         return url
-    # `{}` 要保留：会话模板的占位符被转义成 %7Baccount%7D 之后，界面上显示的
-    # 就是乱码，而且编辑线路时若原样提交会把占位符**改坏**（存成编码后的字面量）。
-    user = quote(unquote(parts.username or ''), safe='{}')
+    user = _restore_placeholder(quote(unquote(parts.username or ''), safe=''))
     netloc = f'{user}:{MASK}@{parts.hostname}'
     if parts.port:
         netloc = f'{netloc}:{parts.port}'
@@ -143,11 +150,11 @@ def _is_local(host: str) -> bool:
     return bool(addr.is_private or addr.is_loopback or addr.is_link_local)
 
 
-def describe(name: str, url: str, *, weight: int = 100, session: str = '') -> dict:
+def describe(name: str, url: str, *, weight: int = 100, enabled: bool = True) -> dict:
     """给界面用的一条线路（凭据已脱敏）。
 
-    `mode` 取独享 / 共享：带 `{account}` 的线路每个账号一个会话（= 一个住宅 IP），
-    不带的就是所有绑定账号共用一条出口 —— 这是用户最需要一眼看清的区别。
+    `enabled` 是池里的开关：停用的线路不会被**自动挑选**（池策略跳过它），但被账号
+    显式绑定时仍按「绑定优先」报错 —— 让用户知道这条线暂停了，而不是悄悄换出口。
     """
     try:
         parts = urlsplit(url)
@@ -155,7 +162,6 @@ def describe(name: str, url: str, *, weight: int = 100, session: str = '') -> di
         has_auth = bool(parts.password)
     except ValueError:
         scheme, host, port, has_auth = '', '', None, False
-    exclusive = config.route_is_exclusive(url)
     return {
         'name': name,
         'scheme': scheme,
@@ -164,36 +170,9 @@ def describe(name: str, url: str, *, weight: int = 100, session: str = '') -> di
         'has_auth': has_auth,
         'masked': mask_url(url),
         'weight': int(weight),
-        'mode': 'exclusive' if exclusive else 'shared',
-        # 独享线路给一个渲染示例（用真实会话名脱敏后展示），让用户看出「每个号一个 IP」
-        # 传的是**模板**（不是渲染后的地址）：mask_session 的活儿就是把
-        # `{account}` 换成一个短会话名，渲染过就没有占位符可换了。
-        'session_preview': (mask_session(url, session) if exclusive and session else ''),
-        # 内网 / 本机地址当出口通常只在特殊部署里有意义（例如同机房的代理），
-        # 标注一下，免得用户以为是「写错了」而反复改。
+        'enabled': bool(enabled),
         'local': _is_local(host),
     }
-
-
-def mask_session(template: str, session: str) -> str:
-    """界面预览：把 `{account}` 换成短会话名、密码换成 `***`，**其余原样**。
-
-    不能用 mask_url(渲染后的地址)：它会把用户名按 URL 规则重新转义，短名里的
-    `*` 会变成 `%2A`，在界面上像乱码。这里只做字符串替换，别的字符一个不动。
-    """
-    if not session:
-        return mask_url(template)
-    short = (session[:4] + '*') if len(session) > 4 else session
-    preview = template.replace(config.SESSION_PLACEHOLDER, short)
-    if MASK in preview:
-        return preview
-    try:
-        parts = urlsplit(preview)
-    except ValueError:
-        return preview
-    if not parts.password:
-        return preview
-    return preview.replace(f':{parts.password}@', f':{MASK}@', 1)
 
 
 def keep_secret(url: str, stored: str) -> str:
@@ -217,8 +196,8 @@ def keep_secret(url: str, stored: str) -> str:
         return url
     if not known.password:
         return url.replace(f':{MASK}@', '@')
-    user = quote(unquote(incoming.username or known.username or ''), safe='{}')
-    secret = quote(unquote(known.password), safe='{}')
+    user = quote(unquote(incoming.username or known.username or ''), safe='')
+    secret = quote(unquote(known.password), safe='')
     host = incoming.hostname or known.hostname or ''
     port = incoming.port or known.port
     netloc = f'{user}:{secret}@{host}' + (f':{port}' if port else '')
@@ -226,14 +205,15 @@ def keep_secret(url: str, stored: str) -> str:
 
 
 def list_routes(auth_dir: Path | None = None) -> list[dict]:
-    """线路列表（脱敏、按名字排序）：带权重、模式与绑定账号概览。"""
+    """池里的线路列表（脱敏、按名字排序）：带权重、启用开关与绑定概览。"""
     weights = config.proxy_route_weights()
+    enabled = config.proxy_route_enabled()
     accounts = account_rows(auth_dir)
     out: list[dict] = []
     for name, url in sorted(routes().items()):
-        bound = [a for a in accounts if name in a['routes']]
-        sample = next((a.get('session') or '' for a in bound if a.get('session')), '')
-        item = describe(name, url, weight=weights.get(name, 100), session=sample)
+        bound = [a for a in accounts if a['proxy'] == name]
+        item = describe(name, url, weight=weights.get(name, 100),
+                        enabled=enabled.get(name, True))
         item['bound'] = len(bound)
         item['bound_names'] = [a['nickname'] or a['uid'] for a in bound[:3]]
         out.append(item)
@@ -241,7 +221,7 @@ def list_routes(auth_dir: Path | None = None) -> list[dict]:
 
 
 def upsert(name: object, url: object, *, weight: object = None,
-           allow_overwrite: bool = True) -> dict:
+           enabled: object = None, allow_overwrite: bool = True) -> dict:
     clean_name = validate_name(name)
     raw_url = str(url or '')
     stored = routes().get(clean_name, '')
@@ -254,17 +234,23 @@ def upsert(name: object, url: object, *, weight: object = None,
     table = cfg.get('proxies') if isinstance(cfg.get('proxies'), dict) else {}
     if clean_name in table and not allow_overwrite:
         raise RouteError(f'线路 {clean_name!r} 已存在', 409)
-    clean_weight = _validate_weight(weight if weight is not None
-                                   else (table.get(clean_name) or {}).get('weight')
-                                   if isinstance(table.get(clean_name), dict) else None)
-    # 权重 100 且原来是字符串写法时保持字符串：老配置文件改动最小，肉眼也好读。
-    if clean_weight == 100 and not isinstance(table.get(clean_name), dict):
+    current = table.get(clean_name)
+    clean_weight = _validate_weight(
+        weight if weight is not None
+        else (current.get('weight') if isinstance(current, dict) else None))
+    if enabled is None:
+        clean_enabled = bool(current.get('enabled', True)) if isinstance(current, dict) else True
+    else:
+        clean_enabled = bool(enabled)
+    # 权重 100 + 启用 + 原本是字符串写法 → 保持字符串：老配置改动最小、肉眼也好读。
+    if clean_weight == 100 and clean_enabled and not isinstance(current, dict):
         table[clean_name] = clean_url
     else:
-        table[clean_name] = {'url': clean_url, 'weight': clean_weight}
+        table[clean_name] = {'url': clean_url, 'weight': clean_weight,
+                             'enabled': clean_enabled}
     cfg['proxies'] = table
     _save(cfg)
-    return describe(clean_name, clean_url, weight=clean_weight)
+    return describe(clean_name, clean_url, weight=clean_weight, enabled=clean_enabled)
 
 
 def _validate_weight(weight: object) -> int:
@@ -283,31 +269,27 @@ def delete(name: object, *, auth_dir: Path | None = None,
            clear_bindings: bool = False) -> dict:
     """删除线路。仍被账号绑着时必须显式 `clear_bindings`（路由层用 force）。
 
-    不默认清绑定的理由：绑定被悄悄清掉 = 那些账号的出口**换了**，而出口换了
-    在风控眼里是特征变化 —— 这种事要让用户点过一次确认（界面上会把账号数说出来）。
+    不默认清绑定的理由：绑定被悄悄清掉 = 那些账号的出口**换了**（改成跟随池策略），
+    而出口换了在风控眼里是特征变化 —— 这种事要让用户点过一次确认。
     """
     clean_name = validate_name(name)
-    table = routes()
-    if clean_name not in table:
+    if clean_name not in routes():
         raise RouteError(f'线路 {clean_name!r} 不存在', 404)
     bound = bindings(clean_name, auth_dir)
     if bound and not clear_bindings:
         names = '、'.join(a['nickname'] or a['uid'] for a in bound[:3])
         more = f' 等 {len(bound)} 台' if len(bound) > 3 else ''
         raise RouteError(f'仍有账号绑着这条线路（{names}{more}）——'
-                         f'确认删除会把它们改回默认出口', 409)
+                         f'确认删除会让它们改为跟随池策略', 409)
     cfg = _load()
     table = cfg.get('proxies') if isinstance(cfg.get('proxies'), dict) else {}
     table.pop(clean_name, None)
     cfg['proxies'] = table
     _save(cfg)
     cleared = 0
-    for row in account_rows(auth_dir):
-        if clean_name not in row['routes']:
-            continue
+    for account in bound:
         try:
-            _write_routes(row['file'], Path(row['dir']),
-                          [n for n in row['routes'] if n != clean_name])
+            _write_binding(account['file'], Path(account['dir']), '')
             cleared += 1
         except (OSError, ValueError):
             continue
@@ -330,56 +312,95 @@ def rename(old: object, new: object, *, auth_dir: Path | None = None) -> dict:
     cfg['proxies'] = table
     _save(cfg)
     updated = 0
-    for row in account_rows(auth_dir):
-        if clean_old not in row['routes']:
-            continue
+    for account in bindings(clean_old, auth_dir):
         try:
-            _write_routes(row['file'], Path(row['dir']),
-                          [clean_new if n == clean_old else n for n in row['routes']])
+            _write_binding(account['file'], Path(account['dir']), clean_new)
             updated += 1
         except (OSError, ValueError):
             continue
     return {'name': clean_new, 'old_name': clean_old, 'bound_updated': updated}
 
 
-def _routes_of(account: dict) -> list[str]:
-    """这个账号用到的全部线路（单条 `proxy` + 可选的 `proxy_pool`）。"""
-    out: list[str] = []
-    single = str(account.get('proxy') or '').strip()
-    if single:
-        out.append(single)
-    pool = account.get('proxy_pool')
-    if isinstance(pool, (list, tuple)):
-        for item in pool:
-            name = str(item).strip()
-            if name and name not in out:
-                out.append(name)
-    return out
+def _write_binding(filename: str, directory: Path, name: str) -> None:
+    """把账号的绑定写回账号文件（空串 = 解除绑定，跟随池策略）。
+
+    顺带清掉上一版留下的 `proxy_pool`（那版按「多绑」设计，字段留着会让人以为
+    还有效）；`proxy_session` **保留**：旧版 `{account}` 模板地址还靠它认会话名，
+    清掉就等于给那个账号换一个出口 IP。
+    """
+    wb2api.set_account_proxy(filename, name, directory)
+    path = directory / filename
+    try:
+        raw = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError) as exc:
+        raise RouteError(f'账号文件读取失败：{exc}') from exc
+    if not isinstance(raw, dict):
+        raise RouteError('账号文件格式异常')
+    if 'proxy_pool' in raw:
+        raw.pop('proxy_pool', None)
+        _atomic_write_json(path, raw)
 
 
-def account_rows(auth_dir: Path | None = None) -> list[dict]:
-    """全部账号 + 它们的线路绑定（写绑定抽屉与列表概览用一次就够）。"""
-    rows: list[dict] = []
-    for directory, account in _accounts(auth_dir):
-        routes_of = _routes_of(account)
-        rows.append({
-            'file': account['file'],
-            'uid': account.get('uid') or '',
-            'nickname': account.get('nickname') or '',
-            'routes': routes_of,
-            'primary': routes_of[0] if routes_of else '',
-            'session': str(account.get('proxy_session') or ''),
-            'dir': str(directory),
-        })
-    return rows
+def set_binding(name: object, files: list[str], *, auth_dir: Path | None = None,
+                bound: bool = True) -> dict:
+    """把一批账号绑定到这条线路（`bound=False` 则解除，改为跟随池策略）。
+
+    每个账号最多一条：绑定就是覆盖它原来的那条（界面上「默认（跟随策略）」即解除）。
+    """
+    clean_name = validate_name(name)
+    if clean_name not in routes():
+        raise RouteError(f'线路 {clean_name!r} 不存在', 404)
+    wanted = {str(f) for f in files}
+    changed = 0
+    skipped: list[str] = []
+    for row in account_rows(auth_dir):
+        if row['file'] not in wanted:
+            continue
+        try:
+            _write_binding(row['file'], Path(row['dir']), clean_name if bound else '')
+            changed += 1
+        except (OSError, ValueError, RouteError) as exc:  # noqa: BLE001
+            skipped.append(f'{row["nickname"] or row["uid"]}: {exc}')
+    return {'updated': changed, 'skipped': skipped, 'name': clean_name, 'bound': bound}
+
+
+def auto_assign(name: object, count: int, *, auth_dir: Path | None = None,
+                include_bound: bool = False) -> dict:
+    """把 N 台账号自动绑到这条线路（挑人规则写死在这里，别让它漂移）。
+
+    挑人顺序：
+      1. **没绑任何线路的账号优先**（跟随池策略的那些，最该先安排上）；
+      2. 其次按「昵称 → uid」稳定排序 —— 顺序稳定才不会每次挑到不同的一批
+         （挑到不同批次就意味着给那几台换了出口，是风控特征）。
+    已经绑着这条线路的账号不算候选（`count` 是「再绑几台」而不是「一共几台」）。
+    """
+    clean_name = validate_name(name)
+    if clean_name not in routes():
+        raise RouteError(f'线路 {clean_name!r} 不存在', 404)
+    if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+        raise RouteError('要分配的数量必须是正整数')
+    if count > 1000:
+        raise RouteError('一次最多分配 1000 台（再多请分批，避免误操作）')
+
+    rows = [row for row in account_rows(auth_dir) if row['proxy'] != clean_name]
+    if not include_bound:
+        rows = [row for row in rows if not row['proxy']] + \
+               [row for row in rows if row['proxy']]
+    rows.sort(key=lambda row: (0 if not row['proxy'] else 1,
+                               row['nickname'] or row['uid'], row['uid']))
+    picked = [row['file'] for row in rows[:count]]
+    result = set_binding(clean_name, picked, auth_dir=auth_dir) if picked else {
+        'updated': 0, 'skipped': [], 'name': clean_name, 'bound': True}
+    remaining = len([row for row in account_rows(auth_dir) if not row['proxy']])
+    return {**result, 'requested': count, 'candidates': len(rows),
+            'unbound_left': remaining}
 
 
 def _auth_dirs(auth_dir: Path | None) -> list[Path]:
     """要扫的账号目录：指定分组就只扫它，否则扫**全部分组**。
 
-    为什么默认跨分组：线路表本身是全局的（读的是同一份 config.json 的 `proxies`），
-    而绑定关系散在各组的 auths 目录下 —— 只看默认分组会漏掉别的组里绑着它的账号，
-    于是「删除线路」时那几台会留在一条不存在的线路上、请求直接失败。
+    为什么默认跨分组：线路表是全局的（读的是同一份 config.json 的 `proxies`），
+    而绑定关系散在各组的 auths 目录下 —— 只看默认分组会漏掉别的组里绑着它的账号。
     """
     if auth_dir is not None:
         return [auth_dir]
@@ -391,133 +412,6 @@ def _auth_dirs(auth_dir: Path | None) -> list[Path]:
         if raw:
             dirs.append(Path(raw))
     return dirs
-
-
-def _write_routes(filename: str, directory: Path, names: list[str],
-                  session: str | None = None) -> None:
-    """把账号的线路（单条或一组）写回账号文件。
-
-    单条仍写老字段 `proxy`（与上游/文档的既有口径一致）；选了多条时第一条进
-    `proxy`、整组进 `proxy_pool` —— 这样老版本上游只认 `proxy` 也不会读不懂。
-    """
-    wb2api.set_account_proxy(filename, names[0] if names else '', directory)
-    path = directory / filename
-    try:
-        raw = json.loads(path.read_text(encoding='utf-8'))
-    except (OSError, ValueError) as exc:
-        raise RouteError(f'账号文件读取失败：{exc}') from exc
-    if not isinstance(raw, dict):
-        raise RouteError('账号文件格式异常')
-    if len(names) > 1:
-        raw['proxy_pool'] = names
-    else:
-        raw.pop('proxy_pool', None)
-    if session is not None:
-        if session:
-            raw['proxy_session'] = session
-        else:
-            raw.pop('proxy_session', None)
-    _atomic_write_json(path, raw)
-
-
-def set_bindings(name: object, files: list[str], *, auth_dir: Path | None = None,
-                 add: bool = True) -> dict:
-    """把一批账号绑定到这条线路（或从池里摘掉）。
-
-    绑定 = 这条线路进入该账号的线路组。**不会**动它已有的其它线路（池化意味着
-    一个账号可以有多条），只有在池里一条都不剩时才写空。
-    会话名：独享线路首次绑定会给账号生成一个（来自昵称），之后一直沿用 ——
-    这样用户改昵称不会悄悄换掉出口 IP（要换就在界面上显式「换会话」）。
-    """
-    clean_name = validate_name(name)
-    table = routes()
-    if clean_name not in table:
-        raise RouteError(f'线路 {clean_name!r} 不存在', 404)
-    exclusive = config.route_is_exclusive(table[clean_name])
-    wanted = {str(f) for f in files}
-    changed = 0
-    skipped: list[str] = []
-    for row in account_rows(auth_dir):
-        if row['file'] not in wanted:
-            continue
-        routes_now = list(row['routes'])
-        if add:
-            if clean_name not in routes_now:
-                routes_now.append(clean_name)
-        else:
-            routes_now = [n for n in routes_now if n != clean_name]
-        session = row['session'] or None
-        if add and exclusive and not session:
-            session = config.route_session_name({'nickname': row['nickname'],
-                                                 'uid': row['uid']})
-        try:
-            _write_routes(row['file'], Path(row['dir']), routes_now, session)
-            changed += 1
-        except (OSError, ValueError, RouteError) as exc:  # noqa: BLE001
-            skipped.append(f'{row["nickname"] or row["uid"]}: {exc}')
-    return {'updated': changed, 'skipped': skipped, 'name': clean_name}
-
-
-def auto_assign(name: object, count: int, *, auth_dir: Path | None = None,
-                include_bound: bool = False) -> dict:
-    """把 N 台账号自动绑到这条线路（挑人的规则写死在下面，别让它漂移）。
-
-    挑人顺序：
-      1. **还没绑任何线路的账号优先**（空着的账号最该用上）；
-      2. 其次按「已绑线路数」从少到多（尽量摊平，别把一台堆到三条线路上）；
-      3. 同档内按「昵称 → uid」稳定排序 —— 顺序稳定才不会每次挑到不同的一批
-         （挑到不同批次就意味着给那几台换出口，是风控特征）。
-
-    已经绑着这条线路的账号不算候选（`count` 是「再挂几台」而不是「一共几台」）。
-    想要「一共 N 台」的话，先解绑再自动分配即可 —— 这类显式两步比一个含糊的
-    `mode=capped` 参数好懂。
-    """
-    clean_name = validate_name(name)
-    table = routes()
-    if clean_name not in table:
-        raise RouteError(f'线路 {clean_name!r} 不存在', 404)
-    if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
-        raise RouteError('要分配的数量必须是正整数')
-    if count > 1000:
-        raise RouteError('一次最多分配 1000 台（再多请分批，避免误操作）')
-
-    rows = [row for row in account_rows(auth_dir) if clean_name not in row['routes']]
-    if not include_bound:
-        unbound = [row for row in rows if not row['routes']]
-        others = [row for row in rows if row['routes']]
-        rows = unbound + others
-    rows.sort(key=lambda row: (len(row['routes']), row['nickname'] or row['uid'], row['uid']))
-    picked = [row['file'] for row in rows[:count]]
-    result = set_bindings(clean_name, picked, auth_dir=auth_dir, add=True) if picked else {
-        'updated': 0, 'skipped': [], 'name': clean_name}
-    remaining = len([row for row in account_rows(auth_dir) if not row['routes']])
-    return {**result, 'requested': count, 'candidates': len(rows),
-            'unbound_left': remaining}
-
-
-def rotate_sessions(files: list[str], *, auth_dir: Path | None = None) -> dict:
-    """换会话（= 换出口 IP）：给这批账号生成新的会话名。
-
-    为什么单独一个动作：会话名决定出口 IP，而它应该是**显式**变化的 —— 换 IP 在
-    风控眼里是特征变化，不该由别的操作顺带发生。
-    """
-    import secrets as _secrets
-
-    wanted = {str(f) for f in files}
-    changed = 0
-    out: list[dict] = []
-    for row in account_rows(auth_dir):
-        if row['file'] not in wanted:
-            continue
-        base = config.route_session_name({'nickname': row['nickname'], 'uid': row['uid']})
-        fresh = f'{base}-{_secrets.token_hex(2)}'
-        try:
-            _write_routes(row['file'], Path(row['dir']), row['routes'], fresh)
-            changed += 1
-            out.append({'file': row['file'], 'session': fresh})
-        except (OSError, ValueError, RouteError):
-            continue
-    return {'updated': changed, 'sessions': out}
 
 
 def _accounts(auth_dir: Path | None) -> list[tuple[Path, dict]]:
@@ -532,29 +426,43 @@ def _accounts(auth_dir: Path | None) -> list[tuple[Path, dict]]:
     return out
 
 
+def account_rows(auth_dir: Path | None = None) -> list[dict]:
+    """全部账号 + 各自绑定的线路（空 = 跟随池策略）。"""
+    rows: list[dict] = []
+    for directory, account in _accounts(auth_dir):
+        rows.append({
+            'file': account['file'],
+            'uid': account.get('uid') or '',
+            'nickname': account.get('nickname') or '',
+            'proxy': str(account.get('proxy') or ''),
+            'dir': str(directory),
+        })
+    return rows
+
+
 def bindings(name: str, auth_dir: Path | None = None) -> list[dict]:
-    """哪些账号用着这条线路（池里挂着也算）。"""
+    """哪些账号绑在这条线路上。"""
     return [{'file': row['file'], 'uid': row['uid'], 'nickname': row['nickname'],
              'dir': row['dir']}
-            for row in account_rows(auth_dir) if name in row['routes']]
+            for row in account_rows(auth_dir) if row['proxy'] == name]
 
 
 def bound_counts(auth_dir: Path | None = None) -> dict[str, int]:
     """线路名 → 绑定账号数（列表页一次算完，避免每行查一次目录）。"""
     out: dict[str, int] = {}
     for row in account_rows(auth_dir):
-        for name in row['routes']:
-            out[name] = out.get(name, 0) + 1
+        if row['proxy']:
+            out[row['proxy']] = out.get(row['proxy'], 0) + 1
     return out
 
 
-def parse_import(text: str) -> tuple[dict[str, str], list[str]]:
+def parse_import(text: str) -> tuple[dict[str, dict], list[str]]:
     """批量导入：每行 `名字=地址`（也认 `名字 地址` 与 `名字: 地址`）。
 
     返回 (可导入的表, 逐行问题)。**逐行报问题而不是整批拒绝**：从别处粘贴时
     常混着空行、注释与重复条目，全拒会让人反复试。
     """
-    ok: dict[str, str] = {}
+    ok: dict[str, dict] = {}
     problems: list[str] = []
     for lineno, raw_line in enumerate(str(text or '').splitlines(), 1):
         line = raw_line.strip()
@@ -571,7 +479,7 @@ def parse_import(text: str) -> tuple[dict[str, str], list[str]]:
         except RouteError as exc:
             problems.append(f'第 {lineno} 行：{exc}')
             continue
-        ok[clean_name] = clean_url
+        ok[clean_name] = {'url': clean_url}
     if not ok and not problems:
         problems.append('没有可导入的内容')
     return ok, problems
@@ -579,9 +487,38 @@ def parse_import(text: str) -> tuple[dict[str, str], list[str]]:
 
 def import_routes(text: str) -> dict:
     table, problems = parse_import(text)
-    for name, url in table.items():
-        upsert(name, url)
+    for name, entry in table.items():
+        upsert(name, entry['url'])
     return {'imported': len(table), 'problems': problems}
+
+
+def pool_settings() -> dict:
+    """池配置 + 一览（界面用）：开关 / 策略 / 间隔 / 启用中的线路数。"""
+    pool = config.proxy_pool_config()
+    enabled_routes = [name for name, on in config.proxy_route_enabled().items() if on]
+    return {**pool, 'strategies': list(config.STRATEGIES),
+            'routes_total': len(config.proxy_routes()),
+            'routes_enabled': len(enabled_routes)}
+
+
+def save_pool_settings(body: dict) -> dict:
+    """保存池配置（开关 / 策略 / 间隔）。策略必须是已知值，间隔 0~86400 秒。"""
+    from .. import db
+
+    current = config.proxy_pool_config()
+    strategy = str(body.get('strategy', current['strategy']) or current['strategy'])
+    if strategy not in config.STRATEGIES:
+        raise RouteError('未知的池策略')
+    try:
+        interval = int(body.get('interval_seconds', current['interval_seconds']))
+    except (TypeError, ValueError) as exc:
+        raise RouteError('间隔必须是整数秒') from exc
+    if interval < 0 or interval > 86400:
+        raise RouteError('间隔要在 0~86400 秒之间（0 = 每次重新挑）')
+    db.set_setting('proxy_pool', {'enabled': bool(body.get('enabled', current['enabled'])),
+                                  'strategy': strategy,
+                                  'interval_seconds': interval})
+    return pool_settings()
 
 
 def record_probe(name: str, result: dict) -> None:
@@ -619,7 +556,7 @@ async def probe_url(proxy: str, *, timeout: float = 8.0,
     """经这个代理地址发一次轻请求（默认查出口 IP 与归属地）。
 
     探测失败原因**原样回给界面**：配住宅代理时最该确认的就是「出口到底落在哪」，
-    而失败原因（连不上 / 认证失败 / 超时）恰恰是排查起点。
+    而失败原因（连不上 / 认证失败 / 超时）正是排查起点。
     """
     import httpx
 
@@ -650,4 +587,7 @@ async def probe_route(name: str, *, timeout: float = 8.0,
     url = routes().get(validate_name(name))
     if not url:
         raise RouteError(f'线路 {name!r} 不存在', 404)
+    if config.SESSION_PLACEHOLDER in url:
+        # 旧版会话模板：拿字面量 `{account}` 去连必然认证失败，换个示例会话名探
+        url = config.render_route_url(url, 'wb-probe')
     return await probe_url(url, timeout=timeout, check_url=check_url)

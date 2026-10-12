@@ -1313,10 +1313,10 @@
     "proxyEmptyDesc": "點右上角「新增線路」建立一條，或在帳號頁給帳號綁定出口。",
     "proxyAdd": "新增線路",
     "proxyEdit": "編輯線路",
-    "proxyDialogDesc": "名稱供帳號下拉選擇；位址支援 http:// https:// socks5:// socks5h://。",
+    "proxyDialogDesc": "名稱供帳號下拉選擇；位址支援 http / https / socks5 / socks5h。",
     "proxyName": "名稱",
     "proxyUrl": "代理位址",
-    "proxyUrlHint": "位址裡可帶使用者名稱與密碼。編輯時保留 *** 表示不改密碼。",
+    "proxyUrlHint": "位址可帶使用者名稱與密碼；編輯時保留 *** 即表示不改密碼。",
     "proxyUrlRequired": "請填寫代理位址",
     "proxyBound": "綁定帳號",
     "proxyBoundNone": "無",
@@ -1354,7 +1354,8 @@
     "proxyUpdateEnv": "環境變數 WB_UPDATE_PROXY：{value}",
     "proxyScopeNote": "說明：住宅代理這類服務通常把國家 / 城市 / 工作階段名寫進使用者名稱裡（例如 使用者_c_CN_city_Shanghai_s_<工作階段名>），同一工作階段名會黏在同一個出口 IP 上 —— 每個實例或每個帳號用不同工作階段名，才能各佔一個住宅 IP。",
     "proxyAdminRequired": "代理設定僅管理員可見",
-    "proxyAdminRequiredDesc": "這一頁管理的是流量出口與代理憑證，只對管理員開放。需要調整請讓管理員操作。"
+    "proxyAdminRequiredDesc": "這一頁管理的是流量出口與代理憑證，只對管理員開放。需要調整請讓管理員操作。",
+    "proxyNamePlaceholder": "例如 px-cn"
   },
   "phrases": {
     "请求失败": "請求失敗",

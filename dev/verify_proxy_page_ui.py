@@ -75,6 +75,8 @@ def main() -> int:
         'proxies': {
             'px-dead': 'socks5://user:supersecret@127.0.0.1:1',
             'px-free': 'http://user2:pw2@proxy.example:8080',
+            'px-shanghai': 'socks5://demo_c_CN_city_Shanghai_s_wb01:pw@gateway.example.dev:10000',
+            'px-tokyo': 'socks5://demo_c_JP_city_Tokyo_s_wb02:pw@gateway.example.dev:10000',
         },
     }, ensure_ascii=False, indent=2), encoding='utf-8')
     (DATA / 'auths' / 'workbuddy-demo.json').write_text(json.dumps({
@@ -145,7 +147,7 @@ def run_checks(env: dict) -> int:
     # 落盘核对：浏览器里做的操作必须真的写进配置文件
     cfg = json.loads((DATA / 'config.json').read_text(encoding='utf-8'))
     proxies = cfg.get('proxies') or {}
-    if 'px-ui' not in proxies:
+    if 'px-hk-hongkong' not in proxies:
         findings.append('浏览器里新增的线路没有写进上游 config.json')
     if proxies.get('px-import') != 'http://u:pw@imp.example:3128':
         findings.append(f'导入的线路没落盘或地址不对：{proxies.get("px-import")}')
@@ -209,19 +211,20 @@ const BASE = process.env.BASE, OUT = process.env.OUT;
   await p.waitForTimeout(600);
   const dialog = p.locator('[role=dialog]').first();
   const inputs = dialog.locator('input');
-  await inputs.nth(0).fill('px-ui');
-  await inputs.nth(1).fill('http://ui:uipw@ui.example:3129');
+  await inputs.nth(0).fill('px-hk-hongkong');
+  await inputs.nth(1).fill('socks5://demo_c_HK_city_HongKong_s_wb03:pw@gateway.example.dev:10000');
   await dialog.screenshot({path:`${OUT}/proxy-add.png`});
   await dialog.locator('button', {hasText: '保存'}).first().click();
   await p.waitForTimeout(2000);
   text = await body();
-  step(text.includes('px-ui'), '新增的线路出现在列表里');
+  step(text.includes('px-hk-hongkong'), '新增的线路出现在列表里');
 
   // 批量导入
   await p.locator('button', {hasText: '导入'}).first().click();
   await p.waitForTimeout(600);
   const imp = p.locator('[role=dialog]').first();
   await imp.locator('textarea').fill('px-import=http://u:pw@imp.example:3128\n坏名字!=http://x:1');
+  await imp.screenshot({path:`${OUT}/proxy-import.png`});
   await imp.locator('button', {hasText: '开始导入'}).first().click();
   await p.waitForTimeout(2500);
   text = await body();

@@ -1313,7 +1313,7 @@
     "proxyEmptyDesc": "右上の「経路を追加」で作成するか、アカウントページで出口を割り当ててください。",
     "proxyAdd": "経路を追加",
     "proxyEdit": "経路を編集",
-    "proxyDialogDesc": "名前はアカウントのプルダウンに出ます。アドレスは http:// https:// socks5:// socks5h:// に対応。",
+    "proxyDialogDesc": "名前はアカウントのプルダウンに出ます。アドレスは http / https / socks5 / socks5h に対応。",
     "proxyName": "名前",
     "proxyUrl": "プロキシアドレス",
     "proxyUrlHint": "アドレスにユーザー名とパスワードを含められます。編集時に *** を残すとパスワードは変更しません。",
@@ -1354,7 +1354,8 @@
     "proxyUpdateEnv": "環境変数 WB_UPDATE_PROXY：{value}",
     "proxyScopeNote": "補足：住宅プロキシは国 / 都市 / セッション名をユーザー名に含めることが多く（例 user_c_CN_city_Shanghai_s_<セッション名>）、同じセッション名は同じ出口 IP に固定されます。インスタンスやアカウントごとに別のセッション名にすると、それぞれ別の住宅 IP を確保できます。",
     "proxyAdminRequired": "プロキシ設定は管理者のみ",
-    "proxyAdminRequiredDesc": "このページは通信の出口とプロキシ資格情報を扱うため、管理者限定です。変更は管理者に依頼してください。"
+    "proxyAdminRequiredDesc": "このページは通信の出口とプロキシ資格情報を扱うため、管理者限定です。変更は管理者に依頼してください。",
+    "proxyNamePlaceholder": "例：px-cn"
   },
   "phrases": {
     "请求失败": "リクエストに失敗しました",

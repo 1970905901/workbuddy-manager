@@ -1337,10 +1337,10 @@
     "proxyEmptyDesc": "Use \"Add route\" on the right, or bind an egress from the Accounts page.",
     "proxyAdd": "Add route",
     "proxyEdit": "Edit route",
-    "proxyDialogDesc": "The name is what accounts pick from the dropdown; the address supports http:// https:// socks5:// socks5h://.",
+    "proxyDialogDesc": "The name is what accounts pick from the dropdown; the address supports http / https / socks5 / socks5h.",
     "proxyName": "Name",
     "proxyUrl": "Proxy address",
-    "proxyUrlHint": "The address may include a username and password. Keeping *** while editing leaves the password unchanged.",
+    "proxyUrlHint": "The address may include a username and password; keeping *** while editing leaves the password unchanged.",
     "proxyUrlRequired": "Enter a proxy address",
     "proxyBound": "Bound accounts",
     "proxyBoundNone": "None",
@@ -1378,7 +1378,8 @@
     "proxyUpdateEnv": "WB_UPDATE_PROXY environment variable: {value}",
     "proxyScopeNote": "Note: residential proxy services usually put the country / city / session name in the username (e.g. user_c_CN_city_Shanghai_s_<session>). The same session name sticks to the same exit IP, so give each instance or account its own session name to get one residential IP each.",
     "proxyAdminRequired": "Proxy settings are admin-only",
-    "proxyAdminRequiredDesc": "This page controls traffic egress and proxy credentials, so it is limited to administrators. Ask an admin to make changes."
+    "proxyAdminRequiredDesc": "This page controls traffic egress and proxy credentials, so it is limited to administrators. Ask an admin to make changes.",
+    "proxyNamePlaceholder": "e.g. px-cn"
   },
   "phrases": {
     "请求失败": "Request failed",

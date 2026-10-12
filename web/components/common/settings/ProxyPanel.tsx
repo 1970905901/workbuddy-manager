@@ -428,25 +428,27 @@ export function ProxyPanel() {
                   setEditing(null);
                 }
               }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>
               {editing ? t('settings.proxyEdit') : t('settings.proxyAdd')}
             </DialogTitle>
             <DialogDescription>{t('settings.proxyDialogDesc')}</DialogDescription>
           </DialogHeader>
-          <DialogBody className="space-y-3">
-            <div className="space-y-1.5">
-              <Label className="text-[11px] text-muted-foreground">{t('settings.proxyName')}</Label>
-              <Input value={form.name} disabled={editing !== null}
+          <DialogBody className="space-y-2.5">
+            <div className="rounded-2xl bg-muted/40 px-3 py-2">
+              <Label className="text-xs">{t('settings.proxyName')}</Label>
+              <Input className="mt-1 h-8 bg-background" value={form.name}
+                     disabled={editing !== null}
+                     placeholder={t('settings.proxyNamePlaceholder')}
                      onChange={(e) => setForm({...form, name: e.target.value})} />
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-[11px] text-muted-foreground">{t('settings.proxyUrl')}</Label>
-              <Input className="font-mono text-xs" value={form.url}
-                     placeholder="socks5://user:pass@host:10000"
+            <div className="rounded-2xl bg-muted/40 px-3 py-2">
+              <Label className="text-xs">{t('settings.proxyUrl')}</Label>
+              <Input className="mt-1 h-8 bg-background font-mono text-xs" value={form.url}
+                     placeholder="socks5://user_c_CN_city_Shanghai_s_wb01:pass@host:10000"
                      onChange={(e) => setForm({...form, url: e.target.value})} />
-              <p className="text-[10px] leading-4 text-muted-foreground">
+              <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
                 {t('settings.proxyUrlHint')}
               </p>
             </div>
@@ -468,15 +470,18 @@ export function ProxyPanel() {
 
       {/* 导入 */}
       <Dialog open={importing !== null} onOpenChange={(open) => !open && setImporting(null)}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>{t('settings.proxyImportTitle')}</DialogTitle>
             <DialogDescription>{t('settings.proxyImportDesc')}</DialogDescription>
           </DialogHeader>
           <DialogBody>
-            <Textarea className="min-h-40 font-mono text-xs" value={importing ?? ''}
-                      placeholder={t('settings.proxyImportPlaceholder')}
-                      onChange={(e) => setImporting(e.target.value)} />
+            <div className="rounded-2xl bg-muted/40 px-3 py-2">
+              <Textarea className="min-h-40 bg-background font-mono text-xs"
+                        value={importing ?? ''}
+                        placeholder={t('settings.proxyImportPlaceholder')}
+                        onChange={(e) => setImporting(e.target.value)} />
+            </div>
           </DialogBody>
           <DialogFooter>
             <Button variant="ghost" className="rounded-full" onClick={() => setImporting(null)}>

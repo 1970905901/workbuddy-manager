@@ -75,7 +75,7 @@ def main() -> int:
         'proxies': {
             'px-dead': 'socks5://user:supersecret@127.0.0.1:1',
             'px-free': 'http://user2:pw2@proxy.example:8080',
-            'px-shanghai': 'socks5://demo_c_CN_city_Shanghai_s_wb01:pw@gateway.example.dev:10000',
+            'px-shanghai': 'socks5://demo_c_CN_city_Shanghai_s_{account}:pw@gateway.example.dev:10000',
             'px-tokyo': 'socks5://demo_c_JP_city_Tokyo_s_wb02:pw@gateway.example.dev:10000',
         },
     }, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -153,6 +153,12 @@ def run_checks(env: dict) -> int:
         findings.append(f'导入的线路没落盘或地址不对：{proxies.get("px-import")}')
     if cfg.get('api_key') != 'wbk_keep-me':
         findings.append('写线路把 config.json 里别的键弄丢了')
+    account = json.loads((DATA / 'auths' / 'workbuddy-demo.json').read_text(encoding='utf-8'))
+    routes_of = [account.get('proxy') or ''] + list(account.get('proxy_pool') or [])
+    if 'px-shanghai' not in routes_of:
+        findings.append(f'抽屉里勾选的线路没写进账号文件：{routes_of}')
+    if not account.get('proxy_session'):
+        findings.append('独享线路没有给账号生成会话名（每号一个 IP 就不成立）')
     settings = json.loads((DATA / 'manager.db').read_text(encoding='latin-1') and '{}') \
         if False else None  # DB 是二进制，设置项在下面用 sqlite 读
 
@@ -230,6 +236,24 @@ const BASE = process.env.BASE, OUT = process.env.OUT;
   text = await body();
   step(text.includes('px-import'), '导入的线路出现在列表里');
 
+  // 绑定抽屉（池化）：把演示号绑到独享线路 px-shanghai，顺便看会话名预览
+  const row = p.locator('tr', {hasText: 'px-shanghai'}).first();
+  // 未绑定的行按钮写的是「未绑定」，两种都认
+  await row.locator('button', {hasText: /绑定账号|未绑定/}).first().click();
+  await p.waitForTimeout(1200);
+  const drawer = p.locator('[role=dialog]').last();
+  const drawerText = await drawer.innerText();
+  step(drawerText.includes('绑定账号'), '打开绑定抽屉');
+  step(drawerText.includes('演示号'), '抽屉里列出了账号');
+  step(drawerText.includes('换会话'), '抽屉提供「换会话」（换 IP）动作');
+  await drawer.screenshot({path: `${OUT}/proxy-bindings.png`});
+  await drawer.locator('input[type=checkbox]').first().check();
+  await drawer.locator('button', {hasText: '保存'}).first().click();
+  await p.waitForTimeout(1800);
+  text = await body();
+  step(text.includes('px-shanghai'), '保存后线路仍在列表里');
+  await p.screenshot({path: `${OUT}/proxy-list-bound.png`, fullPage: true});
+
   // 全局出口代理
   const globalInput = p.locator('input[placeholder*="socks5"]').first();
   await globalInput.fill('socks5://ui:uipass@ui.example:1080');
@@ -241,7 +265,8 @@ const BASE = process.env.BASE, OUT = process.env.OUT;
   await p.screenshot({path:`${OUT}/proxy-global.png`, fullPage:true});
 
   // 测试（线路指向一个不监听的端口 → 必须如实报失败）
-  await p.locator('button', {hasText: '测试'}).nth(1).click();
+  await p.locator('tr', {hasText: 'px-dead'}).first()
+         .locator('button[title="测试"]').first().click();
   await p.waitForTimeout(9000);
   text = await body();
   step(!/出口正常/.test(text), '不可达的线路没有报「出口正常」');

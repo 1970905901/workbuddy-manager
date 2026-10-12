@@ -180,6 +180,34 @@ export interface ProxyRoute {
   local?: boolean;
   /** 绑定账号数（列表接口一定会给） */
   bound: number;
+  /** exclusive = 带 {account} 会话模板（每个账号一个住宅 IP）；shared = 共用一条出口 */
+  mode: 'exclusive' | 'shared';
+  /** 池化选择时的权重（越大越常被选中） */
+  weight: number;
+  /** 前几个绑定账号的昵称（列表里显示 chips） */
+  bound_names?: string[];
+  /** 独享线路的渲染示例（会话名已截断、密码已脱敏） */
+  session_preview?: string;
+  /** 共享线路绑了 ≥3 台时的风控提示 */
+  shared_warning?: boolean;
+  /** 上次测试的结果（面板里记着） */
+  probe?: {ok: boolean; ms: number; at: number; exit_ip?: string; error?: string} | null;
+}
+
+export interface RouteAccount {
+  file: string;
+  uid: string;
+  nickname: string;
+  routes: string[];
+  session: string;
+  session_preview: string;
+  bound: boolean;
+}
+
+export interface RouteAccountsResponse {
+  name: string;
+  mode: 'exclusive' | 'shared';
+  accounts: RouteAccount[];
 }
 
 export interface ProxyRouteList {

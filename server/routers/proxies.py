@@ -53,15 +53,18 @@ def list_proxy_routes(upstream_id: int | None = Query(None),
     账号页选线路走的仍是老的 `/api/proxies`（只有名字），不受这里影响。
     """
     auth_dir = _auth_dir(upstream_id)
-    counts = routesvc.bound_counts(auth_dir)
-    routes = routesvc.list_routes()
+    routes = routesvc.list_routes(auth_dir)
+    healthy = routesvc.health()
     for item in routes:
-        item['bound'] = counts.get(item['name'], 0)
+        item['probe'] = healthy.get(item['name'])
+        # 共享线路上挂太多账号是风控特征：界面据此给出提示（阈值 3，另见前端文案）。
+        item['shared_warning'] = item['mode'] == 'shared' and item['bound'] >= 3
     return {
         'routes': routes,
         'default': config.DEFAULT_ACCOUNT_PROXY,
         'schemes': list(routesvc.SCHEMES),
-        'bound_total': sum(counts.values()),
+        'bound_total': sum(item['bound'] for item in routes),
+        'sticky_seconds': config.PROXY_STICKY_SECONDS,
     }
 
 
@@ -92,7 +95,7 @@ def update_proxy_route(name: str, request: Request, body: dict = Body(...),
                            f'同步 {result["bound_updated"]} 台账号的绑定；'
                            f'来源 {client_ip(request)}')
             return {**item, 'bound_updated': result['bound_updated']}
-        item = routesvc.upsert(name, body.get('url'))
+        item = routesvc.upsert(name, body.get('url'), weight=body.get('weight'))
     except routesvc.RouteError as exc:
         raise _wrap(exc) from exc
     security.audit(user, 'update_proxy_route', item['name'],
@@ -141,9 +144,85 @@ async def probe_proxy_route(body: dict = Body(...),
     出口 IP 也会显示出来 —— 配住宅代理时最该确认的就是「出口到底落在哪」。
     """
     try:
-        return await routesvc.probe_route(str(body.get('name') or ''))
+        result = await routesvc.probe_route(str(body.get('name') or ''))
     except routesvc.RouteError as exc:
         raise _wrap(exc) from exc
+    routesvc.record_probe(str(body.get('name') or ''), result)
+    return result
+
+
+@router.get('/proxy-routes/{name}/accounts')
+def route_accounts(name: str, upstream_id: int | None = Query(None),
+                   user: dict = Depends(security.require_session_admin)) -> dict:
+    """这条线路的绑定抽屉：全部账号 + 各自当前用的线路，勾选即绑定。
+
+    池化意味着一个账号可以同时用多条线路（按权重分摊、失败切换），所以这里返回的是
+    **每条线路各自的集合**，前端按「勾没勾」提交增量。
+    """
+    try:
+        clean = routesvc.validate_name(name)
+    except routesvc.RouteError as exc:
+        raise _wrap(exc) from exc
+    table = routesvc.routes()
+    if clean not in table:
+        raise HTTPException(status_code=404, detail=f'线路 {clean!r} 不存在')
+    rows = routesvc.account_rows(_auth_dir(upstream_id))
+    return {
+        'name': clean,
+        'mode': 'exclusive' if config.route_is_exclusive(table[clean]) else 'shared',
+        'accounts': [
+            {
+                'file': row['file'],
+                'uid': row['uid'],
+                'nickname': row['nickname'],
+                'routes': row['routes'],
+                'session': row['session'],
+                'session_preview': (row['session'][:4] + '*'
+                                    if len(row['session']) > 4 else row['session']),
+                'bound': clean in row['routes'],
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.post('/proxy-routes/{name}/accounts')
+def bind_route_accounts(name: str, request: Request, body: dict = Body(...),
+                        upstream_id: int | None = Query(None),
+                        user: dict = Depends(security.require_session_admin)) -> dict:
+    """批量绑定 / 解绑：`{"files": [...], "add": true|false}`。"""
+    files = body.get('files')
+    if not isinstance(files, list) or not files:
+        raise HTTPException(status_code=400, detail='没有选择账号')
+    add = bool(body.get('add', True))
+    try:
+        result = routesvc.set_bindings(name, [str(f) for f in files],
+                                      auth_dir=_auth_dir(upstream_id), add=add)
+    except routesvc.RouteError as exc:
+        raise _wrap(exc) from exc
+    security.audit(user, 'bind_proxy_route' if add else 'unbind_proxy_route', name,
+                   f'{"绑定" if add else "解绑"} {result["updated"]} 台；'
+                   f'来源 {client_ip(request)}')
+    return result
+
+
+@router.post('/proxy-routes/rotate')
+def rotate_route_sessions(request: Request, body: dict = Body(...),
+                          upstream_id: int | None = Query(None),
+                          user: dict = Depends(security.require_session_admin)) -> dict:
+    """换会话（= 换出口 IP）：住宅代理的会话名决定出口，换名字就是换 IP。
+
+    做成**显式动作**而不是自动轮换：换 IP 在风控眼里是特征变化，什么时候换应该由
+    人决定（换之前之后都能在列表里看到会话名）。
+    """
+    files = body.get('files')
+    if not isinstance(files, list) or not files:
+        raise HTTPException(status_code=400, detail='没有选择账号')
+    result = routesvc.rotate_sessions([str(f) for f in files],
+                                     auth_dir=_auth_dir(upstream_id))
+    security.audit(user, 'rotate_proxy_session', '',
+                   f'{result["updated"]} 台换会话；来源 {client_ip(request)}')
+    return result
 
 
 # ── 全局出口代理 ─────────────────────────────────────────────

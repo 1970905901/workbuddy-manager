@@ -17,9 +17,9 @@ A web console for [`workbuddy2api`](https://github.com/Sliverkiss/workbuddy2api)
 
 **English** · [简体中文](README.md) ｜ Documented and discussed in the [LINUX DO](https://linux.do) community
 
-<img src="docs/images/sponsor-slot.svg" alt="sponsored slot (reserved)" width="100%" />
+<a href="https://proxylane.dev/?utm_source=workbuddy-manager&utm_medium=partnership&utm_campaign=workbuddy-manager_sponsor_202610&utm_content=github_readme_en"><img src="docs/images/sponsor-proxylane.png" alt="ProxyLane (sponsor)" width="100%" /></a>
 
-**Sponsored slot · reserved**
+**Sponsored** · [ProxyLane](https://proxylane.dev/?utm_source=workbuddy-manager&utm_medium=partnership&utm_campaign=workbuddy-manager_sponsor_202610&utm_content=github_readme_en) residential proxies in 195 countries; 95%+ of IPs rated low risk by Scamalytics. Put the country, city and a session name in the `WB_HTTP_PROXY` username — each instance gets one residential IP for up to 72 hours, and a replacement IP stays in the same city. New customers get 30% off the first purchase with code `WORKBUDDY30`.
 
 <img src="docs/images/dashboard.png" alt="WorkBuddy Manager dashboard" width="100%" />
 

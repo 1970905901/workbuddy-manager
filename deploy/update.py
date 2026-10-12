@@ -25,9 +25,11 @@ import os
 import re
 import shutil
 import signal
+import site
 import stat
 import subprocess
 import sys
+import sysconfig
 import tarfile
 import tempfile
 import time
@@ -1207,21 +1209,65 @@ def fetch_release_via_redirect(latest_url: str | None = None,
     }
 
 
+def _system_site_writable() -> bool:
+    """系统 site-packages 能不能直接写。
+
+    判据是**真实可写性**，不是 uid：容器部署里进程是 uid 10001，而镜像里的依赖
+    是 root 装的、目录归 root —— 这时只能装到用户站点。宿主部署（root 或 venv）
+    则是可写的，不该平白引入 --user 去改变既有安装位置。
+    """
+    try:
+        purelib = sysconfig.get_path('purelib')
+    except Exception:  # noqa: BLE001
+        return False
+    if not purelib:
+        return False
+    p = Path(purelib)
+    # 目录本身与父目录都要能写：pip 要新建 dist-info，也可能要新建目录
+    return os.access(p, os.W_OK) and os.access(p.parent, os.W_OK)
+
+
+# 只在 pip 的**输出**里出现这些字样时才认为"可写性判定可能误判了"
+_PERMISSION_HINTS = ('permission denied', 'read-only', 'eacces')
+
+
 def install_requirements(req: Path, rep: Reporter) -> None:
     """安装 Python 依赖，失败则抛错。
 
-    与 install.sh 一致：先带 `--break-system-packages`（PEP 668 的系统 Python
-    不带它会拒装），不认这个参数的旧 pip 会失败，再不带它重试一次。
+    - 与 install.sh 一致：先带 `--break-system-packages`（PEP 668 的系统 Python
+      不带它会拒装），不认这个参数的旧 pip 会失败，再不带它重试一次。
+    - 系统 site-packages 不可写时（容器以非 root 运行）改用 `--user`：落到
+      `PYTHONUSERBASE`（镜像里钉成 /app/.local，见 Dockerfile）。用户站点排在
+      全站 site-packages **之前**，所以能压住旧版本；而 `--user` 不在 PEP 668 的
+      豁免名单里，所以两个参数要一起给。
+
+    为什么必须支持"装到别处"：容器形态下唯一能装依赖的就是这条路径，装不上就等于
+    这个部署**永远升不上去**（issue #157 的另一半——#160 只做到"失败要响"）。
     """
     py = sys.executable
+    use_user = not _system_site_writable()
+    target = ['--user'] if use_user else []
     rep.log('检查 / 安装 Python 依赖…')
-    code, _ = run([py, '-m', 'pip', 'install', '-q', '--break-system-packages', '-r', str(req)],
-                  rep=rep, check=False)
-    if code == 0:
-        return
-    code, _ = run([py, '-m', 'pip', 'install', '-q', '-r', str(req)], rep=rep, check=False)
-    if code != 0:
-        raise RuntimeError(f'Python 依赖安装失败（exit {code}），已中止更新，当前版本保持不变')
+    if use_user:
+        rep.log(f'系统 site-packages 不可写，依赖改装到用户站点（{site.getusersitepackages()}）')
+
+    attempts = [target + ['--break-system-packages'], target]
+    code, out = 0, ''
+    for extra in attempts:
+        code, out = run([py, '-m', 'pip', 'install', '-q', *extra, '-r', str(req)],
+                        rep=rep, check=False)
+        if code == 0:
+            return
+
+    # 可写性判定可能误判（ACL、只读挂载…）：只在输出看起来是权限问题时补一次 --user，
+    # 免得给真正的网络/解析失败也套上 --user 掩盖原因。
+    if not use_user and any(h in (out or '').lower() for h in _PERMISSION_HINTS):
+        code, _ = run([py, '-m', 'pip', 'install', '-q', '--user',
+                       '--break-system-packages', '-r', str(req)], rep=rep, check=False)
+        if code == 0:
+            return
+
+    raise RuntimeError(f'Python 依赖安装失败（exit {code}），已中止更新，当前版本保持不变')
 
 
 def update_manager(rep: Reporter) -> None:

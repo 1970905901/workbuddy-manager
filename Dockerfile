@@ -102,6 +102,11 @@ RUN set -eu; \
 FROM python:3.12-slim
 
 # 环境变量：Python 不要写 pyc（容器是一次性的，写了也没用）、日志不缓冲
+#
+# PYTHONUSERBASE 指到 /app/.local：容器里以 uid 10001 运行，而依赖是 root 装的、
+# site-packages 归 root，**更新时装新依赖只能走用户站点**。钉死这个路径有两个理由：
+# ① 不依赖 Docker 把 HOME 设对；② /app 已经 chown 给 10001（见下方 useradd 那步），
+# 目录必须**先存在**——CPython 的 site.py 只在用户站点目录存在时才把它加进 sys.path。
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     WB_RUN_MODE=docker \
@@ -113,7 +118,8 @@ ENV PYTHONUNBUFFERED=1 \
     WB_AUTH_DIR=/opt/workbuddy2api/auths \
     WB_UPSTREAM_CONFIG=/opt/workbuddy2api/config.json \
     WB2API_BASE=http://127.0.0.1:7863 \
-    WB_BASE_PATH=""
+    WB_BASE_PATH="" \
+    PYTHONUSERBASE=/app/.local
 
 # 可选：Debian 软件源镜像（留空 = 官方源 deb.debian.org）。
 #
@@ -285,8 +291,11 @@ COPY CHANGELOG.md README.md /app/
 # 非 root 运行。目录归属交给 app 用户，使容器内更新能写回代码目录。
 # 注意与上游 auths/data 卷的 uid 对齐：上游容器以 uid 10001 运行，
 # 这里用同一 uid 可避免跨容器写同一个卷时的权限问题。
+#
+# /app/.local 是 PYTHONUSERBASE 的落点（见上面的 ENV）：容器内更新装新依赖时
+# 只能写用户站点，且该目录必须**先存在**，否则重启后的新进程不在 sys.path 上找它。
 RUN useradd -u 10001 -m -s /bin/bash app \
-    && mkdir -p /app/data /opt/workbuddy2api \
+    && mkdir -p /app/data /app/.local /opt/workbuddy2api \
     && chown -R 10001:10001 /app /opt/workbuddy2api
 
 USER app

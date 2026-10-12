@@ -682,6 +682,25 @@ class DockerAssetsTest(unittest.TestCase):
         self.assertTrue(any('docker.sock' in v for v in vols),
                         '未挂 docker.sock —— 容器版将无法重载/更新上游')
 
+    def test_dockerfile_deps_go_to_writable_user_site(self) -> None:
+        """容器内更新要把新依赖装到**可写**的位置（issue #157 的另一半）。
+
+        镜像里依赖是 root 装的，site-packages 归 root；而进程是 uid 10001。
+        更新器改用 `pip install --user` 后，落点由 PYTHONUSERBASE 决定 ——
+        它必须在镜像里钉死并落在被 chown 给 10001 的 /app 下，否则要么装不进去，
+        要么装进去了、重启后的新进程却不在 sys.path 上找它。
+        """
+        df = (_ROOT / 'Dockerfile').read_text(encoding='utf-8')
+        self.assertIn('PYTHONUSERBASE=/app/.local', df,
+                      '未钉死 PYTHONUSERBASE —— --user 的落点会随 HOME 漂移')
+        # 目录必须先建出来：site.py 只在目录**存在**时才把它加进 sys.path
+        # （不存在就不加，重启后的进程找不到刚装的包）。
+        self.assertRegex(df, r'mkdir -p[^\n]*/app/\.local',
+                         '/app/.local 没在 useradd 那步建出来 —— 装完也不进 sys.path')
+        # 且要被 chown -R 10001:10001 /app 覆盖，否则 uid 10001 写不进去
+        self.assertRegex(df, r'chown -R 10001:10001\s+/app\b',
+                         'chown 未覆盖 /app —— /app/.local 归属不对，装不进去')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -295,6 +295,79 @@ class UpdateEndToEndTest(unittest.TestCase):
         self.assertEqual((inst / '.version').read_text(encoding='utf-8').strip(), 'v1.0.0')
         self.assertFalse((inst / 'CHANGELOG.md').exists())
 
+    # ── 依赖装到哪：容器里以非 root 跑，系统 site-packages 归 root ──
+    #
+    # 容器形态下 `pip install` 默认写 /usr/local/lib/python3.12/site-packages，
+    # 而进程是 uid 10001 → EACCES。光"失败要响"（#160）不够：更新会干净地失败，
+    # 但**永远升不上去**。要装到用户站点（/app/.local，见 Dockerfile 的
+    # PYTHONUSERBASE），它排在全站 site-packages 之前，所以能压住旧版本。
+
+    def _run_with_pip(self, mod, pkg, sig, *, writable: bool,
+                      results: list[tuple[int, str]]):
+        """驱动真实 update_manager，只接管 pip 的调用与"系统站点是否可写"的判定。
+
+        results: 按调用序号取第 n 次 pip 的 (code, out)，越界则重复最后一项。
+        """
+        pip_calls: list[list[str]] = []
+
+        def fake_run(cmd, *a, **kw):
+            if cmd[1:3] == ['-m', 'pip']:
+                pip_calls.append(cmd)
+                return results[min(len(pip_calls) - 1, len(results) - 1)]
+            return 0, ''
+
+        orig_update = mod.update_manager
+
+        def update_with_fake_pip(rep):
+            mod.run = fake_run
+            mod._system_site_writable = lambda: writable
+            return orig_update(rep)
+
+        mod.update_manager = update_with_fake_pip
+        ok, rep = self._run_update(mod, pkg, sig)
+        return ok, rep, pip_calls
+
+    def test_pip_uses_user_install_when_system_site_readonly(self) -> None:
+        """系统 site-packages 不可写时必须装到用户站点，否则容器更新永远装不上。"""
+        inst = self._make_install('pipuser')
+        pkg, sig = self._make_release('pipuser')
+        mod = self._load(inst)
+        ok, rep, calls = self._run_with_pip(
+            mod, pkg, sig, writable=False, results=[(0, '')])
+        self.assertTrue(ok, rep.text())
+        self.assertTrue(calls, '压根没调用 pip')
+        self.assertIn('--user', calls[0],
+                      '系统 site-packages 不可写却没加 --user —— 容器里会 EACCES')
+        self.assertIn('--break-system-packages', calls[0],
+                      '--user 不在 PEP 668 豁免名单里，必须同时带这个参数')
+
+    def test_pip_prefers_system_install_when_writable(self) -> None:
+        """可写时不该引入 --user：会悄悄改变既有部署的安装位置。"""
+        inst = self._make_install('pipsys')
+        pkg, sig = self._make_release('pipsys')
+        mod = self._load(inst)
+        ok, rep, calls = self._run_with_pip(
+            mod, pkg, sig, writable=True, results=[(0, '')])
+        self.assertTrue(ok, rep.text())
+        self.assertTrue(calls, '压根没调用 pip')
+        self.assertTrue(all('--user' not in c for c in calls),
+                        f'可写时不该用 --user：{calls}')
+
+    def test_pip_falls_back_to_user_on_permission_error(self) -> None:
+        """可写性判定可能误判（ACL / 只读挂载）：pip 报权限问题时补一次 --user。"""
+        inst = self._make_install('pipperm')
+        pkg, sig = self._make_release('pipperm')
+        mod = self._load(inst)
+        ok, rep, calls = self._run_with_pip(
+            mod, pkg, sig, writable=True,
+            results=[(1, 'ERROR: Could not install packages due to an OSError: '
+                        '[Errno 13] Permission denied: /usr/local/lib/python3.12/site-packages'),
+                     (1, 'ERROR: Permission denied'),
+                     (0, '')])
+        self.assertTrue(ok, rep.text())
+        self.assertTrue(any('--user' in c for c in calls),
+                        f'权限失败后没有回退到 --user：{calls}')
+
     def test_unsigned_release_aborts(self) -> None:
         """攻击者控制发布渠道后，最省事的做法就是干脆不带签名。"""
         inst = self._make_install('nosig')

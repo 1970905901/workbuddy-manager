@@ -227,13 +227,15 @@ docker compose up -d
 WB_BASE_PATH=/workbuddy-manager
 ```
 
-> **别写进 `.env`。** 服务端只读进程环境变量：仓库里没有任何地方调用 `load_dotenv`，
-> `deploy/workbuddy-web.service` 没有 `EnvironmentFile=`，`docker-compose.yml` 用的是
-> 内联 `environment:` 而不是 `env_file:`——写进 `.env` 不会生效。
-> 这个坑的麻烦之处在于**症状很隐蔽**：配置看起来加了，但前缀没被剥掉，
-> 表现为「页面能打开、接口全 404」，容易误判成反代写错了。
+> **这一项（`WB_BASE_PATH`）别写在 `.env` 里**：它在构建期与前缀绑定，必须落在
+> systemd 的 `Environment=` / compose 的 `environment:` 这类**显式变量**里，
+> 症状很隐蔽 —— 配置看起来加了，但前缀没被剥掉，表现为「页面能打开、接口全 404」，
+> 容易误判成反代写错了。
 >
-> （唯一的例外是 Windows 原生部署：`windows\start.ps1` 用 `uvicorn --env-file .env` 显式读取 `.env`。）
+> 其余可选项（出口代理 `WB_HTTP_PROXY`、更新代理 `WB_UPDATE_PROXY`、新账号默认线路
+> `WB_DEFAULT_ACCOUNT_PROXY` 等）**写进安装目录的 `.env` 即可**：容器部署由 compose 的
+> `${}` 取过去，systemd 部署由单元里的 `EnvironmentFile=` 读进来，Windows 原生由
+> 启动脚本交给面板（`uvicorn --env-file .env`）。
 
 **③ 反向代理：两种 `proxy_pass` 写法都可以**
 

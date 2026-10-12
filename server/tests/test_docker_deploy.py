@@ -688,6 +688,26 @@ class DockerAssetsTest(unittest.TestCase):
         self.assertTrue(any('docker.sock' in v for v in vols),
                         '未挂 docker.sock —— 容器版将无法重载/更新上游')
 
+    def test_env_file_actually_reaches_both_deployments(self) -> None:
+        """`.env` 里的可选项（出口代理等）必须真能到达进程。
+
+        事实核查过：Windows 原生由 uvicorn 的 --env-file 读 .env；而 compose 只透传
+        environment: 列表、systemd 只认 Environment= 行 —— 两处都**不读** .env，
+        于是「写进 .env」在容器与 systemd 部署里静默失效（配了代理却像没配）。
+        这里钉住接线：compose 要把这几个变量取过来，systemd 单元要读那个文件。
+        """
+        import yaml
+        dc = yaml.safe_load((_ROOT / 'docker-compose.yml').read_text(encoding='utf-8'))
+        env = dc['services']['workbuddy-manager']['environment']
+        for key in ('WB_HTTP_PROXY', 'WB_UPDATE_PROXY', 'WB_DEFAULT_ACCOUNT_PROXY'):
+            with self.subTest(key=key):
+                self.assertIn(key, env, f'compose 没把 {key} 透传进来 —— 写进 .env 也没用')
+                self.assertIn('${' + key, str(env[key]),
+                              f'{key} 没从 .env 取值（compose 用 ${{VAR:-}} 取）')
+        unit = (_ROOT / 'deploy' / 'workbuddy-web.service').read_text(encoding='utf-8')
+        self.assertIn('EnvironmentFile=-/opt/workbuddy-manager/.env', unit,
+                      'systemd 单元没读 .env —— 那里面配的代理/线路不会生效')
+
     def test_dockerfile_deps_go_to_writable_user_site(self) -> None:
         """容器内更新要把新依赖装到**可写**的位置（issue #157 的另一半）。
 

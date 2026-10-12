@@ -77,6 +77,7 @@ export function ProxyPanel() {
   const [form, setForm] = useState({name: '', url: '', weight: '100', enabled: true});
   const [globalForm, setGlobalForm] = useState({http: '', update: '', enabled: true});
   const [query, setQuery] = useState('');
+  const [intervalText, setIntervalText] = useState<string | null>(null);
   const [bindOpen, setBindOpen] = useState(false);
   const [accounts, setAccounts] = useState<RouteAccount[]>([]);
   const [autoFor, setAutoFor] = useState<ProxyRoute | null>(null);
@@ -309,12 +310,19 @@ export function ProxyPanel() {
               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <RefreshCw className="h-3.5 w-3.5" />
                 <Input className="h-8 w-20 rounded-full bg-background text-right text-xs tabular-nums"
-                       defaultValue={String(pool.interval_seconds)}
-                       onBlur={(e) => {
-                         const value = Number(e.target.value);
-                         if (Number.isInteger(value) && value !== pool.interval_seconds) {
-                           void savePool({interval_seconds: value});
+                       value={intervalText ?? String(pool.interval_seconds)}
+                       onChange={(e) => setIntervalText(e.target.value)}
+                       onBlur={() => {
+                         // 清空或填了非法值就还原成当前值：这里**不能**把空串当 0 ——
+                         // 0 的语义是「每次请求都重新挑出口」，误触会让出口一直变。
+                         const raw = (intervalText ?? '').trim();
+                         const value = Number(raw);
+                         setIntervalText(null);
+                         if (!raw || !Number.isInteger(value) || value < 0 || value > 86400
+                             || value === pool.interval_seconds) {
+                           return;
                          }
+                         void savePool({interval_seconds: value});
                        }} />
                 {t('settings.proxyIntervalUnit')}
               </span>

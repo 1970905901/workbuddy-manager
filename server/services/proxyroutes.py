@@ -36,6 +36,8 @@ NAME_RE = re.compile(r'^[A-Za-z0-9._-]{1,32}$')
 
 SCHEMES = ('http', 'https', 'socks5', 'socks5h')
 MASK = '***'
+# 一次批量导入的上限：导入是「每条一次读+写配置」，粘贴错文件不该变成几千次写盘。
+MAX_IMPORT = 200
 
 
 class RouteError(ValueError):
@@ -487,6 +489,10 @@ def parse_import(text: str) -> tuple[dict[str, dict], list[str]]:
 
 def import_routes(text: str) -> dict:
     table, problems = parse_import(text)
+    if len(table) > MAX_IMPORT:
+        # 每条导入都要读+写一次上游配置：粘贴一个别的大文件进来会变成几千次写盘，
+        # 而且线路表本身也不该有这么多条（选线路时是人眼看的下拉）。
+        raise RouteError(f'一次最多导入 {MAX_IMPORT} 条（这次有 {len(table)} 条），请分批')
     for name, entry in table.items():
         upsert(name, entry['url'])
     return {'imported': len(table), 'problems': problems}

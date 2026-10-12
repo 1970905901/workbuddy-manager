@@ -261,6 +261,16 @@ class BindingApiTest(_Base):
                          '自动分配应优先挑没绑线路的账号')
         self.assertEqual(result['unbound_left'], 0)
 
+    def test_import_is_capped(self) -> None:
+        """一次导入有条数上限（每条都要写一次配置，粘贴错文件不该变成几千次写盘）。"""
+        text = '\n'.join(f'px-{i}=socks5://u:pw@h{i}.example.dev:10000'
+                         for i in range(pr.MAX_IMPORT + 1))
+        bad = self.client.post('/api/proxy-routes/import', json={'text': text})
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn('最多导入', bad.text)
+        stored = json.loads(self.cfg.read_text(encoding='utf-8'))['proxies']
+        self.assertNotIn('px-1', stored, '被拒绝时不该已经写进去一部分')
+
     def test_health_is_recorded_and_listed(self) -> None:
         pr.record_probe('px-a', {'ok': False, 'ms': 12, 'error': 'ConnectError: boom'})
         item = {r['name']: r for r in self.client.get('/api/proxy-routes').json()['routes']}
@@ -323,6 +333,18 @@ class LegacyTemplateTest(_Base):
         self._pool()
         self.assertIn(config.resolve_account_proxy(self._auth('workbuddy-a.json')), (A, B),
                       '没有占位符的线路按原样使用（池策略挑一条）')
+
+    def test_legacy_multi_bind_keeps_its_primary_route(self) -> None:
+        """1.0.84 多绑的账号（`proxy` + `proxy_pool`）：升级后仍走原来那条主线路。
+
+        那一版把「第一条」写进 `proxy`、整组写进 `proxy_pool`；新方案一个账号只认
+        `proxy`，所以这类账号不会因为升级而变成直连 —— 只是不再在多条之间分摊。
+        """
+        self._write_config({'px-a': A, 'px-b': B, 'px-c': 'socks5://u:pw@c.example.dev:10000'})
+        self._account('workbuddy-a.json', 'uid-aaa', '账号A', proxy='px-b',
+                      proxy_pool=['px-b', 'px-c'])
+        chosen = config.resolve_account_proxy(self._auth('workbuddy-a.json'))
+        self.assertEqual(chosen, B, '升级后仍走 proxy 里那条（原来的第一条）')
 
 
 if __name__ == '__main__':

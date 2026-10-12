@@ -126,6 +126,15 @@ services:
       # 静默失败。
       - /var/run/docker.sock:/var/run/docker.sock
 
+    # 挂上 socket 只是必要条件 —— 还得**进得了那个组**。
+    # 宿主的 socket 通常归 root:docker（GID 998/999），而本容器以 uid 10001 运行，
+    # 不在那个组里就是 permission denied。GID 因机器而异，所以用变量：
+    #   DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)   # 写进 .env
+    # 默认 999 是 Debian/Ubuntu 上最常见的值；取错了不会静默失败 —— 更新上游时会
+    # 给出取真实 GID 的提示。不需要容器内操作 docker 的话，连上面那行一起注释掉即可。
+    group_add:
+      - "${DOCKER_GID:-999}"
+
     extra_hosts:
       # 让容器能通过 host.docker.internal 访问宿主机上的上游
       - "host.docker.internal:host-gateway"

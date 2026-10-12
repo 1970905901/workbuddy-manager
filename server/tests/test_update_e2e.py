@@ -101,7 +101,8 @@ class UpdateEndToEndTest(unittest.TestCase):
         return inst
 
     def _make_release(self, name: str, *, version: str = '9.9.9',
-                      deploy_diff: bool = True) -> tuple[Path, Path]:
+                      deploy_diff: bool = True,
+                      upstream: bool = False) -> tuple[Path, Path]:
         """打一个真实发布包并签名，返回 (tar.gz, sig) 路径。"""
         stage = Path(tempfile.mkdtemp(dir=self.dir)) / f'workbuddy-manager-v{version}'
         (stage / 'server').mkdir(parents=True)
@@ -119,6 +120,14 @@ class UpdateEndToEndTest(unittest.TestCase):
         if deploy_diff:
             (stage / 'deploy').mkdir()
             (stage / 'deploy' / 'update.py').write_text('# 包内的（随包更新）\n', encoding='utf-8')
+        if upstream:
+            # 上游源码随包分发（原仓库已不可用）。没有 docker-compose.yml 的话
+            # _sync_bundled_upstream 会当成「本包未含上游源码」直接跳过。
+            (stage / 'upstream').mkdir()
+            (stage / 'upstream' / 'docker-compose.yml').write_text(
+                'services:\n  wb2api:\n    build: .\n    ports:\n      - "7863:7863"\n',
+                encoding='utf-8')
+            (stage / 'upstream' / 'VERSION.txt').write_text('from-package\n', encoding='utf-8')
 
         pkg = Path(tempfile.mkdtemp(dir=self.dir)) / f'workbuddy-manager-v{version}.tar.gz'
         subprocess.run(['tar', 'czf', str(pkg), '-C', str(stage.parent), stage.name],
@@ -154,10 +163,10 @@ class UpdateEndToEndTest(unittest.TestCase):
                     os.environ[k] = v
         return mod
 
-    def _run_update(self, mod, pkg: Path, sig: Path | None, version: str = '9.9.9'):
-        """用假 Release 元数据驱动真实的 update_manager。
-
-        assets 用 file:// URL —— urlopen 原生支持，因此下载与验签都是真跑的。
+    def _wire_release(self, mod, pkg: Path, sig: Path | None,
+                      version: str = '9.9.9') -> None:
+        """把假 Release 接到模块上：assets 用 file:// URL（urlopen 原生支持），
+        所以下载与验签都是真跑的；只伪造 GitHub API 这一步。
         """
         assets = [{
             'name': pkg.name,
@@ -170,11 +179,23 @@ class UpdateEndToEndTest(unittest.TestCase):
             })
         rel = {'tag_name': f'v{version}', 'assets': assets}
 
-        # 只伪造这一步（GitHub API 不可达）；其余全部真跑
         mod.http_json = lambda url, timeout=20: rel  # type: ignore[assignment]
         # systemctl restart 在测试环境不存在，替换为空操作
         mod.run = lambda *a, **kw: (0, '')  # type: ignore[assignment]
 
+    def _make_upstream_dir(self, name: str) -> Path:
+        """造一个"随包分发"的上游目录（非 git，带 compose）。"""
+        up = Path(tempfile.mkdtemp(dir=self.dir)) / name
+        up.mkdir(parents=True)
+        (up / 'docker-compose.yml').write_text(
+            'services:\n  wb2api:\n    build: .\n    ports:\n      - "7863:7863"\n',
+            encoding='utf-8')
+        (up / 'VERSION.txt').write_text('old\n', encoding='utf-8')
+        return up
+
+    def _run_update(self, mod, pkg: Path, sig: Path | None, version: str = '9.9.9'):
+        """用假 Release 元数据驱动真实的 update_manager。"""
+        self._wire_release(mod, pkg, sig, version)
         rep = _Rep()
         try:
             mod.update_manager(rep)
@@ -294,6 +315,158 @@ class UpdateEndToEndTest(unittest.TestCase):
         self.assertIn('OLD', (inst / 'web' / 'out' / 'index.html').read_text(encoding='utf-8'))
         self.assertEqual((inst / '.version').read_text(encoding='utf-8').strip(), 'v1.0.0')
         self.assertFalse((inst / 'CHANGELOG.md').exists())
+
+    # ── 依赖装到哪：容器里以非 root 跑，系统 site-packages 归 root ──
+    #
+    # 容器形态下 `pip install` 默认写 /usr/local/lib/python3.12/site-packages，
+    # 而进程是 uid 10001 → EACCES。光"失败要响"（#160）不够：更新会干净地失败，
+    # 但**永远升不上去**。要装到用户站点（/app/.local，见 Dockerfile 的
+    # PYTHONUSERBASE），它排在全站 site-packages 之前，所以能压住旧版本。
+
+    def _run_with_pip(self, mod, pkg, sig, *, writable: bool,
+                      results: list[tuple[int, str]]):
+        """驱动真实 update_manager，只接管 pip 的调用与"系统站点是否可写"的判定。
+
+        results: 按调用序号取第 n 次 pip 的 (code, out)，越界则重复最后一项。
+        """
+        pip_calls: list[list[str]] = []
+
+        def fake_run(cmd, *a, **kw):
+            if cmd[1:3] == ['-m', 'pip']:
+                pip_calls.append(cmd)
+                return results[min(len(pip_calls) - 1, len(results) - 1)]
+            return 0, ''
+
+        orig_update = mod.update_manager
+
+        def update_with_fake_pip(rep):
+            mod.run = fake_run
+            mod._system_site_writable = lambda: writable
+            return orig_update(rep)
+
+        mod.update_manager = update_with_fake_pip
+        ok, rep = self._run_update(mod, pkg, sig)
+        return ok, rep, pip_calls
+
+    def test_pip_uses_user_install_when_system_site_readonly(self) -> None:
+        """系统 site-packages 不可写时必须装到用户站点，否则容器更新永远装不上。"""
+        inst = self._make_install('pipuser')
+        pkg, sig = self._make_release('pipuser')
+        mod = self._load(inst)
+        ok, rep, calls = self._run_with_pip(
+            mod, pkg, sig, writable=False, results=[(0, '')])
+        self.assertTrue(ok, rep.text())
+        self.assertTrue(calls, '压根没调用 pip')
+        self.assertIn('--user', calls[0],
+                      '系统 site-packages 不可写却没加 --user —— 容器里会 EACCES')
+        self.assertIn('--break-system-packages', calls[0],
+                      '--user 不在 PEP 668 豁免名单里，必须同时带这个参数')
+
+    def test_pip_prefers_system_install_when_writable(self) -> None:
+        """可写时不该引入 --user：会悄悄改变既有部署的安装位置。"""
+        inst = self._make_install('pipsys')
+        pkg, sig = self._make_release('pipsys')
+        mod = self._load(inst)
+        ok, rep, calls = self._run_with_pip(
+            mod, pkg, sig, writable=True, results=[(0, '')])
+        self.assertTrue(ok, rep.text())
+        self.assertTrue(calls, '压根没调用 pip')
+        self.assertTrue(all('--user' not in c for c in calls),
+                        f'可写时不该用 --user：{calls}')
+
+    def test_pip_falls_back_to_user_on_permission_error(self) -> None:
+        """可写性判定可能误判（ACL / 只读挂载）：pip 报权限问题时补一次 --user。"""
+        inst = self._make_install('pipperm')
+        pkg, sig = self._make_release('pipperm')
+        mod = self._load(inst)
+        ok, rep, calls = self._run_with_pip(
+            mod, pkg, sig, writable=True,
+            results=[(1, 'ERROR: Could not install packages due to an OSError: '
+                        '[Errno 13] Permission denied: /usr/local/lib/python3.12/site-packages'),
+                     (1, 'ERROR: Permission denied'),
+                     (0, '')])
+        self.assertTrue(ok, rep.text())
+        self.assertTrue(any('--user' in c for c in calls),
+                        f'权限失败后没有回退到 --user：{calls}')
+
+    # ── 管理端没变时，上游仍要跟着包走 ──
+    #
+    # 上游源码只随发布包分发（原仓库已不可用），所以"管理端版本没变"不等于
+    # "上游没变"。早先 update_manager 在**下载之前**就 return，于是「全部更新」
+    # 在管理端已最新时什么都不做 —— 包里带着更新的上游源码也同步不进去。
+
+    def test_current_version_still_syncs_bundled_upstream(self) -> None:
+        """管理端已是最新时，「全部更新」仍要把包内上游同步进去。"""
+        inst = self._make_install('bothsame')
+        pkg, sig = self._make_release('bothsame', version='1.0.0', upstream=True)
+        up = self._make_upstream_dir('bothsame')
+        mod = self._load(inst, WB_UPSTREAM_DIR=up)
+        self._wire_release(mod, pkg, sig, '1.0.0')
+        rebuilt: list[bool] = []
+        mod.rebuild_upstream = lambda rep: rebuilt.append(True)  # type: ignore[assignment]
+
+        rep = _Rep()
+        mod.update_upstream(rep)   # main() 里上游在前
+        mod.update_manager(rep)
+
+        self.assertEqual((up / 'VERSION.txt').read_text(encoding='utf-8'), 'from-package\n',
+                         '包内上游源码没同步进去')
+        self.assertTrue(rebuilt, '上游源码变了却没触发重建')
+        # 管理端代码一个字节都没动（版本相同 → 短路）
+        self.assertIn('# OLD', (inst / 'server' / 'main.py').read_text(encoding='utf-8'))
+        self.assertEqual((inst / '.version').read_text(encoding='utf-8').strip(), 'v1.0.0')
+
+    def test_upstream_only_target_syncs_bundled_upstream(self) -> None:
+        """--target upstream 对随包分发的上游必须真的同步（早先是空操作）。"""
+        inst = self._make_install('uponly')
+        pkg, sig = self._make_release('uponly', upstream=True)
+        up = self._make_upstream_dir('uponly')
+        mod = self._load(inst, WB_UPSTREAM_DIR=up)
+        self._wire_release(mod, pkg, sig)
+        mod.rebuild_upstream = lambda rep: None  # type: ignore[assignment]
+
+        mod.update_upstream(_Rep())
+
+        self.assertEqual((up / 'VERSION.txt').read_text(encoding='utf-8'), 'from-package\n')
+
+    def test_release_downloaded_once_for_both_targets(self) -> None:
+        """both 时发布包只下一次 —— 两条路径共用同一次下载与解压。"""
+        inst = self._make_install('once')
+        pkg, sig = self._make_release('once', upstream=True)
+        up = self._make_upstream_dir('once')
+        mod = self._load(inst, WB_UPSTREAM_DIR=up)
+        self._wire_release(mod, pkg, sig)
+        mod.rebuild_upstream = lambda rep: None  # type: ignore[assignment]
+
+        urls: list[str] = []
+        real_download = mod.download
+
+        def counting_download(url, dest, rep):
+            urls.append(url)
+            return real_download(url, dest, rep)
+
+        mod.download = counting_download  # type: ignore[assignment]
+
+        rep = _Rep()
+        mod.update_upstream(rep)
+        mod.update_manager(rep)
+
+        self.assertEqual(len(urls), 1, f'发布包被下载了 {len(urls)} 次：{urls}')
+
+    def test_current_version_manager_only_does_not_download(self) -> None:
+        """--target manager 且已最新时连包都不该下（省流量，也省 GitHub 配额）。"""
+        inst = self._make_install('mgrsame')
+        pkg, sig = self._make_release('mgrsame', version='1.0.0')
+        mod = self._load(inst)
+        self._wire_release(mod, pkg, sig, '1.0.0')
+
+        def boom(*a, **kw):
+            raise AssertionError('已是最新版本，不该下载发布包')
+
+        mod.download = boom  # type: ignore[assignment]
+        rep = _Rep()
+        mod.update_manager(rep)   # 不应抛
+        self.assertIn('当前已是最新版本', rep.text())
 
     def test_unsigned_release_aborts(self) -> None:
         """攻击者控制发布渠道后，最省事的做法就是干脆不带签名。"""

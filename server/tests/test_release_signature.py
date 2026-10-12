@@ -289,13 +289,21 @@ class UpdateManagerWiringTest(unittest.TestCase):
         return m.group(0)
 
     def test_update_manager_calls_verify(self) -> None:
+        """更新主流程必须真的走到验签。
+
+        取包（下载 → 验签 → 解压）现在统一在 `_release_root()` 里：管理端与上游
+        两条路径都经它，所以验签接一处就覆盖两边。这里钉的是**主流程确实经过那个
+        入口**，而不是某一行文本恰好写在哪个函数里 —— 后者会随重构失效，前者不会。
+        """
         body = self._body_of('update_manager')
-        self.assertIn('verify_release_signature(', body,
-                      '更新主流程没有调用验签 —— 等于没有防护')
+        self.assertIn('_release_root(', body,
+                      '更新主流程没经过取包入口 —— 验签可能被绕开')
+        self.assertIn('verify_release_signature(', self._body_of('_release_root'),
+                      '取包入口没有调用验签 —— 等于没有防护')
 
     def test_verify_happens_before_extract(self) -> None:
         """先确认「这个包是你签的」，再谈包里的内容。"""
-        body = self._body_of('update_manager')
+        body = self._body_of('_release_root')
         i_verify = body.find('verify_release_signature(')
         i_extract = body.find('_safe_extract(')
         self.assertGreaterEqual(i_verify, 0)

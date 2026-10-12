@@ -162,11 +162,22 @@ class GithubTokenHeader(_HTTPServerBase, unittest.TestCase):
 
 class FallbackWiring(unittest.TestCase):
     def test_update_manager_wires_fallback(self):
-        """update_manager 必须先走 API、失败后回退到 302 路径。"""
-        src = inspect.getsource(worker.update_manager)
+        """取版本必须先走 API、失败后回退到 302 路径。
+
+        这条接线现在住在 `_fetch_release_info()` 里 —— 管理端与上游两条路径都
+        经它取包，所以回退只要修一处就两边都受益（上游同步也需要包）。
+        `update_manager` 自身则必须经 `_release_root()` 取包，不能绕开。
+        """
+        src = inspect.getsource(worker._fetch_release_info)
         self.assertIn('fetch_release_via_api()', src)
         self.assertIn('fetch_release_via_redirect()', src)
         self.assertIn('回退', src)
+
+        mgr = inspect.getsource(worker.update_manager)
+        self.assertIn('_fetch_release_info(', mgr,
+                      '管理端没经共用的取版本入口 —— 回退接线可能被绕开')
+        self.assertIn('_release_root(', mgr,
+                      '管理端没经共用的取包入口 —— 上游同步会另下一次包')
 
 
 if __name__ == '__main__':

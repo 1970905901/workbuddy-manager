@@ -10,6 +10,9 @@
 #    没有 systemd、也不能重启自己所在的容器。所以容器形态下的「更新」是：
 #    替换代码 → 结束容器 → 由 compose 的 restart 策略用新代码拉起。
 #    这需要 compose 里配 `restart: unless-stopped`（本仓库的 compose 已配好）。
+#    新版本的依赖也由它按需补装：镜像里的依赖是 root 装的、site-packages 归 root，
+#    而进程是 uid 10001 —— 所以更新时装到**用户站点**（/app/.local，见下面的
+#    PYTHONUSERBASE 与 useradd 那一步），而不是往 root 的目录里写。
 #
 # 3. **挂载 docker.sock 是可选的，默认提供**。挂上它，容器内的管理端就能像
 #    宿主机部署那样操作上游容器（重载配置 / 读日志 / 一键更新上游）。

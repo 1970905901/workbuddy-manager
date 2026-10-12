@@ -283,7 +283,8 @@ location /workbuddy-manager/ {
 
 ## 四·五、后续更新
 
-部署后有两种更新方式，**都不需要重新执行安装脚本**。
+部署后有两种更新方式，**都不需要重新执行安装脚本**。（下面两条都是按**宿主安装**
+写的；容器部署请看本节末尾的「容器（Docker Compose）部署的更新」。）
 
 ### 方式一：网页一键更新（推荐）
 
@@ -309,6 +310,62 @@ sudo /opt/workbuddy-manager/venv/bin/python deploy/update.py --target both
 ```
 
 `--target` 取值为 `manager` / `upstream` / `both`。
+
+### 容器（Docker Compose）部署的更新
+
+上面两种方式都是按宿主安装写的（方式二用的是宿主上的 venv）。容器部署用面板里的
+「一键更新」即可；想在容器里跑命令行也行：
+
+```bash
+docker compose exec workbuddy-manager python /app/deploy/update.py --target both
+```
+
+> 这条命令结束时**会按设计终止容器**（更新进程发信号给 PID 1，再由 compose 的
+> `restart: unless-stopped` 用新代码拉起），所以 `exec` 会跟着断开 —— 这是正常的。
+
+**更新的代码落在哪**（决定了什么操作会让它「退回旧版」）：
+
+| 内容 | 位置 | `docker restart` | 重建容器（`up -d --build`） |
+|---|---|---|---|
+| 管理端代码 | 容器可写层 `/app/server`、`/app/web/out` | 保留 | **退回镜像里的版本** |
+| 更新时新装的依赖 | `/app/.local`（`PYTHONUSERBASE`） | 保留 | **丢失** |
+| 数据库 / 日志 / 配置 | 宿主 `./data`（bind mount） | 保留 | 保留 |
+
+所以**更新之后不要对管理端执行 `docker compose up -d`** —— 那会用镜像里的旧代码
+重建容器。要重启用 `docker restart workbuddy-manager`；要升级镜像本身，走下面这步。
+
+#### 一次性：离线更新（也是「更新后打不开面板」的救法）
+
+**更新器本身也在被更新的代码里** —— 这一版跑的仍是上一版的更新逻辑。所以这两种
+情况必须用发布包重建镜像，面板里的按钮帮不上忙：
+
+- 更新后管理端起不来（例如新版本引入了新依赖，而容器里装不上）；
+- 你要升级的是**镜像本身**（Dockerfile / compose / 基础依赖有变化）。
+
+```bash
+# 在部署目录（有 docker-compose.yml 的地方）
+tar xzf workbuddy-manager-vX.Y.Z.tar.gz
+cd workbuddy-manager-vX.Y.Z
+docker compose up -d --build workbuddy-manager
+```
+
+发布包里带 `Dockerfile`、`docker-compose.yml`、`server/`、`web/out/` 与 `upstream/`，
+所以这一步既能救砖、也能把镜像升到最新。`./data` 与 `../workbuddy2api` 都是挂载卷，
+不会被覆盖。
+
+#### 容器内操作 docker（更新上游 / 重载配置）
+
+容器以 uid 10001 运行，而宿主的 `/var/run/docker.sock` 通常归 `root:docker`
+（GID 998/999）—— 不在那个组里就是 `permission denied`。compose 已用 `group_add`
+引用 `DOCKER_GID`，把本机的真实值填进 `.env` 即可：
+
+```bash
+echo "DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)" >> .env
+docker compose up -d workbuddy-manager
+```
+
+不配也不会静默失败：更新上游时会提示你去取真实 GID。完全不想要容器操作 docker
+的话，把 compose 里挂 `docker.sock` 那一行注释掉即可，相关功能会如实降级。
 
 ---
 

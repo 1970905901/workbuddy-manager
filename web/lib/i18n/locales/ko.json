@@ -1385,11 +1385,14 @@
     "proxyBindingsEmpty": "계정이 없습니다(계정 페이지에서 추가)",
     "proxyBindingsSelected": "{count}개 선택됨",
     "proxyAutoAssign": "자동 할당",
-    "proxyAutoAssignHint": "개 (현재 미연결 {count}개; 연결 없는 계정 우선)",
+    "proxyAutoAssignHint": "현재 미연결 {count}개; 연결 없는 계정 우선, 다음은 연결 수가 적은 순",
     "proxyAutoAssignRun": "할당",
     "proxyAutoAssignDone": "{count}개를 자동 할당했습니다",
     "proxyAutoAssignLeft": "미연결 {count}개 남음",
-    "proxyAutoAssignBadCount": "할당할 개수(양의 정수)를 입력하세요"
+    "proxyAutoAssignBadCount": "할당할 개수(양의 정수)를 입력하세요",
+    "proxyAutoAssignUnit": "개",
+    "proxyBindingsAccount": "계정",
+    "proxySession": "세션"
   },
   "phrases": {
     "请求失败": "요청 실패",

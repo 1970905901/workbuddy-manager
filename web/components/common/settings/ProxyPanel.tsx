@@ -19,6 +19,7 @@ import {useAuth} from '@/lib/auth-context';
 import {useI18n} from '@/lib/i18n/provider';
 import {notify} from '@/lib/toast';
 import type {ProxyProbe, ProxyRoute, ProxySettings, RouteAccount} from '@/lib/types';
+import {Checkbox} from '@/components/animate-ui/radix/checkbox';
 import {ConfirmDialog} from '@/components/common/layout/ConfirmDialog';
 import {EmptyState} from '@/components/common/layout/EmptyState';
 import {Badge} from '@/components/ui/badge';
@@ -669,59 +670,108 @@ export function ProxyPanel() {
                 : t('settings.proxyBindingsDescShared')}
             </DialogDescription>
           </DialogHeader>
-          <DialogBody className="max-h-[26rem] space-y-1.5 overflow-y-auto">
+
+          <DialogBody className="space-y-3">
             {/* 自动分配：批量场景（多条住宅代理 + 上百个号）手动勾太慢 */}
-            <div className="mb-1 flex flex-wrap items-center gap-2 rounded-xl bg-muted/60 px-3 py-2">
-              <span className="text-xs">{t('settings.proxyAutoAssign')}</span>
-              <Input className="h-7 w-16 bg-background text-right text-xs tabular-nums"
-                     value={autoCount}
-                     onChange={(e) => setAutoCount(e.target.value)} />
-              <span className="text-[10px] text-muted-foreground">
-                {t('settings.proxyAutoAssignHint',
-                   {count: String(bindRows.filter((r) => !r.routes.length).length)})}
-              </span>
-              <Button size="sm" className="ml-auto h-7 rounded-full text-xs"
-                      disabled={bindBusy} onClick={() => void autoAssign()}>
-                {t('settings.proxyAutoAssignRun')}
-              </Button>
-            </div>
-            {bindRows.length === 0 ? (
-              <div className="py-6 text-center text-xs text-muted-foreground">
-                {t('settings.proxyBindingsEmpty')}
-              </div>
-            ) : bindRows.map((row) => (
-              <div key={row.file}
-                   className="flex items-center gap-3 rounded-xl bg-muted/40 px-3 py-1.5">
-                <input type="checkbox" className="h-3.5 w-3.5" checked={bindPicked.has(row.file)}
-                       onChange={(e) => {
-                         const next = new Set(bindPicked);
-                         if (e.target.checked) next.add(row.file); else next.delete(row.file);
-                         setBindPicked(next);
-                       }} />
-                <span className="min-w-0 flex-1 truncate text-xs">
-                  {row.nickname || row.uid}
-                  <span className="ml-2 text-[10px] text-muted-foreground">
-                    {row.routes.length ? row.routes.join(' · ') : t('settings.proxyNoBindings')}
-                  </span>
+            <div className="rounded-2xl bg-muted/40 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium">{t('settings.proxyAutoAssign')}</span>
+                <Input className="h-8 w-20 rounded-full bg-background text-center text-xs tabular-nums"
+                       value={autoCount}
+                       onChange={(e) => setAutoCount(e.target.value)} />
+                <span className="text-xs text-muted-foreground">
+                  {t('settings.proxyAutoAssignUnit')}
                 </span>
-                {bindFor?.mode === 'exclusive' && (
-                  <span className="font-mono text-[10px] text-muted-foreground"
-                        title={t('settings.proxySessionHint')}>
-                    {row.session_preview || t('settings.proxySessionNone')}
-                  </span>
-                )}
-                <Button variant="ghost" size="sm" className="h-6 rounded-full px-2 text-[10px]"
-                        disabled={bindBusy || !row.bound}
-                        title={t('settings.proxyRotateHint')}
-                        onClick={() => void rotate([row.file])}>
-                  <RefreshCw className="mr-1 h-3 w-3" />
-                  {t('settings.proxyRotate')}
+                <Button variant="outline" size="sm" className="ml-auto h-8 rounded-full"
+                        disabled={bindBusy} onClick={() => void autoAssign()}>
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                  {t('settings.proxyAutoAssignRun')}
                 </Button>
               </div>
-            ))}
+              <p className="mt-1.5 text-[10px] leading-4 text-muted-foreground">
+                {t('settings.proxyAutoAssignHint',
+                   {count: String(bindRows.filter((r) => !r.routes.length).length)})}
+              </p>
+            </div>
+
+            {/* 账号列表 */}
+            {bindRows.length === 0 ? (
+              <div className="rounded-2xl bg-muted/40 py-8 text-center text-xs text-muted-foreground">
+                {t('settings.proxyBindingsEmpty')}
+              </div>
+            ) : (
+              <div className="max-h-[22rem] space-y-1 overflow-y-auto rounded-2xl bg-muted/40 p-1.5">
+                <div className="flex items-center gap-3 px-3 pb-1 pt-1.5 text-[10px] text-muted-foreground">
+                  <span className="w-5 shrink-0" />
+                  <span className="min-w-0 flex-1">{t('settings.proxyBindingsAccount')}</span>
+                  <span className="w-20 shrink-0 text-right">{t('settings.proxySession')}</span>
+                  <span className="w-16 shrink-0" />
+                </div>
+                {bindRows.map((row) => {
+                  const picked = bindPicked.has(row.file);
+                  return (
+                    <div key={row.file}
+                         role="button"
+                         tabIndex={0}
+                         onClick={() => {
+                           const next = new Set(bindPicked);
+                           if (picked) next.delete(row.file); else next.add(row.file);
+                           setBindPicked(next);
+                         }}
+                         onKeyDown={(e) => {
+                           if (e.key === 'Enter' || e.key === ' ') {
+                             e.preventDefault();
+                             const next = new Set(bindPicked);
+                             if (picked) next.delete(row.file); else next.add(row.file);
+                             setBindPicked(next);
+                           }
+                         }}
+                         className={`flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2 transition-colors ${
+                           picked ? 'bg-background' : 'hover:bg-background/60'}`}>
+                      <Checkbox checked={picked} aria-label={row.nickname || row.uid} />
+                      <span className="min-w-0 flex-1 truncate text-xs">
+                        {row.nickname || row.uid}
+                        <span className="ml-2 text-[10px] text-muted-foreground">
+                          {row.routes.length ? row.routes.join(' · ') : t('settings.proxyNoBindings')}
+                        </span>
+                      </span>
+                      <span className="w-20 shrink-0 text-right">
+                        {bindFor?.mode === 'exclusive' && (
+                          row.session_preview ? (
+                            <span className="rounded-full bg-muted px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
+                                  title={t('settings.proxySessionHint')}>
+                              {row.session_preview}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground/70"
+                                  title={t('settings.proxySessionHint')}>
+                              {t('settings.proxySessionNone')}
+                            </span>
+                          )
+                        )}
+                      </span>
+                      <span className="w-16 shrink-0 text-right">
+                        <Button variant="ghost" size="sm"
+                                className="h-7 rounded-full px-2 text-[11px]"
+                                disabled={bindBusy || !row.bound}
+                                title={t('settings.proxyRotateHint')}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void rotate([row.file]);
+                                }}>
+                          <RefreshCw className="mr-1 h-3 w-3" />
+                          {t('settings.proxyRotate')}
+                        </Button>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </DialogBody>
-          <DialogFooter>
-            <span className="mr-auto text-[11px] text-muted-foreground">
+
+          <DialogFooter className="items-center">
+            <span className="mr-auto rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground">
               {t('settings.proxyBindingsSelected', {count: String(bindPicked.size)})}
             </span>
             <Button variant="ghost" className="rounded-full" onClick={() => setBindFor(null)}>

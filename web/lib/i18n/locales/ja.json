@@ -1385,11 +1385,14 @@
     "proxyBindingsEmpty": "アカウントがありません（アカウントページで追加）",
     "proxyBindingsSelected": "{count} 件を選択中",
     "proxyAutoAssign": "自動割当",
-    "proxyAutoAssignHint": "件（現在 {count} 件が未割当。経路未設定を優先）",
+    "proxyAutoAssignHint": "現在 {count} 件が未割当。経路未設定を優先し、次に割当数の少ない順",
     "proxyAutoAssignRun": "割り当てる",
     "proxyAutoAssignDone": "{count} 件を割り当てました",
     "proxyAutoAssignLeft": "残り未割当 {count} 件",
-    "proxyAutoAssignBadCount": "割り当てる件数（正の整数）を入力してください"
+    "proxyAutoAssignBadCount": "割り当てる件数（正の整数）を入力してください",
+    "proxyAutoAssignUnit": "件",
+    "proxyBindingsAccount": "アカウント",
+    "proxySession": "セッション"
   },
   "phrases": {
     "请求失败": "リクエストに失敗しました",

@@ -262,6 +262,17 @@ const BASE = process.env.BASE, OUT = process.env.OUT;
   step(text.includes('px-shanghai'), '保存后线路仍在列表里');
   await p.screenshot({path: `${OUT}/proxy-list-bound.png`, fullPage: true});
 
+  // 抽屉里的勾选框（项目自制的动画 Checkbox）要真的能勾
+  await row.locator('button', {hasText: /绑定账号|未绑定/}).first().click();
+  await p.waitForTimeout(1200);
+  const drawer2 = p.locator('[role=dialog]').last();
+  const before = await drawer2.innerText();
+  await drawer2.locator('[role=checkbox]').first().click();
+  await p.waitForTimeout(500);
+  const after = await drawer2.innerText();
+  step(before !== after, '勾选框能切换（已勾选数量变化）', after.slice(0, 40));
+  await drawer2.locator('button', {hasText: '取消'}).first().click();
+
   // 全局出口代理
   const globalInput = p.locator('input[placeholder*="socks5"]').first();
   await globalInput.fill('socks5://ui:uipass@ui.example:1080');

@@ -776,6 +776,14 @@ def rebuild_upstream(rep: Reporter) -> None:
       · 常规的上游更新（上面那段 git 流程之后）；
       · 面板更新时同步了包内自带的上游源码之后（源码变了必须重建才生效）。
     """
+    # 先确认真的能操作 docker，再谈重建。失败时**跳过上游而不是抛错**：
+    # 上游的问题不该把管理端也拖死 —— `--target both` 里管理端是用户唯一能操作的面板，
+    # 而 socket 权限这种事用户在面板里改不了，抛错只会让整个更新白跑。
+    unusable = _docker_unusable_hint()
+    if unusable:
+        rep.log(f'跳过上游重建：{unusable}', 'error')
+        return
+
     missing = _missing_copy_sources()
     if missing:
         rep.log('构建预检未通过：Dockerfile 引用了不存在的文件', 'error')
@@ -1000,6 +1008,49 @@ def _missing_copy_sources() -> list[str]:
     return missing
 
 
+# 容器里拿不到 docker.sock 权限时该怎么做。抽成常量是因为两处都要用
+# （重建前的预检、构建失败后的诊断）—— 措辞必须一致，否则用户会以为是两个问题。
+_DOCKER_SOCKET_RECIPE = (
+    '容器访问不了宿主 docker（/var/run/docker.sock 权限不足）。\n'
+    "  1) 宿主取 GID：stat -c '%g' /var/run/docker.sock\n"
+    '  2) 写进 .env：DOCKER_GID=<上面那个 GID>（compose 已用 group_add 引用它）\n'
+    '  3) 重建管理端容器：docker compose up -d workbuddy-manager\n'
+    '  若你的 compose 里还没有 group_add，就在 workbuddy-manager 服务下加一行：\n'
+    '      group_add: ["${DOCKER_GID}"]\n'
+    '  （不需要在容器内更新上游的话，把 compose 里挂 docker.sock 那一行注释掉即可，'
+    '相关功能会如实降级。）'
+)
+
+
+def _docker_unusable_hint() -> str:
+    """docker 用不了时返回可照做的提示，能用则返回空串。
+
+    为什么要预检：socket 权限不足时 `docker compose up` 只会给一句
+    「permission denied while trying to connect to the Docker daemon socket」，
+    而容器里没有 root 可变 —— 用户拿着这句话无从下手。
+
+    判据是**实际能不能跑通 `docker info`**（与界面层的
+    `server/services/updater.py:can_control_docker` 同一口径），不是"在不在容器里"。
+    """
+    try:
+        proc = subprocess.run(['docker', 'info'], capture_output=True, timeout=8)
+    except Exception:  # noqa: BLE001
+        return _docker_unusable_text()
+    if proc.returncode != 0:
+        return _docker_unusable_text()
+    return ''
+
+
+def _docker_unusable_text() -> str:
+    """区分两种"用不了"：容器里是 socket 权限，宿主上是没装/连不上。"""
+    if in_container():
+        return _DOCKER_SOCKET_RECIPE
+    return ('本机 docker 不可用（没装 docker，或当前用户连不上 daemon）。\n'
+            '  自查：docker info\n'
+            '  宿主机部署请安装 docker 并确认当前用户在 docker 组；'
+            '容器部署请确认挂了 docker.sock 且配了 group_add。')
+
+
 def _diagnose_build_failure(out: str) -> str:
     """把 docker 构建失败的长日志归纳成一句人话。"""
     low = (out or '').lower()
@@ -1010,6 +1061,10 @@ def _diagnose_build_failure(out: str) -> str:
         return '磁盘空间不足，请清理后重试'
     if any(k in low for k in ('dial tcp', 'i/o timeout', 'temporary failure', 'connection refused')):
         return '网络问题（拉取基础镜像或依赖失败），稍后重试'
+    # socket 连不上要单独判：它的修法是给容器补组，而不是"换 root 执行"
+    # （容器里根本没有 root 可变，那句提示会把人带偏）。
+    if 'docker.sock' in low or 'docker daemon' in low:
+        return _DOCKER_SOCKET_RECIPE
     if 'permission denied' in low:
         return '权限不足，请确认以 root 或具备 docker 权限的用户执行'
     return ''

@@ -702,6 +702,73 @@ class DockerAssetsTest(unittest.TestCase):
                          'chown 未覆盖 /app —— /app/.local 归属不对，装不进去')
 
 
+class DockerSocketPreflightTest(unittest.TestCase):
+    """容器里用不了 docker.sock 时，必须给出**可照做**的修法。
+
+    挂上 /var/run/docker.sock 只是必要条件：socket 在宿主上通常归 root:docker
+    （gid 998/999），而容器里的进程是 uid 10001 —— 不在那个组里就是 EACCES。
+    默认 compose 里一个 group_add 都没有，所以这条路径在真机上必失败，
+    而原来只会得到一句「权限不足，请确认以 root 或具备 docker 权限的用户执行」，
+    容器里没有 root 可变，用户无从下手。
+    """
+
+    def test_compose_group_add_uses_env_gid(self) -> None:
+        """compose 要能用宿主**真实的** docker 组 GID 给容器补组。"""
+        import yaml
+        dc = yaml.safe_load((_ROOT / 'docker-compose.yml').read_text(encoding='utf-8'))
+        svc = dc['services']['workbuddy-manager']
+        groups = [str(g) for g in (svc.get('group_add') or [])]
+        self.assertTrue(groups,
+                        '没配 group_add —— 容器内 uid 10001 用不了挂进来的 docker.sock')
+        self.assertTrue(any('DOCKER_GID' in g for g in groups),
+                        f'group_add 没用 DOCKER_GID 变量：{groups}（宿主 GID 因机器而异，写死必错）')
+        env = (_ROOT / '.env.example').read_text(encoding='utf-8')
+        self.assertIn('DOCKER_GID', env, '.env.example 没说明 DOCKER_GID 怎么取')
+        self.assertIn('stat -c', env,
+                      '要给出取 GID 的命令：stat -c %g /var/run/docker.sock')
+
+    def test_diagnose_permission_denied_gives_socket_recipe(self) -> None:
+        """socket 连不上的权限错误要指向 group_add，而不是"请用 root 执行"。"""
+        mod = _load_update_mod()
+        hint = mod._diagnose_build_failure(
+            'permission denied while trying to connect to the Docker daemon socket '
+            'at unix:///var/run/docker.sock')
+        self.assertIn('group_add', hint, f'socket 权限错误没指向 group_add：{hint!r}')
+        self.assertIn('DOCKER_GID', hint)
+        # 与 socket 无关的权限问题仍给原来的提示（两件事不能混为一谈）
+        other = mod._diagnose_build_failure('mkdir /opt/workbuddy2api: permission denied')
+        self.assertIn('权限', other)
+        self.assertNotIn('group_add', other)
+
+    def test_docker_unusable_hint_is_actionable(self) -> None:
+        """docker 连不上时给出的提示必须可照做（容器形态：指向 group_add）。"""
+        mod = _load_update_mod(WB_RUN_MODE='docker')
+        with mock.patch.object(mod.subprocess, 'run',
+                               side_effect=FileNotFoundError('docker')):
+            hint = mod._docker_unusable_hint()
+        self.assertIn('DOCKER_GID', hint)
+        self.assertIn('group_add', hint)
+
+    def test_docker_usable_hint_is_empty(self) -> None:
+        """能用 docker 时不该有任何提示（否则每次更新都刷一段无关的告警）。"""
+        mod = _load_update_mod()
+        with mock.patch.object(mod.subprocess, 'run',
+                               return_value=mock.Mock(returncode=0)):
+            self.assertEqual(mod._docker_unusable_hint(), '')
+
+    def test_rebuild_upstream_skips_when_docker_unusable(self) -> None:
+        """docker 用不了时跳过上游、**不抛错**。
+
+        抛错会让 `--target both` 整体失败 —— 上游的问题不该把管理端也拖死，
+        而管理端才是用户唯一能操作的面板。
+        """
+        mod = _load_update_mod()
+        rep = _Rep()
+        with mock.patch.object(mod, '_docker_unusable_hint', return_value='提示正文'):
+            mod.rebuild_upstream(rep)  # 不应抛
+        self.assertIn('提示正文', rep.text())
+
+
 if __name__ == '__main__':
     unittest.main()
 

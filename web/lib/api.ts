@@ -597,6 +597,11 @@ export const proxyApi = {
     post<{updated: number; skipped: string[]}>(
       `/api/proxy-routes/${encodeURIComponent(name)}/accounts` + groupQs(upstreamId),
       {files, add}),
+  /** 自动分配 N 台账号到这条线路（未绑定的优先，挑完仍可手动增删） */
+  autoAssign: (name: string, count: number, upstreamId?: number | null) =>
+    post<{updated: number; requested: number; candidates: number; unbound_left: number}>(
+      `/api/proxy-routes/${encodeURIComponent(name)}/auto-assign` + groupQs(upstreamId),
+      {count}),
   /** 换会话（= 换出口 IP）：住宅代理的会话名决定出口 */
   rotate: (files: string[], upstreamId?: number | null) =>
     post<{updated: number}>(`/api/proxy-routes/rotate` + groupQs(upstreamId), {files}),

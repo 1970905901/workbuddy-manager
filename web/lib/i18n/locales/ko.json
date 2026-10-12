@@ -1383,7 +1383,13 @@
     "proxyBindingsDescExclusive": "개별 경로입니다: 체크한 계정은 각자 자신의 세션 이름(＝자신의 주거용 IP)을 씁니다.",
     "proxyBindingsDescShared": "공유 경로입니다: 체크한 계정이 같은 출구 IP를 공유합니다. 계정이 많으면 {account} 사용을 권합니다.",
     "proxyBindingsEmpty": "계정이 없습니다(계정 페이지에서 추가)",
-    "proxyBindingsSelected": "{count}개 선택됨"
+    "proxyBindingsSelected": "{count}개 선택됨",
+    "proxyAutoAssign": "자동 할당",
+    "proxyAutoAssignHint": "개 (현재 미연결 {count}개; 연결 없는 계정 우선)",
+    "proxyAutoAssignRun": "할당",
+    "proxyAutoAssignDone": "{count}개를 자동 할당했습니다",
+    "proxyAutoAssignLeft": "미연결 {count}개 남음",
+    "proxyAutoAssignBadCount": "할당할 개수(양의 정수)를 입력하세요"
   },
   "phrases": {
     "请求失败": "요청 실패",

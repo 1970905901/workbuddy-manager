@@ -174,6 +174,7 @@ class PostParamLocationAuditTest(unittest.TestCase):
         # 代理线路（设置 → 代理）：改名/删除要按分组重绑账号，前端按 query 传。
         '/api/proxy-routes/{name}': {'upstream_id'},
         '/api/proxy-routes/{name}/accounts': {'upstream_id'},
+        '/api/proxy-routes/{name}/auto-assign': {'upstream_id'},
         '/api/proxy-routes/rotate': {'upstream_id'},
         '/api/accounts/{filename}/disabled': {'upstream_id'},
         '/api/accounts/{filename}/move': {'upstream_id'},

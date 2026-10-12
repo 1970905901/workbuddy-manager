@@ -1383,7 +1383,13 @@
     "proxyBindingsDescExclusive": "這是一條獨享線路：勾選的帳號各自用自己的會話名（各自一個住宅 IP）。",
     "proxyBindingsDescShared": "這是一條共享線路：勾選的帳號共用同一條出口 IP。帳號多時建議改用 {account} 會話範本。",
     "proxyBindingsEmpty": "還沒有帳號（先去「帳號」頁新增）",
-    "proxyBindingsSelected": "已勾選 {count} 個帳號"
+    "proxyBindingsSelected": "已勾選 {count} 個帳號",
+    "proxyAutoAssign": "自動分配",
+    "proxyAutoAssignHint": "台帳號（目前未綁定 {count} 台；先挑沒綁線路的）",
+    "proxyAutoAssignRun": "開始分配",
+    "proxyAutoAssignDone": "已自動分配 {count} 台",
+    "proxyAutoAssignLeft": "還有 {count} 台未綁定",
+    "proxyAutoAssignBadCount": "請填寫要分配的數量（正整數）"
   },
   "phrases": {
     "请求失败": "請求失敗",

@@ -174,6 +174,79 @@ class PoolTest(_Base):
         self.assertIn('ghost', str(ctx.exception))
 
 
+class AutoAssignTest(_Base):
+    """「自动分配 N 台」：挑人顺序不能漂移，否则每次挑到的一批不一样（= 换出口）。"""
+
+    def _many(self, n: int, *, bound: str = '') -> None:
+        for i in range(n):
+            name = f'workbuddy-m{i:02d}.json'
+            self._account(name, f'uid-m{i:02d}', f'账号{i:02d}', **({'proxy': bound} if bound else {}))
+
+    def test_prefers_unbound_then_least_bound_and_is_stable(self) -> None:
+        self._many(6)                                  # 6 台未绑定（账号00..05）
+        # 两台已经绑了别的线路：其中一台还绑了两条 —— 它们应当排在未绑定之后
+        self._account('workbuddy-m06.json', 'uid-m06', '账号06', proxy='px-jp')
+        self._account('workbuddy-m07.json', 'uid-m07', '账号07', proxy='px-jp')
+        self._account('workbuddy-m08.json', 'uid-m08', '账号08')
+        pr.set_bindings('px-sh', ['workbuddy-m08.json'], auth_dir=self.auth_dir)
+        pr.set_bindings('px-jp', ['workbuddy-m08.json'], auth_dir=self.auth_dir)
+
+        first = pr.auto_assign('px-sh', 3, auth_dir=self.auth_dir)
+        self.assertEqual(first['requested'], 3)
+        picked = {row['file'] for row in pr.account_rows(self.auth_dir)
+                  if 'px-sh' in row['routes']}
+        # 三台候选应当是「未绑定里按昵称排前」的三个，而不是已绑过线路的那几台
+        self.assertIn('workbuddy-a.json', picked)
+        self.assertIn('workbuddy-b.json', picked)
+        self.assertIn('workbuddy-m00.json', picked)
+        self.assertNotIn('workbuddy-m06.json', picked, '优先挑了已绑定的账号')
+        self.assertEqual(first['unbound_left'], 5, '未绑定剩余的台数不对')
+
+        # 再分一批：应当接着同一顺序往下挑（挑到不同批次 = 给它们换了出口 IP）
+        second = pr.auto_assign('px-sh', 2, auth_dir=self.auth_dir)
+        self.assertEqual(second['updated'], 2)
+        picked2 = ({row['file'] for row in pr.account_rows(self.auth_dir)
+                    if 'px-sh' in row['routes']} - picked)
+        self.assertEqual(picked2, {'workbuddy-m01.json', 'workbuddy-m02.json'},
+                         '第二批没按同一顺序挑（顺序漂移就是给别的账号换了出口）')
+
+    def test_count_is_capped_by_available_accounts(self) -> None:
+        self._many(2)                                  # 只有 2 台可挑
+        result = pr.auto_assign('px-sh', 10, auth_dir=self.auth_dir)
+        self.assertEqual(result['requested'], 10)
+        self.assertEqual(result['updated'], 4, '应把能挑的都挑上（含 fixture 的两台）')
+        self.assertEqual(result['unbound_left'], 0)
+
+    def test_exclusive_route_generates_sessions_for_auto_picked(self) -> None:
+        self._many(2)
+        pr.auto_assign('px-sh', 2, auth_dir=self.auth_dir)
+        sessions = [row['session'] for row in pr.account_rows(self.auth_dir)
+                    if 'px-sh' in row['routes']]
+        self.assertTrue(all(sessions), f'自动分配没生成会话名：{sessions}')
+        self.assertEqual(len(set(sessions)), len(sessions), '会话名重复（IP 会撞）')
+
+    def test_invalid_count_and_missing_route(self) -> None:
+        for bad in (0, -1, 100000):
+            with self.subTest(count=bad):
+                with self.assertRaises(pr.RouteError):
+                    pr.auto_assign('px-sh', bad, auth_dir=self.auth_dir)
+        with self.assertRaises(pr.RouteError):
+            pr.auto_assign('ghost', 1, auth_dir=self.auth_dir)
+
+    def test_endpoint_audits_and_reports(self) -> None:
+        self._many(3)
+        response = self.client.post('/api/proxy-routes/px-sh/auto-assign', json={'count': 3})
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body['updated'], 3)
+        self.assertEqual(body['requested'], 3)
+        rows = db.query("SELECT action, target FROM audit_logs ORDER BY id DESC LIMIT 1")
+        self.assertEqual(rows[0]['action'], 'auto_assign_proxy_route')
+        self.assertEqual(rows[0]['target'], 'px-sh')
+        bad = self.client.post('/api/proxy-routes/px-sh/auto-assign', json={'count': 0})
+        self.assertEqual(bad.status_code, 400)
+
+
 class BindingApiTest(_Base):
     def test_batch_bind_and_unbind_only_touches_this_route(self) -> None:
         pr.set_bindings('px-jp', ['workbuddy-a.json'], auth_dir=self.auth_dir)

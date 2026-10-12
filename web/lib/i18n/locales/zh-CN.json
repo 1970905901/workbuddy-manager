@@ -1383,7 +1383,13 @@
     "proxyBindingsDescExclusive": "这是一条独享线路：勾选的账号各自用自己的会话名（各自一个住宅 IP）。",
     "proxyBindingsDescShared": "这是一条共享线路：勾选的账号共用同一条出口 IP。账号多时建议改用 {account} 会话模板。",
     "proxyBindingsEmpty": "还没有账号（先去「账号」页添加）",
-    "proxyBindingsSelected": "已勾选 {count} 个账号"
+    "proxyBindingsSelected": "已勾选 {count} 个账号",
+    "proxyAutoAssign": "自动分配",
+    "proxyAutoAssignHint": "台账号（当前未绑定 {count} 台；先挑没绑线路的）",
+    "proxyAutoAssignRun": "开始分配",
+    "proxyAutoAssignDone": "已自动分配 {count} 台",
+    "proxyAutoAssignLeft": "还有 {count} 台未绑定",
+    "proxyAutoAssignBadCount": "请填写要分配的数量（正整数）"
   },
   "redPacket": {
     "title": "红包",

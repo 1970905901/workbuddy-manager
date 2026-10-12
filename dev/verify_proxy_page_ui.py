@@ -247,7 +247,15 @@ const BASE = process.env.BASE, OUT = process.env.OUT;
   step(drawerText.includes('演示号'), '抽屉里列出了账号');
   step(drawerText.includes('换会话'), '抽屉提供「换会话」（换 IP）动作');
   await drawer.screenshot({path: `${OUT}/proxy-bindings.png`});
-  await drawer.locator('input[type=checkbox]').first().check();
+  // 自动分配：填 1 台，按下去应当真的挑一台绑上（挑人规则由服务端用例钉住）
+  const autoInput = drawer.locator('input.tabular-nums').first();
+  await autoInput.fill('1');
+  await drawer.locator('button', {hasText: '开始分配'}).first().click();
+  await p.waitForTimeout(2000);
+  const afterAuto = await drawer.innerText();
+  step(/已自动分配 1 台/.test(afterAuto) || /已勾选 1 个账号/.test(afterAuto),
+       '自动分配按钮可用（挑到 1 台）', afterAuto.slice(0, 80));
+  await drawer.screenshot({path: `${OUT}/proxy-auto-assign.png`});
   await drawer.locator('button', {hasText: '保存'}).first().click();
   await p.waitForTimeout(1800);
   text = await body();

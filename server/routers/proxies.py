@@ -206,6 +206,30 @@ def bind_route_accounts(name: str, request: Request, body: dict = Body(...),
     return result
 
 
+@router.post('/proxy-routes/{name}/auto-assign')
+def auto_assign_route_accounts(name: str, request: Request, body: dict = Body(...),
+                               upstream_id: int | None = Query(None),
+                               user: dict = Depends(security.require_session_admin)) -> dict:
+    """自动分配 N 台账号到这条线路（挑人规则见服务层 docstring）。
+
+    和「绑定抽屉手动勾选」是同一件事的两条路：批量场景（导入了 5 条住宅代理、手上
+    100 个号）手动勾太慢，这里按数量一次分完；挑完仍可在抽屉里增删。
+    """
+    try:
+        count = int(body.get('count') or 0)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail='数量必须是整数') from exc
+    try:
+        result = routesvc.auto_assign(name, count, auth_dir=_auth_dir(upstream_id),
+                                     include_bound=bool(body.get('include_bound')))
+    except routesvc.RouteError as exc:
+        raise _wrap(exc) from exc
+    security.audit(user, 'auto_assign_proxy_route', name,
+                   f'自动分配 {result["updated"]}/{result["requested"]} 台；'
+                   f'来源 {client_ip(request)}')
+    return result
+
+
 @router.post('/proxy-routes/rotate')
 def rotate_route_sessions(request: Request, body: dict = Body(...),
                           upstream_id: int | None = Query(None),

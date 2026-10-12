@@ -1407,7 +1407,13 @@
     "proxyBindingsDescExclusive": "Per-account route: each checked account uses its own session name (its own residential IP).",
     "proxyBindingsDescShared": "Shared route: the checked accounts share one exit IP. With many accounts, switch to the {account} session template.",
     "proxyBindingsEmpty": "No accounts yet (add one on the Accounts page)",
-    "proxyBindingsSelected": "{count} account(s) selected"
+    "proxyBindingsSelected": "{count} account(s) selected",
+    "proxyAutoAssign": "Auto-assign",
+    "proxyAutoAssignHint": "account(s) ({count} unbound now; those without any route go first)",
+    "proxyAutoAssignRun": "Assign",
+    "proxyAutoAssignDone": "Auto-assigned {count} account(s)",
+    "proxyAutoAssignLeft": "{count} still unbound",
+    "proxyAutoAssignBadCount": "Enter how many accounts to assign (positive integer)"
   },
   "phrases": {
     "请求失败": "Request failed",

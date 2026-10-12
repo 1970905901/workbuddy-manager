@@ -458,6 +458,43 @@ def set_bindings(name: object, files: list[str], *, auth_dir: Path | None = None
     return {'updated': changed, 'skipped': skipped, 'name': clean_name}
 
 
+def auto_assign(name: object, count: int, *, auth_dir: Path | None = None,
+                include_bound: bool = False) -> dict:
+    """把 N 台账号自动绑到这条线路（挑人的规则写死在下面，别让它漂移）。
+
+    挑人顺序：
+      1. **还没绑任何线路的账号优先**（空着的账号最该用上）；
+      2. 其次按「已绑线路数」从少到多（尽量摊平，别把一台堆到三条线路上）；
+      3. 同档内按「昵称 → uid」稳定排序 —— 顺序稳定才不会每次挑到不同的一批
+         （挑到不同批次就意味着给那几台换出口，是风控特征）。
+
+    已经绑着这条线路的账号不算候选（`count` 是「再挂几台」而不是「一共几台」）。
+    想要「一共 N 台」的话，先解绑再自动分配即可 —— 这类显式两步比一个含糊的
+    `mode=capped` 参数好懂。
+    """
+    clean_name = validate_name(name)
+    table = routes()
+    if clean_name not in table:
+        raise RouteError(f'线路 {clean_name!r} 不存在', 404)
+    if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+        raise RouteError('要分配的数量必须是正整数')
+    if count > 1000:
+        raise RouteError('一次最多分配 1000 台（再多请分批，避免误操作）')
+
+    rows = [row for row in account_rows(auth_dir) if clean_name not in row['routes']]
+    if not include_bound:
+        unbound = [row for row in rows if not row['routes']]
+        others = [row for row in rows if row['routes']]
+        rows = unbound + others
+    rows.sort(key=lambda row: (len(row['routes']), row['nickname'] or row['uid'], row['uid']))
+    picked = [row['file'] for row in rows[:count]]
+    result = set_bindings(clean_name, picked, auth_dir=auth_dir, add=True) if picked else {
+        'updated': 0, 'skipped': [], 'name': clean_name}
+    remaining = len([row for row in account_rows(auth_dir) if not row['routes']])
+    return {**result, 'requested': count, 'candidates': len(rows),
+            'unbound_left': remaining}
+
+
 def rotate_sessions(files: list[str], *, auth_dir: Path | None = None) -> dict:
     """换会话（= 换出口 IP）：给这批账号生成新的会话名。
 

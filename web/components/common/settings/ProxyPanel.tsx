@@ -76,6 +76,7 @@ export function ProxyPanel() {
   const [bindRows, setBindRows] = useState<RouteAccount[]>([]);
   const [bindPicked, setBindPicked] = useState<Set<string>>(new Set());
   const [bindBusy, setBindBusy] = useState(false);
+  const [autoCount, setAutoCount] = useState('10');
 
   const load = useCallback(async () => {
     try {
@@ -255,6 +256,27 @@ export function ProxyPanel() {
       if (drop.length) await proxyApi.bind(bindFor.name, drop, false);
       notify.ok(t('settings.proxySaved'));
       setBindFor(null);
+      await load();
+    } catch (e) {
+      notify.err(errText(e));
+    } finally {
+      setBindBusy(false);
+    }
+  }
+
+  async function autoAssign() {
+    if (!bindFor) return;
+    const count = Number(autoCount || 0);
+    if (!Number.isInteger(count) || count <= 0) {
+      notify.warn(t('settings.proxyAutoAssignBadCount'));
+      return;
+    }
+    setBindBusy(true);
+    try {
+      const result = await proxyApi.autoAssign(bindFor.name, count);
+      notify.ok(t('settings.proxyAutoAssignDone', {count: String(result.updated)}),
+                t('settings.proxyAutoAssignLeft', {count: String(result.unbound_left)}));
+      await refreshBindings(bindFor.name);
       await load();
     } catch (e) {
       notify.err(errText(e));
@@ -648,6 +670,21 @@ export function ProxyPanel() {
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="max-h-[26rem] space-y-1.5 overflow-y-auto">
+            {/* 自动分配：批量场景（多条住宅代理 + 上百个号）手动勾太慢 */}
+            <div className="mb-1 flex flex-wrap items-center gap-2 rounded-xl bg-muted/60 px-3 py-2">
+              <span className="text-xs">{t('settings.proxyAutoAssign')}</span>
+              <Input className="h-7 w-16 bg-background text-right text-xs tabular-nums"
+                     value={autoCount}
+                     onChange={(e) => setAutoCount(e.target.value)} />
+              <span className="text-[10px] text-muted-foreground">
+                {t('settings.proxyAutoAssignHint',
+                   {count: String(bindRows.filter((r) => !r.routes.length).length)})}
+              </span>
+              <Button size="sm" className="ml-auto h-7 rounded-full text-xs"
+                      disabled={bindBusy} onClick={() => void autoAssign()}>
+                {t('settings.proxyAutoAssignRun')}
+              </Button>
+            </div>
             {bindRows.length === 0 ? (
               <div className="py-6 text-center text-xs text-muted-foreground">
                 {t('settings.proxyBindingsEmpty')}

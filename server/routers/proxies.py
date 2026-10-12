@@ -45,8 +45,13 @@ def _masked(value: str) -> str:
 
 @router.get('/proxy-routes')
 def list_proxy_routes(upstream_id: int | None = Query(None),
-                      user: dict = Depends(security.current_user)) -> dict:
-    """线路列表（凭据已脱敏）+ 每条线路的绑定账号数。"""
+                      user: dict = Depends(security.require_session_admin)) -> dict:
+    """线路列表（凭据已脱敏）+ 每条线路的绑定账号数。
+
+    仅会话管理员可读：地址虽然脱了敏，**用户名本身**往往是住宅代理的账号标识
+    （例如 `api07…_c_CN_city_Shanghai_s_…`），只读令牌 / 只读账号不该看到它。
+    账号页选线路走的仍是老的 `/api/proxies`（只有名字），不受这里影响。
+    """
     auth_dir = _auth_dir(upstream_id)
     counts = routesvc.bound_counts(auth_dir)
     routes = routesvc.list_routes()
@@ -144,7 +149,7 @@ async def probe_proxy_route(body: dict = Body(...),
 # ── 全局出口代理 ─────────────────────────────────────────────
 # 存面板设置（key: http_proxy / update_proxy），空串 = 清除（回落到环境变量）。
 @router.get('/settings/proxy')
-def get_proxy_settings(user: dict = Depends(security.current_user)) -> dict:
+def get_proxy_settings(user: dict = Depends(security.require_session_admin)) -> dict:
     """当前出口代理配置（脱敏）+ 生效来源。"""
     stored_http = config.stored_http_proxy()
     stored_update = str(db.get_setting('update_proxy', '') or '')

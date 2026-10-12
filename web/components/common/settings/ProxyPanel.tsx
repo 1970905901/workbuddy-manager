@@ -72,8 +72,11 @@ export function ProxyPanel() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    // 非管理员不拉列表：这两个接口都是 require_session_admin（脱敏串里的用户名
+    // 是住宅代理的账号标识），拉了只会吃 403 并弹一条没有可行动信息的报错
+    // —— 与「访问令牌」「数据备份」几个面板的处置一致。
+    if (isAdmin) void load();
+  }, [load, isAdmin]);
 
   async function submitRoute() {
     const name = form.name.trim();
@@ -188,6 +191,17 @@ export function ProxyPanel() {
     } finally {
       setTesting(null);
     }
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="rounded-[20px] bg-muted p-8 text-center text-sm">
+        <div className="font-medium">{t('settings.proxyAdminRequired')}</div>
+        <div className="mx-auto mt-2 max-w-[38rem] text-xs text-muted-foreground">
+          {t('settings.proxyAdminRequiredDesc')}
+        </div>
+      </div>
+    );
   }
 
   const sourceKey = settings?.source === 'panel' ? 'settings.proxyGlobalSourcePanel'

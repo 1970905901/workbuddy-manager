@@ -1352,7 +1352,9 @@
     "proxyUpdateTitle": "更新下載代理",
     "proxyUpdateDesc": "一鍵更新下載發布包時用的代理。只認 http:// 與 https://（留空 = 與上面一致）。",
     "proxyUpdateEnv": "環境變數 WB_UPDATE_PROXY：{value}",
-    "proxyScopeNote": "說明：住宅代理這類服務通常把國家 / 城市 / 工作階段名寫進使用者名稱裡（例如 使用者_c_CN_city_Shanghai_s_<工作階段名>），同一工作階段名會黏在同一個出口 IP 上 —— 每個實例或每個帳號用不同工作階段名，才能各佔一個住宅 IP。"
+    "proxyScopeNote": "說明：住宅代理這類服務通常把國家 / 城市 / 工作階段名寫進使用者名稱裡（例如 使用者_c_CN_city_Shanghai_s_<工作階段名>），同一工作階段名會黏在同一個出口 IP 上 —— 每個實例或每個帳號用不同工作階段名，才能各佔一個住宅 IP。",
+    "proxyAdminRequired": "代理設定僅管理員可見",
+    "proxyAdminRequiredDesc": "這一頁管理的是流量出口與代理憑證，只對管理員開放。需要調整請讓管理員操作。"
   },
   "phrases": {
     "请求失败": "請求失敗",

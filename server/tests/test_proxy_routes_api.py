@@ -95,6 +95,22 @@ class ProxyRoutesApiTest(_Base):
                          '列表里出现了代理密码')
         self.assertEqual(route['bound'], 1, '绑定账号数不对')
 
+    def test_reads_are_session_admin_only(self) -> None:
+        """列表与全局设置是**仅会话管理员**可读。
+
+        脱敏串里留着用户名 —— 而住宅代理的用户名往往就是账号标识
+        （`api07…_c_CN_city_Shanghai_s_…`），只读令牌 / 只读账号不该看到它。
+        这里按源码钉住这两个依赖，免得日后被顺手放宽（接口在鉴权上属于
+        「凭据载体」那一类，与账号导出同级）。
+        """
+        source = (Path(__file__).resolve().parents[1] / 'routers' / 'proxies.py'
+                  ).read_text(encoding='utf-8')
+        for head in ("@router.get('/proxy-routes')", "@router.get('/settings/proxy')"):
+            with self.subTest(endpoint=head):
+                block = source.split(head, 1)[1].split(') -> dict:', 1)[0]
+                self.assertIn('require_session_admin', block,
+                              f'{head} 不再要求会话管理员')
+
     def test_create_validates_scheme_and_name(self) -> None:
         bad_scheme = self.client.post('/api/proxy-routes',
                                       json={'name': 'px-b', 'url': 'socks4://h:1080'})
@@ -113,6 +129,14 @@ class ProxyRoutesApiTest(_Base):
         cfg = json.loads(self.cfg.read_text(encoding='utf-8'))
         self.assertEqual(cfg['api_key'], 'wbk_keep-me', '写线路把 api_key 弄丢了')
         self.assertEqual(cfg['schedule'], {'checkin': '08:00'}, '写线路弄丢了其它配置')
+
+    def test_masked_url_on_create_is_rejected(self) -> None:
+        """新建时地址里还留着 `***`：明确拒绝，而不是存一条没密码的记录。"""
+        response = self.client.post('/api/proxy-routes',
+                                    json={'name': 'px-new', 'url': 'socks5://u:***@h:1080'})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('***', response.json()['detail'])
+        self.assertNotIn('px-new', self._routes())
 
     def test_duplicate_is_rejected(self) -> None:
         again = self.client.post('/api/proxy-routes',

@@ -193,7 +193,13 @@ def list_routes() -> list[dict]:
 
 def upsert(name: object, url: object, *, allow_overwrite: bool = True) -> dict:
     clean_name = validate_name(name)
-    clean_url = normalize_url(keep_secret(str(url or ''), routes().get(clean_name, '')))
+    raw_url = str(url or '')
+    stored = routes().get(clean_name, '')
+    if MASK in raw_url and not stored:
+        # 没存过密码时 `***` 无从还原：与其存成一条「没密码」的记录（调用时才失败、
+        # 报错还看不出原因），不如当场说清楚。
+        raise RouteError('地址里还有 ***，请粘贴完整地址')
+    clean_url = normalize_url(keep_secret(raw_url, stored))
     cfg = _load()
     table = cfg.get('proxies') if isinstance(cfg.get('proxies'), dict) else {}
     if clean_name in table and not allow_overwrite:

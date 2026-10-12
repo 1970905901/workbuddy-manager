@@ -1352,7 +1352,9 @@
     "proxyUpdateTitle": "更新下载代理",
     "proxyUpdateDesc": "一键更新下载发布包时用的代理。只认 http:// 与 https://（留空 = 与上面一致）。",
     "proxyUpdateEnv": "环境变量 WB_UPDATE_PROXY：{value}",
-    "proxyScopeNote": "说明：住宅代理这类服务通常把国家 / 城市 / 会话名写进用户名里（例如 用户_c_CN_city_Shanghai_s_<会话名>），同一会话名会粘在同一个出口 IP 上 —— 每个实例或每个账号用不同会话名，才能各占一个住宅 IP。"
+    "proxyScopeNote": "说明：住宅代理这类服务通常把国家 / 城市 / 会话名写进用户名里（例如 用户_c_CN_city_Shanghai_s_<会话名>），同一会话名会粘在同一个出口 IP 上 —— 每个实例或每个账号用不同会话名，才能各占一个住宅 IP。",
+    "proxyAdminRequired": "代理配置仅管理员可见",
+    "proxyAdminRequiredDesc": "这一页管理的是流量出口与代理凭据，只对管理员开放。需要调整请让管理员操作。"
   },
   "redPacket": {
     "title": "红包",

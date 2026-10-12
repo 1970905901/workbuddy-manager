@@ -1376,7 +1376,9 @@
     "proxyUpdateTitle": "Update download proxy",
     "proxyUpdateDesc": "Used when one-click update downloads the release package. http:// and https:// only (empty = same as above).",
     "proxyUpdateEnv": "WB_UPDATE_PROXY environment variable: {value}",
-    "proxyScopeNote": "Note: residential proxy services usually put the country / city / session name in the username (e.g. user_c_CN_city_Shanghai_s_<session>). The same session name sticks to the same exit IP, so give each instance or account its own session name to get one residential IP each."
+    "proxyScopeNote": "Note: residential proxy services usually put the country / city / session name in the username (e.g. user_c_CN_city_Shanghai_s_<session>). The same session name sticks to the same exit IP, so give each instance or account its own session name to get one residential IP each.",
+    "proxyAdminRequired": "Proxy settings are admin-only",
+    "proxyAdminRequiredDesc": "This page controls traffic egress and proxy credentials, so it is limited to administrators. Ask an admin to make changes."
   },
   "phrases": {
     "请求失败": "Request failed",

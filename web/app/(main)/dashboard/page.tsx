@@ -15,11 +15,11 @@ import {
 } from 'recharts';
 import {useHeartbeat} from '@/lib/use-heartbeat';
 import {useAsyncAll} from '@/lib/use-async-data';
+import {collectScopedExpiries} from '@/lib/dashboard-credits';
 import {getExpiryDailyGroup, groupExpiriesByDay} from '@/lib/display-prefs';
 import {accountApi, statsApi, upstreamApi, upstreamsApi} from '@/lib/api';
 import {useRealm} from '@/lib/realm-context';
 import type {
-  CreditExpiry,
   CreditsMeta,
   StatsSummary,
   UsagePoint,
@@ -294,20 +294,23 @@ export default function DashboardPage() {
   const totalCredits = creditsKnown.reduce((sum, a) => sum + (credOf(a) || 0), 0);
   const creditsLow = creditsKnown.filter((a) => (credOf(a) || 0) < 200).length;
   /**
-   * 最近一笔积分到期（全体账号里最早的那个到期时刻）。
+   * 当前版本账号的到期明细（按时刻升序）。
    *
    * 为什么值得占首页一行：积分过期即作废且不可恢复，用户能采取的行动
    * （多跑点任务把它用掉）只在到期**之前**有效。汇总卡片此前只报总量，
    * 看不出「总量虽多但大部分下周就没了」这种情况。
+   *
+   * 必须用 `scoped`，不能扫 `creditsMeta` 的全部条目：那份 map 是所有分组、
+   * 所有版本一起取回来的。余额已经按当前版本算，到期若用全表，切到国际版
+   * 仍会显示国内版更早的那一笔。名单或元数据变了都要重算——切版本时名单变、
+   * 刷新时元数据变，两边都可能单独发生。
    */
-  const nextExpiry = useMemo(() => {
-    let best: CreditExpiry | null = null;
-    for (const m of Object.values(creditsMeta)) {
-      const e = m.expiries?.[0];
-      if (e && (!best || e.at < best.at)) best = e;
-    }
-    return best;
-  }, [creditsMeta]);
+  const scopedExpiries = useMemo(
+    () => collectScopedExpiries(scoped, creditsMeta),
+    [scoped, creditsMeta],
+  );
+  /** 最近一笔：升序后的第一条。按天归并关着时卡片就显示它。 */
+  const nextExpiry = scopedExpiries[0] ?? null;
   // 7 天内的到期算紧急（与倒计时胶囊的琥珀/红分档同一条线）。取渲染时刻即可：
   // 阈值是 7 天，而本页每 30 秒重渲染一次，几秒的偏差不影响分档。
   const expiryUrgent = !!nextExpiry && nextExpiry.at - Date.now() / 1000 < 7 * 86400;
@@ -320,32 +323,20 @@ export default function DashboardPage() {
   }, []);
 
   /**
-   * 全体账号的到期明细（按时刻升序）。
-   *
-   * 与上面 nextExpiry 的区别：那个只看每个账号的**第一笔**，回答「最近一笔什么时候
-   * 没了」；这里收全量，供「按天归并」用——同一天到期的多笔要能相加，
-   * 只看第一笔永远算不出那一天的总和。
-   */
-  const allExpiries = useMemo(() => {
-    const out: CreditExpiry[] = [];
-    for (const m of Object.values(creditsMeta)) {
-      for (const e of m.expiries ?? []) out.push(e);
-    }
-    return out.sort((a, b) => a.at - b.at);
-  }, [creditsMeta]);
-
-  /**
    * 卡片上实际要显示的到期条目。
    *
    * 关闭（默认）= 最近一笔；开启 = 按本地日历日归并后的第一条（最近那一天，
    * 金额是那天到期的**总和**）。两者数量级不同（一笔 vs 一天），所以开关默认
    * 关闭——升级后看到的还是原来那个数，想按天看的自己打开。
+   *
+   * 两条路用的是同一份 `scopedExpiries`：按天归并要能把同一天的多笔相加，
+   * 只看每个账号的第一笔永远算不出那一天的总和；最近一笔则是这份升序列表的第一条。
    */
   const expiryShown = useMemo(
     () => (dailyGroup
-      ? groupExpiriesByDay(allExpiries)
+      ? groupExpiriesByDay(scopedExpiries)
       : (nextExpiry ? [nextExpiry] : [])),
-    [dailyGroup, allExpiries, nextExpiry],
+    [dailyGroup, scopedExpiries, nextExpiry],
   );
 
   const chartData = daily.map((d) => ({

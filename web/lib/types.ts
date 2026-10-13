@@ -667,6 +667,34 @@ export interface UsageHourPoint {
   failed: number;
 }
 
+/** 一天的积分收入 / 支出（`/api/stats/credits` 的 daily 项） */
+export interface CreditsFlowPoint {
+  day: string;
+  /** 收入：余额增加流水（kind='credit'）当日合计 */
+  income: number;
+  /** 支出：调用实际扣费（usage.credit）当日合计 */
+  expense: number;
+  /** income - expense */
+  net: number;
+}
+
+/**
+ * 积分收支统计。
+ *
+ * 收入与支出是**两套口径**（见后端 `credits_flow` 的说明）：收入是「余额比
+ * 上次查询增加的部分」，按查询时刻归日，属于近似值；支出是每次调用的真实扣费，
+ * 精确到请求。所以界面上必须分开标注，不能只拿「净额」下结论。
+ */
+export interface CreditsFlow {
+  days: number;
+  from: string;
+  to: string;
+  today: {income: number; expense: number; net: number};
+  week: {income: number; expense: number; net: number};
+  total: {income: number; expense: number; net: number};
+  daily: CreditsFlowPoint[];
+}
+
 export interface UsageBreakdown {
   name: string;
   requests: number;

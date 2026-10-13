@@ -6,6 +6,7 @@ import type {
   Account,
   AccountsResponse,
   RefreshPlan,
+  CreditsFlow,
   ApiKey,
   ApiToken,
   AuditLogPage,
@@ -557,6 +558,10 @@ export const statsApi = {
    */
   hourly: (day?: string, realm?: Realm) =>
     get<UsageHourPoint[]>('/api/stats/hourly', {day, realm}),
+
+  /** 积分收支（收入 / 支出）按天聚合 + 今日 / 近 7 天合计 */
+  creditsFlow: (days = 30, realm?: Realm) =>
+    get<CreditsFlow>('/api/stats/credits', {days, realm}),
   byModel: (days = 30, realm?: Realm) =>
     get<UsageBreakdown[]>('/api/stats/by-model', {days, realm}),
   byKey: (days = 30, realm?: Realm) =>

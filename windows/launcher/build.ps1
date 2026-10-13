@@ -115,6 +115,13 @@ if ($ForceWeb -or -not (Test-Path $webIndex)) {
 } else {
     Write-Step '前端静态产物已存在，跳过构建'
 }
+
+# 运行时瘦身：目标机用不到的标准库与调试符号全部去掉
+function Trim-PythonRuntime($pyDir) {
+    foreach ($name in @('test', 'idlelib', 'lib2to3', 'turtledemo', 'ensurepip')) {
+        $p = Join-Path $pyDir ('Lib\' + $name)
+        if (Test-Path $p) { Remove-Item $p -Recurse -Force }
+    }
     Get-ChildItem $pyDir -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     Get-ChildItem $pyDir -Recurse -File -Include '*.pdb' -ErrorAction SilentlyContinue |

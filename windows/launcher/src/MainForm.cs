@@ -113,21 +113,21 @@ namespace WorkBuddyLauncher
             configBox.Controls.Add(hostLabel);
 
             _txtHost = new TextBox();
-            _txtHost.SetBounds(66, 30, 150, 24);
+            _txtHost.SetBounds(66, 30, 140, 24);
             configBox.Controls.Add(_txtHost);
 
             var portLabel = new Label();
             portLabel.Text = "端口";
-            portLabel.SetBounds(230, 32, 36, 20);
+            portLabel.SetBounds(218, 32, 36, 20);
             configBox.Controls.Add(portLabel);
 
             _txtPort = new TextBox();
-            _txtPort.SetBounds(268, 30, 70, 24);
+            _txtPort.SetBounds(258, 30, 62, 24);
             configBox.Controls.Add(_txtPort);
 
             _btnSave = new Button();
             _btnSave.Text = "保存配置";
-            _btnSave.SetBounds(418, 29, 96, 26);
+            _btnSave.SetBounds(330, 29, 86, 26);
             _btnSave.Click += OnSaveClick;
             configBox.Controls.Add(_btnSave);
 

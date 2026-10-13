@@ -26,6 +26,7 @@ namespace WorkBuddyLauncher
         private Label _lblDoneDetail;
 
         private int _pageIndex;
+        private bool _isOverwrite;
         private string _installTarget;
 
         public InstallerForm()
@@ -200,10 +201,23 @@ namespace WorkBuddyLauncher
 
             if (LauncherPaths.LooksInstalled(target))
             {
+                string oldVersion = Maintenance.ReadVersion(target);
+                string versionText = oldVersion.Length > 0 ? "（版本 " + oldVersion + "）" : string.Empty;
+                // 目标目录里配置的服务端口若正被监听，提示安装时将自动停止
+                string runningNote = string.Empty;
+                string oldHost;
+                int oldPort;
+                EnvConfig.ReadHostPort(LauncherPaths.EnvFilePath(target), out oldHost, out oldPort);
+                if (HealthProbe.Check(EnvConfig.ToConnectHost(oldHost), oldPort, 800))
+                {
+                    runningNote = "\n\n检测到服务正在运行，安装时将自动停止。";
+                }
                 DialogResult overwrite = MessageBox.Show(this,
-                    "该目录已存在一个 WorkBuddy Manager 安装。\n继续将覆盖程序文件（个人数据不受影响），是否继续？",
-                    "安装", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                    "检测到该目录已安装 " + LauncherPaths.AppName + versionText + "。" + runningNote +
+                    "\n\n继续将卸载旧程序文件后安装新版本；个人数据（.env、账号、data）将保留。\n是否继续？",
+                    "覆盖安装", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                 if (overwrite != DialogResult.Yes) { return false; }
+                _isOverwrite = true;
             }
 
             if (!HasEnoughSpace(target))
@@ -248,7 +262,33 @@ namespace WorkBuddyLauncher
 
         private void DoInstall(string target)
         {
-            Diag("开始安装 target=" + target);
+            Diag("开始安装 target=" + target + " overwrite=" + _isOverwrite);
+
+            if (_isOverwrite)
+            {
+                // 覆盖安装：先按「保留数据」卸载旧程序文件（停运行中的服务、清快捷方式/注册表），
+                // 数据白名单（.env、data、upstream 认证与配置）原样保留
+                Report("正在关闭运行中的控制窗口…");
+                Maintenance.CloseRunningLauncher();
+
+                Report("正在停止运行中的服务…");
+                Maintenance.StopServices(target);
+
+                Report("正在清理旧程序文件…");
+                Maintenance.RemoveShortcutsAndRegistry();
+                Maintenance.DeleteProgramFiles(target, true, null,
+                    delegate(int done, int total, string name)
+                    {
+                        BeginInvokeSafe(delegate
+                        {
+                            _progress.Maximum = Math.Max(total, 1);
+                            _progress.Value = Math.Min(done, Math.Max(total, 1));
+                            _lblStatus.Text = "正在清理旧程序文件（" + done + "/" + Math.Max(total, 1) + "）…";
+                        });
+                    });
+                Diag("旧程序清理完成");
+            }
+
             Report("正在解压项目文件（约需十几秒）…");
             PayloadInstaller.ExtractPayload(target, OnExtractProgress);
             Diag("解压完成");
@@ -278,7 +318,7 @@ namespace WorkBuddyLauncher
             }
 
             Report("正在注册卸载信息…");
-            RegisterUninstallEntry(target);
+            Maintenance.RegisterUninstallEntry(target);
             Diag("注册表写入完成");
             Report("安装完成。");
         }
@@ -321,35 +361,8 @@ namespace WorkBuddyLauncher
                         MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
             }
-            DialogResult = DialogResult.OK;
-        }
-
-        private void RegisterUninstallEntry(string target)
-        {
-            using (RegistryKey key = Registry.CurrentUser.CreateSubKey(LauncherPaths.UninstallRegKey))
-            {
-                if (key == null) { return; }
-                key.SetValue("DisplayName", LauncherPaths.AppName);
-                string version = ReadVersionFile(target);
-                if (version.Length > 0) { key.SetValue("DisplayVersion", version); }
-                key.SetValue("Publisher", LauncherPaths.AppName);
-                key.SetValue("InstallLocation", target);
-                key.SetValue("DisplayIcon", Path.Combine(target, LauncherPaths.AppExeName));
-                key.SetValue("UninstallString", "\"" + Path.Combine(target, LauncherPaths.UninstallExeName) + "\"");
-                key.SetValue("NoModify", 1, RegistryValueKind.DWord);
-                key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
-            }
-        }
-
-        private static string ReadVersionFile(string installDir)
-        {
-            try
-            {
-                string file = Path.Combine(installDir, ".version");
-                if (File.Exists(file)) { return File.ReadAllText(file, Encoding.UTF8).Trim(); }
-            }
-            catch { }
-            return string.Empty;
+            // Application.Run 模式下赋值 DialogResult 不会关窗，必须显式 Close
+            Close();
         }
 
         private void UpdateSpaceInfo()

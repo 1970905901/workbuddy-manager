@@ -60,6 +60,7 @@ namespace WorkBuddyLauncher
 
             BtnCancel.Text = "取消";
             BtnCancel.SetBounds(442, 10, 56, 27);
+            BtnCancel.Click += delegate { OnCancel(); };
             _footer.Controls.Add(BtnCancel);
 
             Banner = new BannerPanel(bannerTitle, bannerSubtitle, 92);
@@ -67,6 +68,13 @@ namespace WorkBuddyLauncher
 
             AcceptButton = NextButton;
             CancelButton = BtnCancel;
+        }
+
+        /// 取消：Application.Run 模式下设置 DialogResult 不会自动关窗，必须显式 Close。
+        protected virtual void OnCancel()
+        {
+            DialogResult = DialogResult.Cancel;
+            Close();
         }
 
         /// 新建一个挂进内容区的页面（大小随内容区，初始隐藏）。

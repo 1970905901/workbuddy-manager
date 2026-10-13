@@ -2,19 +2,14 @@ using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using Microsoft.Win32;
 
 namespace WorkBuddyLauncher
 {
     /// 卸载向导：确认 → 清理进度 → 完成。清理逻辑含停服、快捷方式/注册表删除与自删除。
     internal sealed class UninstallForm : WizardForm
     {
-        /// 保留数据白名单（相对安装根；保留模式下列出的文件/目录不删除）。
-        private static readonly string[] KeepPaths = { ".env", "data", "upstream\\auths", "upstream\\config.json" };
-
         private readonly string _installDir;
         private readonly Panel _pageConfirm;
         private readonly Panel _pageProgress;
@@ -27,7 +22,6 @@ namespace WorkBuddyLauncher
         private Label _lblDone;
 
         private int _pageIndex;
-        private int _deletedFiles;
         private int _totalFiles;
         private int _failedFiles;
         private bool _keepData;
@@ -184,30 +178,24 @@ namespace WorkBuddyLauncher
         private void DoUninstall()
         {
             Report("正在关闭启动器窗口…");
-            CloseRunningLauncher();
+            Maintenance.CloseRunningLauncher();
 
-            string serviceTools = LauncherPaths.ScriptPath(_installDir, "service-tools.ps1");
-            if (File.Exists(serviceTools))
-            {
-                Report("正在停止运行中的服务…");
-                ScriptRunner.RunWait(serviceTools, new[] { "stop" });
-            }
+            Report("正在停止运行中的服务…");
+            Maintenance.StopServices(_installDir);
 
-            Report("正在删除快捷方式…");
-            TryDeleteFile(LauncherPaths.DesktopShortcutPath);
-            TryDeleteFile(Path.Combine(LauncherPaths.StartMenuFolder, LauncherPaths.AppName + ".lnk"));
-            TryDeleteFile(Path.Combine(LauncherPaths.StartMenuFolder, "卸载 " + LauncherPaths.AppName + ".lnk"));
-            try { Directory.Delete(LauncherPaths.StartMenuFolder, false); }
-            catch { }
+            Report("正在删除快捷方式与注册表…");
+            Maintenance.RemoveShortcutsAndRegistry();
 
-            Report("正在清理注册表…");
-            try { Registry.CurrentUser.DeleteSubKeyTree(LauncherPaths.UninstallRegKey, false); }
-            catch { }
-
-            _totalFiles = CountFiles(_installDir);
+            _totalFiles = Maintenance.CountFiles(_installDir);
             _progress.Maximum = Math.Max(_totalFiles, 1);
             Report("正在删除项目文件（共 " + _totalFiles + " 个）…");
-            _failedFiles = DeleteTree(_installDir, string.Empty, _keepData);
+            _failedFiles = Maintenance.DeleteProgramFiles(_installDir, _keepData, Application.ExecutablePath,
+                delegate(int done, int total, string name)
+                {
+                    _progress.Maximum = Math.Max(total, 1);
+                    _progress.Value = Math.Min(done, Math.Max(total, 1));
+                    _lblStatus.Text = "正在删除项目文件（已删除 " + done + "/" + Math.Max(total, 1) + " 个）…";
+                });
         }
 
         /// 自删除：把自身改名（运行中的 exe 不能直接删），交给 cmd 在进程退出后清理。
@@ -238,99 +226,6 @@ namespace WorkBuddyLauncher
             catch { }
 
             Application.Exit();
-        }
-
-        private static void CloseRunningLauncher()
-        {
-            foreach (Process process in Process.GetProcessesByName("WorkBuddyManager"))
-            {
-                try
-                {
-                    process.CloseMainWindow();
-                    if (!process.WaitForExit(3000)) { process.Kill(); process.WaitForExit(3000); }
-                }
-                catch { }
-                finally { process.Dispose(); }
-            }
-        }
-
-        /// 递归删除目录内容；跳过自身与保留项，返回未能删除的文件数。
-        private int DeleteTree(string root, string relative, bool keepData)
-        {
-            int failures = 0;
-            string absolute = relative.Length == 0 ? root : Path.Combine(root, relative);
-
-            string[] files;
-            try { files = Directory.GetFiles(absolute); }
-            catch { return 0; }
-            foreach (string file in files)
-            {
-                string rel = relative.Length == 0 ? Path.GetFileName(file) : relative + "\\" + Path.GetFileName(file);
-                if (ShouldKeep(rel, keepData)) { continue; }
-                if (string.Equals(file, Application.ExecutablePath, StringComparison.OrdinalIgnoreCase)) { continue; }
-                if (!TryDeleteFile(file)) { failures++; }
-                _deletedFiles++;
-                if (_deletedFiles % 40 == 0) { ReportDeleteProgress(); }
-            }
-
-            string[] dirs;
-            try { dirs = Directory.GetDirectories(absolute); }
-            catch { return failures; }
-            foreach (string dir in dirs)
-            {
-                string rel = relative.Length == 0 ? Path.GetFileName(dir) : relative + "\\" + Path.GetFileName(dir);
-                if (ShouldKeep(rel, keepData)) { continue; }
-                failures += DeleteTree(root, rel, keepData);
-                try { Directory.Delete(dir, false); }
-                catch { }
-            }
-            return failures;
-        }
-
-        private static bool ShouldKeep(string relative, bool keepData)
-        {
-            if (!keepData) { return false; }
-            string path = relative.Replace('/', '\\').TrimEnd('\\').ToLowerInvariant();
-            foreach (string keep in KeepPaths)
-            {
-                if (path == keep || path.StartsWith(keep + "\\")) { return true; }
-            }
-            return false;
-        }
-
-        private static bool TryDeleteFile(string path)
-        {
-            for (int attempt = 0; attempt < 3; attempt++)
-            {
-                try { File.Delete(path); return true; }
-                catch { Thread.Sleep(150); }
-            }
-            return !File.Exists(path);
-        }
-
-        private static int CountFiles(string dir)
-        {
-            int count = 0;
-            try
-            {
-                count += Directory.GetFiles(dir).Length;
-                foreach (string sub in Directory.GetDirectories(dir))
-                {
-                    count += CountFiles(sub);
-                }
-            }
-            catch { }
-            return count;
-        }
-
-        private void ReportDeleteProgress()
-        {
-            int done = _deletedFiles;
-            BeginInvokeSafe(delegate
-            {
-                _progress.Value = Math.Min(done, _progress.Maximum);
-                _lblStatus.Text = "正在删除项目文件（已删除 " + done + "/" + _totalFiles + " 个）…";
-            });
         }
 
         private void Report(string status)

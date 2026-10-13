@@ -1,6 +1,8 @@
 ﻿# WorkBuddy 安装器自动化测试：Win32 消息驱动（不依赖前台焦点，免疫弹窗抢焦）
 # 定位控件用 UIAutomation，操作用 WM_SETTEXT / BM_CLICK。
-# 用法：powershell -NoProfile -ExecutionPolicy Bypass -File dev\test-installer.ps1
+# 用法：powershell -NoProfile -ExecutionPolicy Bypass -File dev\test-installer.ps1 [-SkipCleanup]
+#   -SkipCleanup：保留已安装目录与数据，用于覆盖安装场景（此时会点「覆盖确认」）
+param([switch]$SkipCleanup)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -TypeDefinition @'
@@ -15,11 +17,15 @@ public class Win32Msg
     [DllImport("user32.dll")]
     public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
+    [DllImport("user32.dll")]
+    public static extern IntPtr PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
     public const uint WM_SETTEXT = 0x000C;
     public const uint BM_CLICK = 0x00F5;
 
     public static void SetText(IntPtr hwnd, string text) { SendMessage(hwnd, WM_SETTEXT, IntPtr.Zero, text); }
-    public static void Click(IntPtr hwnd) { SendMessage(hwnd, BM_CLICK, IntPtr.Zero, IntPtr.Zero); }
+    // 点击用 Post：按钮事件处理器里可能弹模态框（覆盖确认），同步 Send 会卡死测试脚本
+    public static void Click(IntPtr hwnd) { PostMessage(hwnd, BM_CLICK, IntPtr.Zero, IntPtr.Zero); }
 }
 '@
 
@@ -29,14 +35,6 @@ $targetDir = 'D:\ai-project\_wb_test_install'
 $timeoutSec = 180
 
 if (-not (Test-Path $setupExe)) { Write-Error "找不到安装包：$setupExe"; exit 1 }
-
-# 旧测试残留清理（保证"全新安装"语义；同时避免 UIA 匹配到旧进程的同名窗口）
-Get-Process -Name 'WorkBuddyManagerSetup' -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Milliseconds 500
-if (Test-Path $targetDir) { Remove-Item $targetDir -Recurse -Force }
-Remove-Item 'C:\Users\Lenovo\Desktop\WorkBuddy Manager.lnk' -Force -ErrorAction SilentlyContinue
-Remove-Item (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\WorkBuddy Manager') -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WorkBuddyManager' -Recurse -Force -ErrorAction SilentlyContinue
 
 $root = [System.Windows.Automation.AutomationElement]::RootElement
 
@@ -140,6 +138,23 @@ if (-not $nextBtn) { Write-Host 'FAIL: 未找到「下一步」按钮'; $proc.Ki
 [Win32Msg]::Click($nextBtn.Current.NativeWindowHandle)
 Write-Host 'OK: 已触发「开始安装」，等待完成…'
 
+# 覆盖安装场景（-SkipCleanup）：点击后可能出现「覆盖安装」确认框 → 点「是」
+if ($SkipCleanup) {
+    $deadline = (Get-Date).AddSeconds(8)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 400
+        $mb = $root.FindFirst([System.Windows.Automation.TreeScope]::Children,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::NameProperty, '覆盖安装')))
+        if ($mb) {
+            $yes = Find-ChildByName $mb '*是*' '*BUTTON*'
+            if ($yes) { [Win32Msg]::Click($yes.Current.NativeWindowHandle) }
+            Write-Host 'OK: 覆盖安装确认框已确认'
+            break
+        }
+    }
+}
+
 # 等待完成页出现（向导最后一页标题含「安装完成」），不点「完成」避免启动应用
 $deadline = (Get-Date).AddSeconds($timeoutSec)
 $doneShown = $false
@@ -166,6 +181,22 @@ Check (Test-Path 'C:\Users\Lenovo\Desktop\WorkBuddy Manager.lnk') '桌面快捷�
 Check (Test-Path (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\WorkBuddy Manager\WorkBuddy Manager.lnk')) '开始菜单快捷方式已创建'
 Check (Test-Path (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\WorkBuddy Manager\卸载 WorkBuddy Manager.lnk')) '开始菜单卸载入口已创建'
 Check (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WorkBuddyManager') '注册表卸载项已注册'
+if ($SkipCleanup) {
+    # 覆盖安装：个人数据必须保留
+    Check (Test-Path (Join-Path $targetDir '.env')) '覆盖安装：.env 保留'
+    Check (Test-Path (Join-Path $targetDir 'data')) '覆盖安装：data 目录保留'
+}
+
+# 点「完成」→ 安装窗口必须关闭（Application.Run 模式下需显式 Close 的回归验证）；
+# 完成页默认勾选「立即启动」，随后顺带清理被启动的应用
+$finishBtn = Find-ChildByPrefix $win 'BUTTON' '完成'
+if ($finishBtn) {
+    [Win32Msg]::Click($finishBtn.Current.NativeWindowHandle)
+    Start-Sleep -Seconds 3
+    $proc.Refresh()
+    Check ($proc.HasExited -or $proc.MainWindowHandle -eq 0) '点「完成」后安装窗口关闭'
+    Get-Process -Name 'WorkBuddyManager' -ErrorAction SilentlyContinue | Stop-Process -Force
+}
 
 if (-not $proc.HasExited) { $proc.Kill() }
 if ($failed) { Write-Host 'RESULT: FAIL'; exit 1 }

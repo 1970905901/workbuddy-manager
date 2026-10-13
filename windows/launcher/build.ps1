@@ -323,6 +323,17 @@ $version = (& git describe --tags --always 2>$null)
 if (-not $version) { $version = 'dev' }
 [System.IO.File]::WriteAllText((Join-Path $stageDir '.version'), $version, (New-Object System.Text.UTF8Encoding($false)))
 
+# 将 git 版本转换为 Windows 可接受的四段数字版本：
+# v1.0.85-3-gabcdef → 1.0.85.3；无可解析版本时使用 0.0.0.0。
+function ConvertTo-AssemblyVersion($gitVersion) {
+    if ($gitVersion -match '^v?(\d+)\.(\d+)\.(\d+)(?:-(\d+)-g[0-9a-f]+)?') {
+        $revision = if ($Matches[4]) { [int]$Matches[4] } else { 0 }
+        return ($Matches[1] + '.' + $Matches[2] + '.' + $Matches[3] + '.' + $revision)
+    }
+    return '0.0.0.0'
+}
+$assemblyVersion = ConvertTo-AssemblyVersion $version
+
 if (-not $SkipUpstream) {
     Copy-Tree $upstreamDir (Join-Path $stageDir 'upstream') @('.git', '__pycache__')
 }
@@ -355,8 +366,22 @@ New-Item -ItemType Directory $distDir -Force | Out-Null
 $outExe = Join-Path $distDir 'WorkBuddyManagerSetup.exe'
 if (Test-Path $outExe) { Remove-Item $outExe -Force }
 
-$sources = Get-ChildItem (Join-Path $scriptDir 'src\*.cs') | ForEach-Object { $_.FullName }
-if (-not $sources) { throw '未找到 C# 源文件：windows\launcher\src\*.cs' }
+# 生成程序集元数据，写入 exe 的文件属性版本号
+$assemblyInfoPath = Join-Path $env:TEMP ('wb-assembly-info-' + [Guid]::NewGuid().ToString('N') + '.cs')
+$assemblyInfo = @"
+using System.Reflection;
+[assembly: AssemblyTitle("WorkBuddy Manager")]
+[assembly: AssemblyProduct("WorkBuddy Manager")]
+[assembly: AssemblyCompany("WorkBuddy Manager")]
+[assembly: AssemblyVersion("$assemblyVersion")]
+[assembly: AssemblyFileVersion("$assemblyVersion")]
+[assembly: AssemblyInformationalVersion("$version")]
+"@
+[System.IO.File]::WriteAllText($assemblyInfoPath, $assemblyInfo, (New-Object System.Text.UTF8Encoding($false)))
+
+$sourceFiles = @(Get-ChildItem (Join-Path $scriptDir 'src\*.cs') | ForEach-Object { $_.FullName })
+if ($sourceFiles.Count -eq 0) { throw '未找到 C# 源文件：windows\launcher\src\*.cs' }
+$sources = $sourceFiles + $assemblyInfoPath
 
 & $csc -nologo -target:winexe -codepage:65001 -optimize+ `
     ('-win32icon:' + $iconPath) `
@@ -365,6 +390,7 @@ if (-not $sources) { throw '未找到 C# 源文件：windows\launcher\src\*.cs' 
     -reference:System.dll,System.Core.dll,System.Drawing.dll,System.Windows.Forms.dll,System.IO.Compression.dll,System.IO.Compression.FileSystem.dll,Microsoft.CSharp.dll `
     $sources
 if ($LASTEXITCODE -ne 0) { throw 'csc 编译失败' }
+Remove-Item $assemblyInfoPath -Force -ErrorAction SilentlyContinue
 
 # ── 7. 报告与清理 ───────────────────────────────────────────
 $zipMB = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)

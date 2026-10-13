@@ -16,7 +16,8 @@ from fastapi.responses import StreamingResponse
 
 from .. import config, db, security, upstreamsvc
 from ..services import (
-    credits as creditsvc, modelcatalog, reload, renew, tasklog, taskrun, tencent, wb2api,
+    credits as creditsvc, dailyplan, modelcatalog, reload, renew, tasklog, taskrun,
+    tencent, wb2api,
 )
 from ..services.realm import realm_of, supports_checkin
 
@@ -1810,6 +1811,54 @@ async def run_refresh_plan_now(user: dict = Depends(security.require_admin)) -> 
     plan = renew.get_plan()
     return {**stats, 'last_run': plan['last_run'],
             'next_run': renew.plan_next_run(plan)}
+
+
+# ── 每日任务计划（签到 / 领奖 / 做任务）──────────────────────
+# 与上面「令牌刷新计划」并列的第二类计划任务：到点自动跑管理端的三个「一键」
+# 动作。三者安全等级不同（full 会伪造活跃上报），所以默认全部关闭、由用户显式开。
+
+
+@router.get('/accounts/daily-plan')
+def get_daily_plan(user: dict = Depends(security.current_user)) -> dict:
+    """每日任务计划：每个任务的开关 + 执行整点 + 本小时是否已跑。
+
+    只读，任何已登录用户可看；改计划要管理员。
+    """
+    return dailyplan.get_plan()
+
+
+@router.put('/accounts/daily-plan')
+def save_daily_plan(body: dict,
+                    user: dict = Depends(security.require_admin)) -> dict:
+    """保存每日任务计划（校验失败 400）。跑的是**无人值守的写操作**，限管理员。"""
+    try:
+        plan = dailyplan.set_plan(body)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    security.audit(user, 'update_daily_plan', '',
+                   '; '.join(f"{t}={plan[t]['enabled']}@{plan[t]['hour']}h"
+                             for t in ('checkin', 'claim', 'full')))
+    return plan
+
+
+@router.post('/accounts/daily-plan/run')
+async def run_daily_task_now(body: dict = Body(...),
+                             user: dict = Depends(security.require_admin)) -> dict:
+    """立即执行一次某个每日任务（不等定时）。
+
+    body 形如 `{"task": "checkin" | "claim" | "full"}`。用 **body 而不是 query**
+    传参：写端点的 query 参数要登记进 `test_request_binding.ALLOWED_QUERY_POSTS`，
+    body 不需要。
+
+    执行后把这个任务标记为「本小时已跑」——与「令牌刷新计划」的「立即执行」同一
+    口径，避免刚手动跑完到点又跑一次。
+    """
+    task = str((body or {}).get('task') or '').strip()
+    if task not in ('checkin', 'claim', 'full'):
+        raise HTTPException(status_code=400, detail='task 只能是 checkin / claim / full')
+    ok, message = await dailyplan.run_task(task)
+    plan = dailyplan.mark_ran(task)
+    return {'ok': ok, 'message': message, 'task': task, 'plan': plan}
 
 
 @router.post('/accounts/{filename}/clear-cooling')

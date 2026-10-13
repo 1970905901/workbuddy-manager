@@ -156,6 +156,30 @@ export interface RefreshPlan {
   next_run: number | null;
 }
 
+/** 每日任务计划里的单个任务（签到 / 领奖 / 做任务） */
+export interface DailyTaskConfig {
+  enabled: boolean;
+  /** 0-23 整点 */
+  hour: number;
+  /** 本小时是否已跑（`YYYY-MM-DD-HH`；空串 = 从未） */
+  last_run: string;
+}
+
+export type DailyTask = 'checkin' | 'claim' | 'full';
+
+/**
+ * 每日任务计划（`/api/accounts/daily-plan`）。
+ *
+ * 与「令牌刷新计划」并列，跑的是管理端的「一键」动作。三者安全等级不同：`claim`
+ * 只认领已完成任务的奖励（幂等）、`checkin` 幂等，而 `full` 会**伪造活跃上报**
+ * （上游脚本自己都标「慎用」）——所以默认全关，界面对 full 必须带警告。
+ */
+export interface DailyPlan {
+  checkin: DailyTaskConfig;
+  claim: DailyTaskConfig;
+  full: DailyTaskConfig;
+}
+
 /** 上游为一组账号给出的计数（`/status` 的顶层汇总与 realm_totals 同构） */
 export interface PoolCounts {
   total: number;

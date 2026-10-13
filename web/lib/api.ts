@@ -6,6 +6,8 @@ import type {
   Account,
   AccountsResponse,
   RefreshPlan,
+  DailyPlan,
+  DailyTask,
   CreditsFlow,
   ApiKey,
   ApiToken,
@@ -311,6 +313,14 @@ export const accountApi = {
     checked: number; renewed: number; failed: number; skipped: number;
     last_run: number; next_run: number | null;
   }>('/api/accounts/refresh-plan/run'),
+  /** 每日任务计划（签到 / 领奖 / 做任务，到点自动跑） */
+  dailyPlan: () => get<DailyPlan>('/api/accounts/daily-plan'),
+  saveDailyPlan: (plan: DailyPlan) =>
+    put<DailyPlan>('/api/accounts/daily-plan', plan),
+  /** 立即执行一次某个每日任务（不等定时） */
+  runDailyTask: (task: DailyTask) =>
+    post<{ok: boolean; message: string; task: string; plan: DailyPlan}>(
+      '/api/accounts/daily-plan/run', {task}),
   /** 强制清除账号级冷却、熔断/降权与模型级限流（会重启一次上游）。 */
   clearCooling: (file: string, upstreamId?: number | null) =>
     post<{ok: boolean; message: string; uid?: string; backup?: string}>(

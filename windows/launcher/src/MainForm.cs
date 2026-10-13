@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Threading;
 using System.Windows.Forms;
 using System.Threading.Tasks;
 
@@ -18,7 +19,7 @@ namespace WorkBuddyLauncher
         private readonly string _root;
         private readonly AppSettings _settings;
         private readonly ScriptRunner _runner = new ScriptRunner();
-        private readonly Timer _timer = new Timer();
+        private readonly System.Windows.Forms.Timer _timer = new System.Windows.Forms.Timer();
         private readonly NotifyIcon _tray = new NotifyIcon();
 
         private Label _lblDot;
@@ -39,6 +40,7 @@ namespace WorkBuddyLauncher
         private bool _probing;
         private bool _reallyExit;
         private bool _openBrowserOnHealthy;
+        private bool _credentialLookupRunning;
         private string _currentHost = EnvConfig.DefaultHost;
         private int _currentPort = EnvConfig.DefaultPort;
 
@@ -174,10 +176,29 @@ namespace WorkBuddyLauncher
         }
 
         /// 首次启动成功后提示一次初始管理员账号（服务端随机生成，只打印进 stderr 日志）。
+        /// 日志可能比 healthz 晚几百毫秒落盘，所以在后台重试几秒；成功后写标记，
+        /// 后续再次打开启动器不会重复弹出。
         private void MaybeShowInitialCredentials()
         {
-            if (_settings.Get("initial_pwd_shown", null) != null) { return; }
-            ShowInitialCredentials(markShown: true);
+            if (_settings.Get("initial_pwd_shown", null) != null || _credentialLookupRunning) { return; }
+            _credentialLookupRunning = true;
+            string errLog = Path.Combine(Path.Combine(_root, "data"), "manager.err.log");
+            Task.Factory.StartNew(delegate
+            {
+                for (int attempt = 0; attempt < 10; attempt++)
+                {
+                    string user;
+                    string password;
+                    if (InitialCredentials.TryExtract(errLog, out user, out password)) { return true; }
+                    Thread.Sleep(500);
+                }
+                return false;
+            }).ContinueWith(delegate(Task<bool> task)
+            {
+                _credentialLookupRunning = false;
+                if (IsDisposed || task.IsFaulted || !task.Result) { return; }
+                ShowInitialCredentials(true);
+            }, TaskScheduler.FromCurrentSynchronizationContext());
         }
 
         private void OnShowInitialCredentials(object sender, EventArgs e)
@@ -472,8 +493,9 @@ namespace WorkBuddyLauncher
                     {
                         _openBrowserOnHealthy = false;
                         OpenPanel();
-                        MaybeShowInitialCredentials();
                     }
+                    // 无论是刚点击启动，还是控制台打开时服务本来就在运行，都尝试读取一次初始密码
+                    MaybeShowInitialCredentials();
                     return;
                 }
                 double seconds = (DateTime.Now - _waitSince).TotalSeconds;
@@ -511,6 +533,7 @@ namespace WorkBuddyLauncher
             }
 
             SetState(healthy ? ProjectState.Running : ProjectState.Stopped, null);
+            if (healthy) { MaybeShowInitialCredentials(); }
         }
 
         // ── 托盘与关闭行为 ────────────────────────────────────────

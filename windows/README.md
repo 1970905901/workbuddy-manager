@@ -27,3 +27,24 @@ powershell -ExecutionPolicy Bypass -File .\windows\service-tools.ps1 status
 前置条件与原生模式的边界（更新上游不可用、手动构建 `wb2api.exe` 等）见
 [`deploy/windows-native/README.md`](../deploy/windows-native/README.md) 与
 [`deploy/README.md`](../deploy/README.md) 的「Windows 原生部署」一节。
+
+## 启动器（安装版）
+
+`launcher/` 是一个把上面这套脚本包成图形界面的安装器 + 启动器，产出**单文件 exe**：
+
+| 产物 | 作用 |
+|---|---|
+| `build.ps1` | 从源码构建安装包：组装 payload、编译上游 `wb2api.exe`（本机无 Go 时自动下载便携工具链）、预置 Python 3.11 运行时与依赖、csc 编译 |
+| `dist\WorkBuddyManagerSetup.exe` | 双击进入安装向导：选择目录安装、生成桌面与开始菜单快捷方式、注册「设置 → 应用」卸载入口 |
+| 安装目录里的 `WorkBuddyManager.exe` | 控制窗口：启动 / 重启 / 关闭项目、运行状态、修改监听 IP 与端口、打开面板；点 X 可选最小化到托盘或退出（可记住选择） |
+| 安装目录里的 `Uninstall.exe` | 卸载程序：停止服务、清理快捷方式与注册表，可选保留账号与配置数据 |
+
+```powershell
+# 构建安装包（产物在 windows\launcher\dist\）
+powershell -ExecutionPolicy Bypass -File windows\launcher\build.ps1
+```
+
+安装包内嵌全部运行环境（Python 解释器与依赖、上游网关二进制、前端产物），
+目标机器**无需安装 Python / Node / Go**，安装后即可直接启动。构建细节见
+[`launcher/build.ps1`](launcher/build.ps1) 顶部注释。
+

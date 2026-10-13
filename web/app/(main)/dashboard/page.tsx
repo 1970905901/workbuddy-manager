@@ -227,7 +227,15 @@ export default function DashboardPage() {
   const flowState = useAsyncAll({
     flow: () => statsApi.creditsFlow(Number(flowDays) || 7, realm),
   }, [realm, flowDays]);
-  const flow: CreditsFlow = flowState.values.flow ?? EMPTY_FLOW;
+  /**
+   * 只认**形状完整**的响应：网关错误体 / 空对象这类残缺数据会让 `total` 变
+   * undefined，直接读 `flow.total.income` 会把整个仪表盘打崩（真机渲染复现过：
+   * `TypeError: Cannot read properties of undefined (reading 'income')`）。
+   * 宁可退回空态，也不要整页白屏。
+   */
+  const rawFlow = flowState.values.flow;
+  const flow: CreditsFlow =
+    rawFlow && rawFlow.total && Array.isArray(rawFlow.daily) ? rawFlow : EMPTY_FLOW;
   const flowFailed = 'flow' in flowState.errors;
   /** 区间内是否有任何收支——全 0 时画图没意义，给空态 */
   const hasFlow = flow.total.income > 0 || flow.total.expense > 0;

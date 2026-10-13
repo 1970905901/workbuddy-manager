@@ -63,7 +63,8 @@
     "passwordPlaceholder": "Enter your password",
     "submit": "Sign in",
     "legal": "Signing in confirms you are authorized to access this system; all actions are logged.",
-    "emptySubmit": "Username or password is empty. If your browser auto-filled them, please type the password again manually."
+    "emptySubmit": "Username or password is empty. If your browser auto-filled them, please type the password again manually.",
+    "expiredHint": "Your session has expired. Please sign in again."
   },
   "notFound": {
     "line1": "Page",

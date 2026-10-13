@@ -20,10 +20,19 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // 会话过期跳转（`api.ts` 的 401 拦截器会带 `?expired=1`）。读
+  // `window.location.search` 而不是 `useSearchParams`：静态导出下后者必须包一层
+  // Suspense，为一行提示不值得改整页结构。
+  const [expired, setExpired] = useState(false);
 
   useEffect(() => {
     if (!loading && me) router.replace('/dashboard');
   }, [loading, me, router]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    setExpired(new URLSearchParams(window.location.search).get('expired') === '1');
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -120,6 +129,10 @@ export default function LoginPage() {
                 className="bg-background"
               />
             </div>
+
+            {expired && !error && (
+              <p className="text-xs text-amber-600 dark:text-amber-500">{t('login.expiredHint')}</p>
+            )}
 
             {error && <p className="text-xs text-red-500">{error}</p>}
 

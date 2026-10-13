@@ -113,7 +113,10 @@ http.interceptors.response.use(
       const loginPath = `${BASE_PATH}/login`;
       const publicPaths = [loginPath, `${BASE_PATH}/claim`];
       if (!publicPaths.some((p) => path.startsWith(p))) {
-        window.location.href = loginPath;
+        // 带上 `?expired=1`：登录页据此显示「会话已过期，请重新登录」，而不是毫无
+        // 解释地把人丢回登录页 —— 实测用户会以为自己点了退出、或面板坏了（明明刚才
+        // 还在用）。服务端鉴权不受影响，这只是给跳转补一个原因。
+        window.location.href = `${loginPath}?expired=1`;
       }
     }
     return Promise.reject(error);

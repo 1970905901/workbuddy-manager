@@ -15,6 +15,7 @@ import {
   CalendarCheck,
   Check,
   Coins,
+  RefreshCw,
   ChevronLeft,
   ChevronRight,
   Search,
@@ -68,13 +69,13 @@ import {AccountNoteDialog} from '@/components/common/accounts/AccountNoteDialog'
 import {MoveAccountDialog} from '@/components/common/accounts/MoveAccountDialog';
 import {UpstreamFormDialog} from '@/components/common/upstreams/UpstreamFormDialog';
 import {AccountTaskDialog} from '@/components/common/accounts/AccountTaskDialog';
+import {RefreshPlanCard} from '@/components/common/accounts/RefreshPlanCard';
 import {useAuth} from '@/lib/auth-context';
 import {realmLabel, useRealm} from '@/lib/realm-context';
 import {useT} from '@/lib/i18n/provider';
 import {Button} from '@/components/ui/button';
 import {Badge} from '@/components/ui/badge';
 import {Input} from '@/components/ui/input';
-import {Label} from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -286,6 +287,31 @@ export default function AccountsPage() {
       setCreditsBusy(false);
     }
   }, [groupId]);
+
+  /** 一键刷新所有账号的 accessToken（真的续期，末尾只重载一次上游） */
+  const [refreshTokensBusy, setRefreshTokensBusy] = useState(false);
+  const refreshAllTokens = useCallback(async () => {
+    setRefreshTokensBusy(true);
+    try {
+      const r = await accountApi.refreshAllTokens(groupId);
+      if (r.succeeded === r.total) {
+        notify.ok(
+          t('accounts.refreshTokensDone'),
+          t('accounts.refreshTokensDoneDetail', {ok: r.succeeded, total: r.total}),
+        );
+      } else {
+        notify.warn(
+          t('accounts.refreshTokensPartial', {failed: r.total - r.succeeded}),
+          t('accounts.refreshTokensPartialDetail', {ok: r.succeeded, total: r.total}),
+        );
+      }
+      await reloadAll();
+    } catch (e) {
+      notify.err(errText(e));
+    } finally {
+      setRefreshTokensBusy(false);
+    }
+  }, [reloadAll, groupId]);
 
   /** 批量签到：逐账号记录结果 */
   const checkinAll = useCallback(async () => {
@@ -1108,6 +1134,23 @@ export default function AccountsPage() {
               <span className="sm:hidden">{t('accounts.creditsShort')}</span>
             </Button>
             )}
+            {/* 「一键刷新令牌」= 对所有账号真实续期 accessToken（逐个用 refreshToken
+                换新令牌），末尾只重载一次上游。与逐行那个 KeyRound 按钮同一套实现，
+                只是批量跑——账号多了不用挨个点。只有管理员能调（改的是凭证）。 */}
+            {isAdmin && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="rounded-full"
+                onClick={refreshAllTokens}
+                disabled={refreshTokensBusy || !visible.length}
+                title={t('accounts.refreshTokensTitle')}
+              >
+                <RefreshCw className={refreshTokensBusy ? 'animate-spin' : ''} />
+                <span className="hidden sm:inline">{t('accounts.refreshTokens')}</span>
+                <span className="sm:hidden">{t('accounts.refreshTokensShort')}</span>
+              </Button>
+            )}
             {/* 「全部签到」仅国内版显示：国际版**没有签到体系**（上游调度器对
                 global 账号直接过滤，不发请求）。显示一个按下去只会得到「已跳过」
                 的按钮是误导，直接不给。 */}
@@ -1155,6 +1198,11 @@ export default function AccountsPage() {
           本页没有早返回的整页守卫（取不到账号时只在下面给错误态），
           所以放在这里一处即可。 */}
       <PageSectionTabs />
+
+      {/* 计划任务（令牌刷新计划）：每 N 天自动全量刷新一次所有账号的
+          accessToken。仅管理员可见——它改的是调度与凭证，只读账号看了也动不了。
+          立即执行后刷新列表，让新的到期时间马上显示出来。 */}
+      {isAdmin && <RefreshPlanCard onRan={reloadAll} />}
 
       {/* 账号分组（多账号池）：默认分组 = 升级前那套（环境变量 / 上游
           config.json）；「添加分组」只填名称即可（地址默认沿用默认分组的、

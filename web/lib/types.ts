@@ -141,6 +141,21 @@ export interface AccountsResponse {
   manageable?: boolean;
 }
 
+/**
+ * 令牌刷新计划（计划任务）：每 `interval_days` 天的 `hour` 整点，全量刷新一次
+ * 所有账号的 accessToken。与「快过期才续期」的自动续期是并列的两条路径。
+ *
+ * `last_run` / `next_run` 都是 epoch 秒；`last_run=0` = 从未跑过，
+ * `next_run=null` = 计划未启用。
+ */
+export interface RefreshPlan {
+  enabled: boolean;
+  interval_days: number;
+  hour: number;
+  last_run: number;
+  next_run: number | null;
+}
+
 /** 上游为一组账号给出的计数（`/status` 的顶层汇总与 realm_totals 同构） */
 export interface PoolCounts {
   total: number;

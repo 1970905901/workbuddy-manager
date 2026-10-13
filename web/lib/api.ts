@@ -5,6 +5,7 @@ import type {Realm} from './realm-context';
 import type {
   Account,
   AccountsResponse,
+  RefreshPlan,
   ApiKey,
   ApiToken,
   AuditLogPage,
@@ -290,6 +291,25 @@ export const accountApi = {
   refresh: (file: string, upstreamId?: number | null) =>
     post<{ok: boolean; message: string}>(
       `/api/accounts/${encodeURIComponent(file)}/refresh${groupQs(upstreamId)}`),
+  /** 一键刷新所有账号的 accessToken（真实续期，末尾只重载一次上游） */
+  refreshAllTokens: (upstreamId?: number | null) =>
+    post<{
+      total: number;
+      succeeded: number;
+      failed: string[];
+      results: {file: string; nickname: string; uid: string; ok: boolean; message: string}[];
+      reload_triggered: boolean;
+    }>(`/api/accounts/refresh-tokens${groupQs(upstreamId)}`),
+  /** 令牌刷新计划（计划任务：每 N 天自动全量刷新一次） */
+  refreshPlan: () => get<RefreshPlan>('/api/accounts/refresh-plan'),
+  saveRefreshPlan: (enabled: boolean, intervalDays: number, hour: number) =>
+    put<RefreshPlan>('/api/accounts/refresh-plan',
+                     {enabled, interval_days: intervalDays, hour}),
+  /** 立即执行一次计划（全量刷新；串行，不重载上游） */
+  runRefreshPlan: () => post<{
+    checked: number; renewed: number; failed: number; skipped: number;
+    last_run: number; next_run: number | null;
+  }>('/api/accounts/refresh-plan/run'),
   /** 强制清除账号级冷却、熔断/降权与模型级限流（会重启一次上游）。 */
   clearCooling: (file: string, upstreamId?: number | null) =>
     post<{ok: boolean; message: string; uid?: string; backup?: string}>(

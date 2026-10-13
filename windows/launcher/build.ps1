@@ -90,12 +90,31 @@ function Find-LocalUv {
 }
 
 # ── 1. 前端静态产物 ─────────────────────────────────────────
-# 运行时瘦身：目标机用不到的标准库与调试符号全部去掉
-function Trim-PythonRuntime($pyDir) {
-    foreach ($name in @('test', 'idlelib', 'lib2to3', 'turtledemo', 'ensurepip')) {
-        $p = Join-Path $pyDir ('Lib\' + $name)
-        if (Test-Path $p) { Remove-Item $p -Recurse -Force }
-    }
+$webIndex = Join-Path $repoRoot 'web\out\index.html'
+if ($ForceWeb -or -not (Test-Path $webIndex)) {
+    Write-Step '构建前端静态产物（npm ci + build:export）…'
+    Push-Location (Join-Path $repoRoot 'web')
+    try {
+        # npm ci 失败的常见原因：配置的缓存目录（node_cache）被杀软锁定/无权限（EPERM）、
+        # 实时扫描干扰 node_modules 解包（TAR_ENTRY_ERROR）——换干净临时缓存并清掉
+        # 半损坏的 node_modules 后重试一次
+        & npm ci --no-audit --no-fund
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn2 'npm ci 失败（缓存目录可能被占用或杀软锁定），改用临时缓存重试…'
+            if (Test-Path node_modules) {
+                Remove-Item node_modules -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            $fallbackCache = Join-Path $env:TEMP ('wb-npm-cache-' + [Guid]::NewGuid().ToString('N'))
+            & npm ci --no-audit --no-fund --cache $fallbackCache
+            if ($LASTEXITCODE -ne 0) { throw 'npm ci 失败（临时缓存重试后仍失败，请检查杀软对项目目录与 npm 缓存目录的实时扫描设置）' }
+        }
+        & npm run build:export
+        if ($LASTEXITCODE -ne 0) { throw '前端构建失败' }
+    } finally { Pop-Location }
+    if (-not (Test-Path $webIndex)) { throw '前端产物缺失：web\out\index.html' }
+} else {
+    Write-Step '前端静态产物已存在，跳过构建'
+}
     Get-ChildItem $pyDir -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     Get-ChildItem $pyDir -Recurse -File -Include '*.pdb' -ErrorAction SilentlyContinue |

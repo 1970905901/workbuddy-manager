@@ -5,6 +5,7 @@
 param([switch]$SkipCleanup)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName System.Windows.Forms
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -19,6 +20,21 @@ public class Win32Msg
 
     [DllImport("user32.dll")]
     public static extern IntPtr PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int cmd);
+
+    // powershell 不是前台进程时 SetForegroundWindow 会被系统拒绝；
+    // 最小化再恢复可绕过前台锁定，让目标窗口拿到焦点
+    public static void ForceForeground(IntPtr hWnd)
+    {
+        ShowWindow(hWnd, 6);   // SW_MINIMIZE
+        ShowWindow(hWnd, 9);   // SW_RESTORE
+        SetForegroundWindow(hWnd);
+    }
 
     public const uint WM_SETTEXT = 0x000C;
     public const uint BM_CLICK = 0x00F5;
@@ -35,6 +51,10 @@ $targetDir = 'D:\ai-project\_wb_test_install'
 $timeoutSec = 180
 
 if (-not (Test-Path $setupExe)) { Write-Error "找不到安装包：$setupExe"; exit 1 }
+
+# 安装进度诊断日志：完成页等状态改用「轮询该日志」判断（UIA 查询目标 UI 线程忙时会挂）
+$diagLog = Join-Path $env:TEMP 'wb-install-diag.log'
+Remove-Item $diagLog -Force -ErrorAction SilentlyContinue
 
 $root = [System.Windows.Automation.AutomationElement]::RootElement
 
@@ -129,38 +149,60 @@ if (-not $edit) {
     }
     $proc.Kill(); exit 1
 }
+if ($SkipCleanup) {
+    # 已安装路径应被自动回填到目录框（注册表 InstallLocation），覆盖安装无需手敲
+    Check ($edit.Current.Name -eq $targetDir) '已安装路径自动回填到安装目录'
+}
 [Win32Msg]::SetText($edit.Current.NativeWindowHandle, $targetDir)
 Write-Host ('OK: 目录已写入 ' + $targetDir)
 
-# 点击「下一步」开始安装
-$nextBtn = Find-ChildByName $win '*下一步*' '*BUTTON*'
-if (-not $nextBtn) { Write-Host 'FAIL: 未找到「下一步」按钮'; $proc.Kill(); exit 1 }
-[Win32Msg]::Click($nextBtn.Current.NativeWindowHandle)
-Write-Host 'OK: 已触发「开始安装」，等待完成…'
-
-# 覆盖安装场景（-SkipCleanup）：点击后可能出现「覆盖安装」确认框 → 点「是」
-if ($SkipCleanup) {
-    $deadline = (Get-Date).AddSeconds(8)
-    while ((Get-Date) -lt $deadline) {
-        Start-Sleep -Milliseconds 400
+# 位置页 → 触发安装：发送 ENTER（AcceptButton = 「下一步」）并以诊断日志「开始安装」
+# 确认生效；键盘事件偶尔被前台切换吞掉，未生效则重发。
+# 覆盖确认框（-SkipCleanup）出现时点一次「是」并等它消失——期间绝不重发 ENTER：
+# 被确认框禁用的主窗按钮收到 BM_CLICK 仍会触发 Click 事件，重试会滚雪球弹出几十个确认框。
+$installed = $false
+$clickDeadline = (Get-Date).AddSeconds(40)
+$lastSend = (Get-Date).AddSeconds(-10)
+$pendingDialog = [IntPtr]::Zero
+while ((Get-Date) -lt $clickDeadline) {
+    if ($SkipCleanup) {
         $mb = $root.FindFirst([System.Windows.Automation.TreeScope]::Children,
             (New-Object System.Windows.Automation.PropertyCondition(
                 [System.Windows.Automation.AutomationElement]::NameProperty, '覆盖安装')))
-        if ($mb) {
-            $yes = Find-ChildByName $mb '*是*' '*BUTTON*'
-            if ($yes) { [Win32Msg]::Click($yes.Current.NativeWindowHandle) }
-            Write-Host 'OK: 覆盖安装确认框已确认'
-            break
+        if ($mb -ne [IntPtr]::Zero) {
+            if ($pendingDialog -ne $mb) {
+                # 新弹出的确认框：只点一次「是」，然后等它消失
+                $yes = Find-ChildByName $mb '*是*' '*BUTTON*'
+                if ($yes) { [Win32Msg]::Click($yes.Current.NativeWindowHandle) }
+                $pendingDialog = $mb
+                Write-Host 'OK: 覆盖安装确认框已确认'
+            }
+            Start-Sleep -Milliseconds 300
+            continue
         }
+        $pendingDialog = [IntPtr]::Zero
     }
+    $diag = Get-Content $diagLog -Encoding UTF8 -ErrorAction SilentlyContinue
+    if (($diag | Select-Object -Last 5) -match '开始安装') { $installed = $true; break }
+    if (((Get-Date) - $lastSend).TotalMilliseconds -gt 2000) {
+        [Win32Msg]::ForceForeground($proc.MainWindowHandle)
+        Start-Sleep -Milliseconds 250
+        [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+        $lastSend = Get-Date
+    }
+    Start-Sleep -Milliseconds 300
 }
+if (-not $installed) { Write-Host 'FAIL: 未能触发安装（重试后仍无效）'; if (-not $proc.HasExited) { $proc.Kill() }; exit 1 }
+Write-Host 'OK: 安装已开始（诊断日志确认）'
 
-# 等待完成页出现（向导最后一页标题含「安装完成」），不点「完成」避免启动应用
+# 等待安装完成（轮询诊断日志：最后一步「注册表写入完成」= 向导进入完成页），
+# 不点「完成」避免启动应用。UIA 查询在目标 UI 线程忙时会挂，这里一律用文件判断。
 $deadline = (Get-Date).AddSeconds($timeoutSec)
 $doneShown = $false
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 1
-    if (Test-PageMarker $win '*安装完成*') { $doneShown = $true; break }
+    $diag = Get-Content $diagLog -Encoding UTF8 -ErrorAction SilentlyContinue
+    if (($diag | Select-Object -Last 1) -match '注册表写入完成') { $doneShown = $true; break }
 }
 if (-not $doneShown) { Write-Host 'FAIL: 等待安装完成页超时'; if (-not $proc.HasExited) { $proc.Kill() }; exit 1 }
 Write-Host 'OK: 安装完成页已出现'
@@ -189,14 +231,13 @@ if ($SkipCleanup) {
 
 # 点「完成」→ 安装窗口必须关闭（Application.Run 模式下需显式 Close 的回归验证）；
 # 完成页默认勾选「立即启动」，随后顺带清理被启动的应用
-$finishBtn = Find-ChildByPrefix $win 'BUTTON' '完成'
-if ($finishBtn) {
-    [Win32Msg]::Click($finishBtn.Current.NativeWindowHandle)
-    Start-Sleep -Seconds 3
-    $proc.Refresh()
-    Check ($proc.HasExited -or $proc.MainWindowHandle -eq 0) '点「完成」后安装窗口关闭'
-    Get-Process -Name 'WorkBuddyManager' -ErrorAction SilentlyContinue | Stop-Process -Force
-}
+[Win32Msg]::ForceForeground($proc.MainWindowHandle)
+Start-Sleep -Milliseconds 300
+[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+Start-Sleep -Seconds 3
+$proc.Refresh()
+Check ($proc.HasExited -or $proc.MainWindowHandle -eq 0) '点「完成」后安装窗口关闭'
+Get-Process -Name 'WorkBuddyManager' -ErrorAction SilentlyContinue | Stop-Process -Force
 
 if (-not $proc.HasExited) { $proc.Kill() }
 if ($failed) { Write-Host 'RESULT: FAIL'; exit 1 }

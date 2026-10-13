@@ -76,6 +76,21 @@ namespace WorkBuddyLauncher
             _txtDir.Text = LauncherPaths.DefaultInstallDir;
             _pageLocation.Controls.Add(_txtDir);
 
+            // 探测已安装位置（注册表卸载项记录的 InstallLocation），自动回填方便覆盖安装
+            using (RegistryKey key = Registry.CurrentUser.OpenSubKey(LauncherPaths.UninstallRegKey))
+            {
+                if (key != null)
+                {
+                    string installed = key.GetValue("InstallLocation") as string;
+                    if (!string.IsNullOrEmpty(installed) &&
+                        Directory.Exists(installed) &&
+                        LauncherPaths.LooksInstalled(installed))
+                    {
+                        _txtDir.Text = installed;
+                    }
+                }
+            }
+
             var btnBrowse = new Button();
             btnBrowse.Text = "浏览…";
             btnBrowse.SetBounds(412, 119, 64, 26);

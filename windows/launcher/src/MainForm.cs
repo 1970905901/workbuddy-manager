@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Drawing;
+using System.IO;
 using System.Windows.Forms;
 using System.Threading.Tasks;
 
@@ -165,10 +166,51 @@ namespace WorkBuddyLauncher
             var menu = new ContextMenuStrip();
             menu.Items.Add("显示主窗口", null, delegate { RestoreFromTray(); });
             menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add("查看初始管理员密码", null, OnShowInitialCredentials);
             menu.Items.Add("重置关闭行为提示", null, OnResetCloseBehavior);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("退出启动器", null, OnTrayExit);
             _tray.ContextMenuStrip = menu;
+        }
+
+        /// 首次启动成功后提示一次初始管理员账号（服务端随机生成，只打印进 stderr 日志）。
+        private void MaybeShowInitialCredentials()
+        {
+            if (_settings.Get("initial_pwd_shown", null) != null) { return; }
+            ShowInitialCredentials(markShown: true);
+        }
+
+        private void OnShowInitialCredentials(object sender, EventArgs e)
+        {
+            ShowInitialCredentials(markShown: false);
+        }
+
+        private void ShowInitialCredentials(bool markShown)
+        {
+            string errLog = Path.Combine(Path.Combine(_root, "data"), "manager.err.log");
+            string user;
+            string pwd;
+            if (!InitialCredentials.TryExtract(errLog, out user, out pwd))
+            {
+                if (!markShown)
+                {
+                    MessageBox.Show(this,
+                        "日志中未找到初始账号记录。\n若安装时未在 .env 预设 WB_ADMIN_PASSWORD，该记录只出现在首次启动的日志里。",
+                        "初始管理员账号", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                return;
+            }
+            if (markShown)
+            {
+                _settings.Set("initial_pwd_shown", "1");
+                _settings.Save();
+            }
+            try { Clipboard.SetText(pwd); } catch { }
+            MessageBox.Show(this,
+                "面板的初始管理员账号如下（密码已复制到剪贴板）：\n\n用户名：admin\n密码：" + pwd +
+                "\n\n请登录后立即在「设置 → 管理用户」中修改密码。\n" +
+                "（若你已修改过密码，此处显示的是初始密码、已失效。随时可在托盘菜单再次查看。）",
+                "初始管理员账号", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private void LoadConfig()
@@ -249,6 +291,19 @@ namespace WorkBuddyLauncher
             _currentHost = host;
             _currentPort = port;
             UpdateAddressLabel();
+
+            // 端口已被其他程序占用时立即提示（常见：机器上另有一个实例占着默认端口），
+            // 而不是进入「启动中…」傻等健康检查超时
+            if (!HealthProbe.Check(EnvConfig.ToConnectHost(host), port, 1000) &&
+                PortCheck.InUse(EnvConfig.ToConnectHost(host), port))
+            {
+                MessageBox.Show(this,
+                    "端口 " + port + " 已被其他程序占用，无法在此端口启动。\n" +
+                    "请更换端口（或先停掉占用它的程序）后重试。",
+                    "启动", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                SetState(ProjectState.Stopped, null);
+                return;
+            }
 
             SetState(ProjectState.Starting, null);
             AppendLog("[RUN] 正在准备运行环境…");
@@ -417,6 +472,7 @@ namespace WorkBuddyLauncher
                     {
                         _openBrowserOnHealthy = false;
                         OpenPanel();
+                        MaybeShowInitialCredentials();
                     }
                     return;
                 }

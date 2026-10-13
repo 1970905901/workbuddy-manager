@@ -1,8 +1,12 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace WorkBuddyLauncher
 {
@@ -108,6 +112,67 @@ namespace WorkBuddyLauncher
             {
                 return false;
             }
+        }
+    }
+
+    /// 目标端口是否已被占用（用与监听等效的地址试绑定判断）。
+    internal static class PortCheck
+    {
+        public static bool InUse(string connectHost, int port)
+        {
+            try
+            {
+                IPAddress addr = connectHost == "0.0.0.0" || connectHost == "::"
+                    ? IPAddress.Any
+                    : IPAddress.Parse(connectHost == "[::1]" ? "::1" : connectHost);
+                var listener = new TcpListener(addr, port);
+                listener.Start();
+                listener.Stop();
+                return false;
+            }
+            catch
+            {
+                return true;
+            }
+        }
+    }
+
+    /// 从服务端 stderr 日志提取首次启动生成的管理员账号（bootstrap_users 只打印一次）。
+    internal static class InitialCredentials
+    {
+        public static bool TryExtract(string errLogPath, out string username, out string password)
+        {
+            username = null;
+            password = null;
+            try
+            {
+                if (!File.Exists(errLogPath)) { return false; }
+                // err.log 正被 uvicorn 以写模式持有，必须以 ReadWrite 共享打开，否则 IOException
+                string[] lines;
+                using (var stream = new FileStream(errLogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var reader = new StreamReader(stream, Encoding.UTF8))
+                {
+                    var collected = new List<string>();
+                    string line;
+                    while ((line = reader.ReadLine()) != null) { collected.Add(line); }
+                    lines = collected.ToArray();
+                }
+                // 从尾部往前找：日志可能含多次安装的记录，取最新一次
+                for (int i = lines.Length - 1; i >= 0; i--)
+                {
+                    if (lines[i].IndexOf("已生成初始管理员账号", StringComparison.Ordinal) < 0) { continue; }
+                    for (int j = i; j < Math.Min(i + 6, lines.Length); j++)
+                    {
+                        Match user = Regex.Match(lines[j], @"用户名:\s*(\S+)");
+                        if (user.Success) { username = user.Groups[1].Value; }
+                        Match pwd = Regex.Match(lines[j], @"密码\s*:\s*(\S+)");
+                        if (pwd.Success) { password = pwd.Groups[1].Value; }
+                    }
+                    if (username != null && password != null) { return true; }
+                }
+            }
+            catch { }
+            return false;
         }
     }
 }

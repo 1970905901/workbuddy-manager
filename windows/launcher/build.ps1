@@ -26,6 +26,12 @@ $stageDir = Join-Path $env:TEMP ('wb-payload-' + [Guid]::NewGuid().ToString('N')
 $runtimeCacheDir = Join-Path $repoRoot '.tools\cache\python-runtime'
 $runtimeCachePython = Join-Path $runtimeCacheDir 'python'
 $runtimeCacheMeta = Join-Path $runtimeCacheDir 'cache.json'
+$webCacheMeta = Join-Path $repoRoot '.tools\cache\web-build.json'
+$upstreamCacheMeta = Join-Path $repoRoot '.tools\cache\upstream-build.json'
+$buildScriptPath = Join-Path $scriptDir 'build.ps1'
+$WebBuildRecipeVersion = '3'
+$UpstreamBuildRecipeVersion = '2'
+$RuntimeBuildRecipeVersion = '3'
 
 $UpstreamSrcUrl = 'https://github.com/ithtelab/workbuddy-manager/releases/download/upstream-src/workbuddy2api-src.tar.gz'
 $UvUrl = 'https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip'
@@ -50,6 +56,58 @@ function Copy-Tree($source, $destination, $excludeDirs = @(), $excludeFiles = @(
     if ($LASTEXITCODE -ge 8) { throw ('robocopy 失败（' + $source + ' → ' + $destination + '，退出码 ' + $LASTEXITCODE + '）') }
 }
 
+function Get-FileSha256($path) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return '' }
+    return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+# 对构建输入目录做稳定指纹：路径 + 文件 SHA256；排除生成物与运行期数据。
+function Get-TreeHash($rootPath, $excludeRegex = @()) {
+    if (-not (Test-Path -LiteralPath $rootPath -PathType Container)) { return '' }
+    $rootFull = (Resolve-Path -LiteralPath $rootPath).Path.TrimEnd('\', '/')
+    $entries = New-Object System.Collections.Generic.List[string]
+    $pending = New-Object 'System.Collections.Generic.Queue[string]'
+    $pending.Enqueue($rootFull)
+
+    while ($pending.Count -gt 0) {
+        $current = $pending.Dequeue()
+        foreach ($item in @(Get-ChildItem -LiteralPath $current -Force -ErrorAction Stop)) {
+            $relative = $item.FullName.Substring($rootFull.Length).TrimStart('\', '/') -replace '\\', '/'
+            $excluded = $false
+            foreach ($pattern in $excludeRegex) {
+                if ($relative -match $pattern) { $excluded = $true; break }
+            }
+            if ($excluded) { continue }
+            if ($item.PSIsContainer) {
+                if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+                $pending.Enqueue($item.FullName)
+                continue
+            }
+            [void]$entries.Add($relative + '=' + (Get-FileSha256 $item.FullName))
+        }
+    }
+
+    $canonical = [string]::Join("`n", @($entries | Sort-Object))
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($canonical))).Replace('-', '').ToLowerInvariant()
+    } finally { $sha.Dispose() }
+}
+
+function Read-CacheMeta($path) {
+    try {
+        if (Test-Path $path) { return (Get-Content $path -Raw -Encoding UTF8 | ConvertFrom-Json) }
+    } catch { }
+    return $null
+}
+
+function Write-CacheMeta($path, $data) {
+    $parent = Split-Path -Parent $path
+    New-Item -ItemType Directory $parent -Force | Out-Null
+    [System.IO.File]::WriteAllText($path, ($data | ConvertTo-Json),
+        (New-Object System.Text.UTF8Encoding($false)))
+}
+
 function Get-RequirementsHash {
     $requirements = Join-Path $repoRoot 'server\requirements.txt'
     if (-not (Test-Path $requirements)) { throw ('缺少依赖清单：' + $requirements) }
@@ -57,12 +115,20 @@ function Get-RequirementsHash {
 }
 
 # 命中缓存时校验依赖哈希并做关键包导入自检，避免复用不完整缓存
-function Find-CachedPythonRuntime($requirementsHash) {
+function Find-CachedPythonRuntime($requirementsHash, $runtimeSourceUrl, $recipeVersion, $buildScriptHash) {
     if ($RefreshRuntime -or -not (Test-Path $runtimeCacheMeta) -or
         -not (Test-Path (Join-Path $runtimeCachePython 'python.exe'))) { return $null }
     try {
-        $meta = Get-Content $runtimeCacheMeta -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($meta.requirements_sha256 -ne $requirementsHash) { return $null }
+        $meta = Read-CacheMeta $runtimeCacheMeta
+        $sourceMatches = $meta -and $meta.source_url -eq $runtimeSourceUrl
+        if ($meta -and $meta.source_url -like 'local:*') {
+            $localSource = $meta.source_url.Substring(6)
+            $sourceMatches = (Test-Path (Join-Path $localSource 'python.exe')) -and
+                $meta.source_executable_sha256 -eq (Get-FileSha256 (Join-Path $localSource 'python.exe'))
+        }
+        if (-not $meta -or $meta.requirements_sha256 -ne $requirementsHash -or
+            -not $sourceMatches -or $meta.recipe_version -ne $recipeVersion -or
+            $meta.build_script_sha256 -ne $buildScriptHash) { return $null }
         $pythonExe = Join-Path $runtimeCachePython 'python.exe'
         & $pythonExe -c 'import fastapi, uvicorn' 2>$null | Out-Null
         if ($LASTEXITCODE -eq 0) { return $runtimeCachePython }
@@ -74,20 +140,26 @@ function Find-CachedPythonRuntime($requirementsHash) {
 }
 
 # 成功准备后写入项目本地缓存；缓存写入失败不阻断本次构建
-function Save-PythonRuntimeCache($pythonRoot, $requirementsHash, $sourceUrl) {
+function Save-PythonRuntimeCache($pythonRoot, $requirementsHash, $sourceUrl, $recipeVersion, $buildScriptHash) {
     $cacheParent = Split-Path -Parent $runtimeCacheDir
     $tempCache = $runtimeCacheDir + '.tmp-' + [Guid]::NewGuid().ToString('N')
     try {
         New-Item -ItemType Directory $cacheParent -Force | Out-Null
         New-Item -ItemType Directory $tempCache -Force | Out-Null
         Copy-Tree $pythonRoot (Join-Path $tempCache 'python')
+        $sourceExecutableHash = ''
+        if ($sourceUrl -like 'local:*') {
+            $sourceExecutableHash = Get-FileSha256 (Join-Path $sourceUrl.Substring(6) 'python.exe')
+        }
         $meta = @{
             requirements_sha256 = $requirementsHash
             source_url = $sourceUrl
+            source_executable_sha256 = $sourceExecutableHash
+            recipe_version = $recipeVersion
+            build_script_sha256 = $buildScriptHash
             cached_at = [DateTime]::UtcNow.ToString('o')
-        } | ConvertTo-Json
-        [System.IO.File]::WriteAllText((Join-Path $tempCache 'cache.json'), $meta,
-            (New-Object System.Text.UTF8Encoding($false)))
+        }
+        Write-CacheMeta (Join-Path $tempCache 'cache.json') $meta
         if (Test-Path $runtimeCacheDir) { Remove-Item $runtimeCacheDir -Recurse -Force }
         Move-Item $tempCache $runtimeCacheDir -Force | Out-Null
         return $runtimeCachePython
@@ -142,11 +214,23 @@ function Find-LocalUv {
     return $null
 }
 
+$buildScriptHash = Get-FileSha256 $buildScriptPath
+
 # ── 1. 前端静态产物 ─────────────────────────────────────────
-$webIndex = Join-Path $repoRoot 'web\out\index.html'
-if ($ForceWeb -or -not (Test-Path $webIndex)) {
+$webDir = Join-Path $repoRoot 'web'
+$webOutDir = Join-Path $webDir 'out'
+$webIndex = Join-Path $webOutDir 'index.html'
+$webSourceHash = Get-TreeHash $webDir @('(^|/)(node_modules|\.next|out)(/|$)')
+$webOutputHash = Get-TreeHash $webOutDir
+$webMeta = Read-CacheMeta $webCacheMeta
+$webCacheValid = (Test-Path $webIndex) -and -not $ForceWeb -and $webMeta -and
+    $webMeta.source_sha256 -eq $webSourceHash -and
+    $webMeta.output_sha256 -eq $webOutputHash -and
+    $webMeta.build_script_sha256 -eq $buildScriptHash -and
+    $webMeta.recipe_version -eq $WebBuildRecipeVersion
+if (-not $webCacheValid) {
     Write-Step '构建前端静态产物（npm ci + build:export）…'
-    Push-Location (Join-Path $repoRoot 'web')
+    Push-Location $webDir
     try {
         # npm ci 失败的常见原因：配置的缓存目录（node_cache）被杀软锁定/无权限（EPERM）、
         # 实时扫描干扰 node_modules 解包（TAR_ENTRY_ERROR）——换干净临时缓存并清掉
@@ -165,8 +249,20 @@ if ($ForceWeb -or -not (Test-Path $webIndex)) {
         if ($LASTEXITCODE -ne 0) { throw '前端构建失败' }
     } finally { Pop-Location }
     if (-not (Test-Path $webIndex)) { throw '前端产物缺失：web\out\index.html' }
+    $webOutputHash = Get-TreeHash $webOutDir
+    try {
+        Write-CacheMeta $webCacheMeta @{
+            source_sha256 = $webSourceHash
+            output_sha256 = $webOutputHash
+            build_script_sha256 = $buildScriptHash
+            recipe_version = $WebBuildRecipeVersion
+            cached_at = [DateTime]::UtcNow.ToString('o')
+        }
+    } catch {
+        Write-Warn2 ('写入前端构建缓存元数据失败（本次构建继续）：' + $_.Exception.Message)
+    }
 } else {
-    Write-Step '前端静态产物已存在，跳过构建'
+    Write-Step '前端静态产物与缓存指纹一致，跳过构建'
 }
 
 # 运行时瘦身：目标机用不到的标准库与调试符号全部去掉
@@ -200,38 +296,53 @@ function Resolve-PythonRuntimeUrl {
     } catch { }
     return $fallback
 }
-# 本机 Go 优先；没有则下载便携工具链到 .tools\go\（一次性，之后复用）
-function Find-GoToolchain {
+# 找本机已有的 Go；没有则由 Find-GoToolchain 下载便携工具链。
+function Find-ExistingGoToolchain {
     $go = Get-Command go.exe -ErrorAction SilentlyContinue
     if ($go) { return $go.Source }
     $portable = Join-Path $repoRoot '.tools\go\bin\go.exe'
     if (Test-Path $portable) { return $portable }
+    return $null
+}
+
+function Get-GoToolchainFingerprint($goExe) {
+    if (-not $goExe -or -not (Test-Path -LiteralPath $goExe -PathType Leaf)) { return $null }
+    try {
+        $versionOutput = & $goExe version 2>$null
+        $version = if ($LASTEXITCODE -eq 0) { ($versionOutput -join ' ').Trim() } else { '' }
+        return [pscustomobject]@{
+            executable_sha256 = Get-FileSha256 $goExe
+            version = $version
+        }
+    } catch {
+        return $null
+    }
+}
+
+# 本机 Go 优先；没有则下载便携工具链到 .tools\go\（一次性，之后复用）
+function Find-GoToolchain {
+    $existing = Find-ExistingGoToolchain
+    if ($existing) { return $existing }
     Write-Step '本机未安装 Go，下载便携工具链（约 80MB）…'
     $zip = Join-Path $env:TEMP 'wb-go-portable.zip'
     Invoke-Curl $GoToolchainUrl $zip
     New-Item -ItemType Directory (Join-Path $repoRoot '.tools') -Force | Out-Null
     Expand-Archive $zip (Join-Path $repoRoot '.tools') -Force
     Remove-Item $zip -Force
+    $portable = Join-Path $repoRoot '.tools\go\bin\go.exe'
     if (-not (Test-Path $portable)) { throw '便携 Go 解压失败' }
     return $portable
-}
-$webIndex = Join-Path $repoRoot 'web\out\index.html'
-if ($ForceWeb -or -not (Test-Path $webIndex)) {
-    Write-Step '构建前端静态产物（npm ci + build:export）…'
-    Push-Location (Join-Path $repoRoot 'web')
-    try {
-        & npm ci
-        if ($LASTEXITCODE -ne 0) { throw 'npm ci 失败' }
-        & npm run build:export
-        if ($LASTEXITCODE -ne 0) { throw '前端构建失败' }
-    } finally { Pop-Location }
-    if (-not (Test-Path $webIndex)) { throw '前端产物缺失：web\out\index.html' }
-} else {
-    Write-Step '前端静态产物已存在，跳过构建'
 }
 
 # ── 2. 上游源码与 wb2api.exe ────────────────────────────────
 $upstreamDir = Join-Path $repoRoot 'upstream'
+$upstreamHashExcludeRegex = @(
+    '(^|/)(\.git|__pycache__|auths|data|logs?|tmp)(/|$)',
+    '(^|/)(\.env(?:\..*)?|config\.json|users\.json|.*\.db(?:-wal|-shm)?|.*\.log)$',
+    '(^|/)wb2api\.exe$'
+)
+$upstreamPayloadExcludeDirs = @('.git', '__pycache__', 'auths', 'data', 'logs', 'log', 'tmp')
+$upstreamPayloadExcludeFiles = @('.env', '.env.*', 'config.json', 'users.json', '*.db', '*.db-wal', '*.db-shm', '*.log')
 if (-not $SkipUpstream) {
     if (-not (Test-Path (Join-Path $upstreamDir 'go.mod'))) {
         Write-Step '下载上游源码包…'
@@ -249,16 +360,55 @@ if (-not $SkipUpstream) {
         Write-Step '上游源码已存在，跳过下载'
     }
 
-    if (-not (Test-Path (Join-Path $upstreamDir 'wb2api.exe'))) {
-        Write-Step '编译上游网关 wb2api.exe（Go，-ldflags "-s -w"）…'
-        $goExe = Find-GoToolchain
+    $upstreamExe = Join-Path $upstreamDir 'wb2api.exe'
+    $upstreamSourceHash = Get-TreeHash $upstreamDir $upstreamHashExcludeRegex
+    if (-not $upstreamSourceHash) { throw '上游源码指纹为空，无法判断构建输入' }
+    $upstreamMeta = Read-CacheMeta $upstreamCacheMeta
+    $goForCache = Find-ExistingGoToolchain
+    $goFingerprintForCache = Get-GoToolchainFingerprint $goForCache
+    $goFingerprintMatches = if (-not $goForCache) {
+        $true
+    } else {
+        $goFingerprintForCache -and $upstreamMeta -and
+            $upstreamMeta.go_executable_sha256 -eq $goFingerprintForCache.executable_sha256 -and
+            $upstreamMeta.go_version -eq $goFingerprintForCache.version
+    }
+    $upstreamArtifactMatches = (Test-Path $upstreamExe) -and $upstreamMeta -and
+        $upstreamMeta.artifact_sha256 -eq (Get-FileSha256 $upstreamExe)
+    $upstreamCacheValid = (Test-Path $upstreamExe) -and $upstreamMeta -and
+        $upstreamMeta.source_sha256 -eq $upstreamSourceHash -and
+        $upstreamMeta.source_url -eq $UpstreamSrcUrl -and
+        $upstreamMeta.build_script_sha256 -eq $buildScriptHash -and
+        $upstreamMeta.recipe_version -eq $UpstreamBuildRecipeVersion -and
+        $goFingerprintMatches -and $upstreamArtifactMatches
+
+    if (-not $upstreamCacheValid) {
+        Write-Step '上游源码或 Go 构建资源已变化，重新编译 wb2api.exe…'
+        $goExe = if ($goForCache) { $goForCache } else { Find-GoToolchain }
+        $goFingerprint = Get-GoToolchainFingerprint $goExe
+        if (-not $goFingerprint) { throw '无法获取 Go 工具链指纹' }
         Push-Location $upstreamDir
         try {
             & $goExe build -ldflags '-s -w' -trimpath -o wb2api.exe ./cmd/server
             if ($LASTEXITCODE -ne 0) { throw 'wb2api.exe 编译失败' }
         } finally { Pop-Location }
+        if (-not (Test-Path $upstreamExe)) { throw 'wb2api.exe 编译后未生成' }
+        try {
+            Write-CacheMeta $upstreamCacheMeta @{
+                source_sha256 = $upstreamSourceHash
+                source_url = $UpstreamSrcUrl
+                build_script_sha256 = $buildScriptHash
+                recipe_version = $UpstreamBuildRecipeVersion
+                go_executable_sha256 = $goFingerprint.executable_sha256
+                go_version = $goFingerprint.version
+                artifact_sha256 = Get-FileSha256 $upstreamExe
+                cached_at = [DateTime]::UtcNow.ToString('o')
+            }
+        } catch {
+            Write-Warn2 ('写入上游构建缓存元数据失败（本次构建继续）：' + $_.Exception.Message)
+        }
     } else {
-        Write-Step 'wb2api.exe 已存在，跳过编译'
+        Write-Step '上游源码、Go 工具链与 wb2api.exe 指纹一致，跳过编译'
     }
 }
 
@@ -269,10 +419,12 @@ $pyRoot = $null
 $uvExeStaged = $null
 if (-not $SkipRuntime) {
     $requirementsHash = Get-RequirementsHash
+    $runtimeSourceUrl = Resolve-PythonRuntimeUrl
 
-    # 同一项目重复构建时直接复用已预装依赖的运行时，不访问下载源、不重复 pip install
+    # 同一项目重复构建时直接复用已预装依赖的运行时，不访问下载源、不重复 pip install。
+    # requirements、Python 来源或运行时瘦身配方变化都会让缓存失效。
     if (-not $RefreshRuntime) {
-        $cachedRuntime = Find-CachedPythonRuntime $requirementsHash
+        $cachedRuntime = Find-CachedPythonRuntime $requirementsHash $runtimeSourceUrl $RuntimeBuildRecipeVersion $buildScriptHash
         if ($cachedRuntime) {
             Write-Step ('复用项目 Python 运行时缓存：' + $cachedRuntime)
             $pyRoot = $cachedRuntime
@@ -281,10 +433,9 @@ if (-not $SkipRuntime) {
     }
 
     if (-not $runtimeOk) {
-        $sourceUrl = $null
         # 3a. 网络下载 python-build-standalone（标准路径，可复现）
         try {
-            $sourceUrl = Resolve-PythonRuntimeUrl
+            $sourceUrl = $runtimeSourceUrl
             Write-Step ('下载 Python 3.11 独立运行时（stripped）：' + $sourceUrl)
             $tarPath = Join-Path $env:TEMP 'wb-python-runtime.tar.gz'
             Invoke-Curl $sourceUrl $tarPath
@@ -296,7 +447,7 @@ if (-not $SkipRuntime) {
             $pyRoot = Join-Path $pyStage 'python'
             if (-not (Test-Path (Join-Path $pyRoot 'python.exe'))) { throw 'Python 运行时结构异常（缺少 python.exe）' }
             Prepare-PythonRuntime $pyRoot
-            $pyRoot = Save-PythonRuntimeCache $pyRoot $requirementsHash $sourceUrl
+            $pyRoot = Save-PythonRuntimeCache $pyRoot $requirementsHash $sourceUrl $RuntimeBuildRecipeVersion $buildScriptHash
             $runtimeOk = $true
         } catch {
             Write-Warn2 $_.Exception.Message
@@ -315,7 +466,7 @@ if (-not $SkipRuntime) {
                 Copy-Tree $localPy (Join-Path $pyStage 'python')
                 $pyRoot = Join-Path $pyStage 'python'
                 Prepare-PythonRuntime $pyRoot
-                $pyRoot = Save-PythonRuntimeCache $pyRoot $requirementsHash ('local:' + $localPy)
+                $pyRoot = Save-PythonRuntimeCache $pyRoot $requirementsHash ('local:' + $localPy) $RuntimeBuildRecipeVersion $buildScriptHash
                 $runtimeOk = $true
             }
         } catch {
@@ -405,7 +556,7 @@ function ConvertTo-AssemblyVersion($gitVersion) {
 $assemblyVersion = ConvertTo-AssemblyVersion $version
 
 if (-not $SkipUpstream) {
-    Copy-Tree $upstreamDir (Join-Path $stageDir 'upstream') @('.git', '__pycache__')
+    Copy-Tree $upstreamDir (Join-Path $stageDir 'upstream') $upstreamPayloadExcludeDirs $upstreamPayloadExcludeFiles
 }
 if ($runtimeOk) {
     Copy-Tree $pyRoot (Join-Path $stageDir '.runtime\python')

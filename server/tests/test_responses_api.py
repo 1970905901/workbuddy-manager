@@ -244,6 +244,52 @@ class ToolOutputImageTest(unittest.TestCase):
             [m['tool_call_id'] for m in out['messages'] if m['role'] == 'tool'],
             ['c1', 'c2'])
 
+    def test_interleaved_developer_notice_stays_out_of_tool_group(self) -> None:
+        """组内夹带 developer 通知（<image_resize_notice>）也要延后。
+
+        线上实证：同一轮两次 view_image，客户端在两条工具结果之间插了一条
+        `<image_resize_notice>` developer 消息。旧实现遇到该通知会提前结束
+        工具组（tool→user→system→tool→user），上游仍报 11148。通知必须延后
+        到整组 tool 结果与图片之后。
+        """
+        out = R.to_chat_request({'model': 'm', 'input': [
+            {'type': 'function_call', 'call_id': 'c1', 'name': 'view_image', 'arguments': '{}'},
+            {'type': 'function_call', 'call_id': 'c2', 'name': 'view_image', 'arguments': '{}'},
+            {'type': 'function_call_output', 'call_id': 'c1', 'output': [
+                {'type': 'input_image', 'image_url': 'https://x/1.png'}]},
+            {'type': 'message', 'role': 'developer', 'content': [
+                {'type': 'input_text', 'text': '<image_resize_notice> resized'}]},
+            {'type': 'function_call_output', 'call_id': 'c2', 'output': [
+                {'type': 'input_image', 'image_url': 'https://x/2.png'}]},
+            {'type': 'message', 'role': 'user', 'content': [
+                {'type': 'input_text', 'text': '域名 quiz.ddjian.xyz'}]},
+        ]})
+        roles = [m['role'] for m in out['messages']]
+        self.assertEqual(roles, ['assistant', 'tool', 'tool', 'user', 'system', 'user'])
+        # tool 结果连续且顺序不变
+        self.assertEqual(
+            [m['tool_call_id'] for m in out['messages'] if m['role'] == 'tool'],
+            ['c1', 'c2'])
+        # 图片合并成一条，排在 tool 组之后、通知之前
+        img_msg = out['messages'][3]
+        self.assertEqual(
+            [b['image_url']['url'] for b in img_msg['content']],
+            ['https://x/1.png', 'https://x/2.png'])
+        self.assertIn('image_resize_notice', out['messages'][4]['content'])
+
+    def test_notice_before_first_tool_result_is_deferred(self) -> None:
+        """通知落在第一条工具结果之前：同样延后，别在 tool_calls 与结果之间落系统消息。"""
+        out = R.to_chat_request({'model': 'm', 'input': [
+            {'type': 'function_call', 'call_id': 'c1', 'name': 'view_image', 'arguments': '{}'},
+            {'type': 'message', 'role': 'developer', 'content': [
+                {'type': 'input_text', 'text': 'notice-before-first'}]},
+            {'type': 'function_call_output', 'call_id': 'c1', 'output': [
+                {'type': 'input_image', 'image_url': 'https://x/1.png'}]},
+        ]})
+        roles = [m['role'] for m in out['messages']]
+        self.assertEqual(roles, ['assistant', 'tool', 'user', 'system'])
+        self.assertIn('notice-before-first', out['messages'][-1]['content'])
+
 
 class RequestConversionTest(unittest.TestCase):
     """Responses 请求 → Chat Completions 请求。"""

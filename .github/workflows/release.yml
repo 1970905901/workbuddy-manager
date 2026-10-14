@@ -37,6 +37,9 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # 供后面的 installer 作业复用同一个 tag（workflow_dispatch 时 tag 来自输入）
+    outputs:
+      tag: ${{ steps.vars.outputs.tag }}
     steps:
       - name: 解析版本号
         id: vars
@@ -213,8 +216,16 @@ jobs:
           TAG="${{ steps.vars.outputs.tag }}"
           STAGE="${{ steps.pack.outputs.stage }}"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG 已存在，改为上传/覆盖产物"
-            gh release upload "$TAG" "${STAGE}.tar.gz" "${STAGE}.zip" --clobber
+            if [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" = "true" ]; then
+              echo "Release $TAG 还是草稿，覆盖产物"
+              gh release upload "$TAG" "${STAGE}.tar.gz" "${STAGE}.zip" --clobber
+            else
+              # **已发布的 Release 绝不覆盖产物**：发布说明里印着 sha256，用户侧的
+              # 更新器就是拿它核对的 —— 换掉字节流等于让所有人的更新校验失败
+              # （旧版本那套「有 .sig 就不覆盖」的规则，现在针对的是摘要）。
+              echo "Release $TAG 已发布：不覆盖既有产物（发布说明里的 sha256 已公布）"
+              echo "  确需重新发布：先删掉整个 Release 再重跑本流程"
+            fi
           else
             # **草稿**（issue #127/#129）：产物还在构建、还没核对时不能让用户看到。
             # `releases/latest`（面板与更新器的版本检查都是它）会跳过草稿，所以
@@ -349,3 +360,63 @@ jobs:
           docker pull ghcr.io/${{ github.repository_owner }}/workbuddy-manager:${{ steps.vars.outputs.version }}
           ```
           EOF
+
+  # ── Windows 安装器（单文件 exe，随包分发给桌面用户）────────────────────
+  #
+  # 为什么单独一个作业：exe 用 Windows 自带的 csc 编译（.NET Framework 4.x），
+  # 产不出在 ubuntu runner 上。它内嵌 payload（server/ + 前端产物 + 上游
+  # wb2api.exe + 预置 Python 运行时），所以必须等 release 作业把 Release 建好
+  # 之后再把 exe 挂上去。
+  #
+  # 构建脚本自己会取依赖（Go 工具链、Python 运行时从官方源下载，上游源码从
+  # 本仓库的 upstream-src 载体 Release），并自带缓存与降级：取不到运行时就用
+  # uv.exe 兜底（首次启动联网准备环境），不阻断出包。
+  installer:
+    needs: release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+          # build.ps1 用 git describe 取版本号写进 exe 的文件属性
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 构建安装器（含上游编译与预置运行时）
+        shell: pwsh
+        run: windows/launcher/build.ps1
+
+      - name: 记录安装器摘要
+        shell: pwsh
+        run: |
+          $exe = 'windows/launcher/dist/WorkBuddyManagerSetup.exe'
+          if (-not (Test-Path $exe)) { throw '构建脚本没有产出安装器' }
+          $hash = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLower()
+          $size = (Get-Item $exe).Length
+          "安装器：$exe（{0:N1} MB）" -f ($size / 1MB) | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          "sha256：$hash" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          # 同名 .sha256 文本随资产一起发，用户下载后可以自己核对
+          "$hash  WorkBuddyManagerSetup.exe" | Set-Content -Encoding ascii "$exe.sha256"
+          "installer_exe=$exe" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+        id: hash
+
+      - name: 挂到 Release 上（已发布则不覆盖）
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.release.outputs.tag }}"
+          if gh release view "$TAG" --json assets -q '.assets[].name' | grep -qx 'WorkBuddyManagerSetup.exe'; then
+            echo "Release $TAG 上已有 WorkBuddyManagerSetup.exe —— 不覆盖（换掉同名资产会让已下载的人对不上摘要）"
+            echo "  确需重出：先删掉该资产（gh release delete-asset）再重跑本作业"
+            exit 0
+          fi
+          gh release upload "$TAG" \
+            windows/launcher/dist/WorkBuddyManagerSetup.exe \
+            windows/launcher/dist/WorkBuddyManagerSetup.exe.sha256
+          echo "已上传 Windows 安装器（含 .sha256）"

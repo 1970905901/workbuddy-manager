@@ -59,11 +59,13 @@ powershell -ExecutionPolicy Bypass -File windows\launcher\build.ps1
 
 ### 发布资产、第三方来源与安全提示
 
-当前 `.github/workflows/release.yml` 运行在 Ubuntu runner 上，只会自动生成并上传
-`.tar.gz` / `.zip` 发布包，**不会自动生成 `WorkBuddyManagerSetup.exe`**。因此 Release
-页面只有在维护者额外用 Windows 环境构建并上传后才会出现这个 exe；如果对应版本没有
-该资产，请按上面的命令自行构建。是否为每个版本额外构建并托管约 40 MB 的安装器，
-由维护者另行决定。
+发版时 `.github/workflows/release.yml` 会跑两个作业：Ubuntu 上打 `.tar.gz` / `.zip`
+发布包，Windows 上（`installer` 作业）构建并上传 `WorkBuddyManagerSetup.exe` 与它的
+`.sha256`。构建脚本自己取依赖，所以不需要在 runner 上预装 Go 或 Python。
+
+**该资产偶尔会缺失**：Windows 作业失败时它不会出现在 Release 里（发布包本身不受影响），
+这时按上面的命令自己构建一次即可。已经发布的版本不会因为重跑工作流而换掉产物 ——
+发布说明里的 sha256 是对用户的承诺，换掉字节流会让所有人的更新校验失败。
 
 默认构建的第三方来源如下：
 

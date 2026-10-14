@@ -121,10 +121,10 @@
 
 **① Windows 安装器（桌面图形化，无需 Docker / 命令行）**
 
-1. 如果该版本 [Release](https://github.com/ithtelab/workbuddy-manager/releases) 已提供
-   `WorkBuddyManagerSetup.exe`，下载后双击运行；**当前 Release CI 运行在 Ubuntu，默认不会
-   自动生成这个 Windows exe**，没有资产时请按[构建说明](windows/README.md#启动器安装版)
-   自行构建。
+1. 从该版本 [Release](https://github.com/ithtelab/workbuddy-manager/releases) 下载
+   `WorkBuddyManagerSetup.exe`（发版时由 CI 在 Windows runner 上自动构建并附带，同目录还有
+   一个 `.sha256` 可核对；偶尔构建失败时该资产会缺失，那时按[构建说明](windows/README.md#启动器安装版)
+   自行构建）。
 2. 按向导选择安装目录 → 安装 → 完成时可勾选「立即启动」。
 3. 之后用桌面快捷方式打开控制台：点 **启动项目**，状态变「运行中」并自动打开管理面板；
    随时可 **重启 / 关闭项目**、修改监听 IP 与端口（保存后重启生效）、点 **打开面板** 回到页面。

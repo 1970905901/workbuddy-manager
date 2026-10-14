@@ -513,5 +513,49 @@ class UpdateEndToEndTest(unittest.TestCase):
         self.assertIn('_sha256_of', new_updater)
 
 
+    # ── 离线升级包（issue #153）：不联网也要能装 ──
+
+    def test_offline_package_installs_without_touching_github(self) -> None:
+        """指定离线包时：不查 GitHub、按包内容装上去，且摘要对不上就中止。
+
+        这条走的是 `WB_UPDATE_PACKAGE` 那条路 —— 内网机器唯一的更新方式。
+        单元测试只覆盖到「元信息怎么来的」与「摘要比对」，**安装本身**（解压、
+        替换 server/、同步版本号）只有整条链路跑一遍才算数。
+        """
+        inst = self._make_install('offline')
+        pkg, digest = self._make_release('offline')
+        mod = self._load(inst, WB_UPDATE_PACKAGE=str(pkg),
+                         WB_UPDATE_PACKAGE_SHA256=digest.lstrip('sha256:'))
+        # 故意不接 GitHub 元信息：只要代码去查网络，这一步就会炸
+        rep = _Rep()
+        mod.update_manager(rep)
+        self.assertIn("version='9.9.9'", (inst / 'server' / 'main.py').read_text(encoding='utf-8'))
+        self.assertEqual((inst / '.version').read_text(encoding='utf-8').strip(), 'v9.9.9')
+        self.assertEqual(rep.integrity['status'], 'digest')
+        self.assertIn('离线升级包', rep.text())
+
+    def test_offline_package_with_wrong_digest_aborts(self) -> None:
+        inst = self._make_install('offline-bad')
+        pkg, _digest = self._make_release('offline-bad')
+        mod = self._load(inst, WB_UPDATE_PACKAGE=str(pkg),
+                         WB_UPDATE_PACKAGE_SHA256='0' * 64)
+        rep = _Rep()
+        with self.assertRaises(RuntimeError) as ctx:
+            mod.update_manager(rep)
+        self.assertIn('sha256 与发布页不一致', str(ctx.exception))
+        self.assertIn('# OLD', (inst / 'server' / 'main.py').read_text(encoding='utf-8'),
+                      '摘要不符时安装目录一个字节都不该动')
+
+    def test_offline_package_reinstall_same_version_is_allowed(self) -> None:
+        """版本号与当前相同时也要装：离线包最常见的用法就是「重装/修复」那一份。"""
+        inst = self._make_install('offline-same')
+        pkg, digest = self._make_release('offline-same', version='1.0.0')
+        mod = self._load(inst, WB_UPDATE_PACKAGE=str(pkg),
+                         WB_UPDATE_PACKAGE_SHA256=digest.lstrip('sha256:'))
+        rep = _Rep()
+        mod.update_manager(rep)          # 不应被「已是最新」短路
+        self.assertIn('# NEW', (inst / 'server' / 'main.py').read_text(encoding='utf-8'))
+        self.assertIn('不比较版本新旧', rep.text())
+
 if __name__ == '__main__':
     unittest.main()

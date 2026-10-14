@@ -13,14 +13,16 @@ Set-Location $root
 # 1. 自动初始化并迁移 .env
 $envPath = Join-Path $root '.env'
 
+function Normalize-EnvPathValue([string]$value) {
+    return $value.Trim().Trim('"').Trim("'").Replace('\', '/').TrimStart('/').ToLowerInvariant()
+}
+
 function Convert-WindowsEnvContent([string]$content) {
     $rootSlash = ($root -replace '\\', '/')
-    $upstreamDir = Join-Path $root 'upstream'
-    $nativeBundleReady = (Test-Path (Join-Path $upstreamDir 'wb2api.exe')) -and
-        (Test-Path (Join-Path $upstreamDir 'start-workbuddy2api.cmd'))
     $lines = @($content -split "`r?`n")
 
     # 只把仓库模板里的 Linux 默认值迁成当前安装目录路径；用户自定义值不改。
+    # 兼容 /opt/...、opt/...、\\opt\\... 等旧文件实际可能出现的写法。
     $pathDefaults = @{
         'WB_AUTH_DIR' = @('/opt/workbuddy2api/auths', "$rootSlash/upstream/auths")
         'WB_UPSTREAM_CONFIG' = @('/opt/workbuddy2api/config.json', "$rootSlash/upstream/config.json")
@@ -34,18 +36,19 @@ function Convert-WindowsEnvContent([string]$content) {
         'WB_STATIC_DIR' = @('/opt/workbuddy-manager/web/out', "$rootSlash/web/out")
     }
 
+    $linuxUpstreamValues = @(
+        (Normalize-EnvPathValue '/opt/workbuddy2api'),
+        (Normalize-EnvPathValue '/opt/workbuddy2api/config.json')
+    )
     $hasLinuxUpstreamDefault = $false
     foreach ($line in $lines) {
         if ($line -match '^\s*WB_UPSTREAM_(?:DIR|CONFIG)\s*=\s*(.*?)\s*$') {
-            $value = $Matches[1].Trim().Trim('"').Trim("'")
-            if ($value -eq '/opt/workbuddy2api' -or $value -eq '/opt/workbuddy2api/config.json') {
+            if ($linuxUpstreamValues -contains (Normalize-EnvPathValue $Matches[1])) {
                 $hasLinuxUpstreamDefault = $true
                 break
             }
         }
     }
-
-    if (-not $nativeBundleReady) { return ($lines -join [Environment]::NewLine) }
 
     $changed = $false
     for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -53,10 +56,11 @@ function Convert-WindowsEnvContent([string]$content) {
         $key = $Matches[1]
         $value = $Matches[2].Trim().Trim('"').Trim("'")
 
-        if ($pathDefaults.ContainsKey($key) -and $value -eq $pathDefaults[$key][0]) {
+        if ($pathDefaults.ContainsKey($key) -and
+            (Normalize-EnvPathValue $value) -eq (Normalize-EnvPathValue $pathDefaults[$key][0])) {
             $lines[$i] = $key + '=' + $pathDefaults[$key][1]
             $changed = $true
-        } elseif ($key -eq 'WB2API_MODE' -and $value -eq 'docker' -and $hasLinuxUpstreamDefault) {
+        } elseif ($key -eq 'WB2API_MODE' -and $value.ToLowerInvariant() -eq 'docker' -and $hasLinuxUpstreamDefault) {
             $lines[$i] = 'WB2API_MODE=native'
             $changed = $true
         } elseif ($key -eq 'WB_MANAGER_HOST' -and $value -eq '0.0.0.0') {

@@ -65,25 +65,15 @@ PYVER="$("$PY" -c 'import sys;print("%d.%d"%sys.version_info[:2])')"
   || die "Python 版本过低（需 ≥3.9，当前 ${PYVER}）"
 ok "Python ${PYVER}"
 
-# 签名一致性自检（能查则查，不阻断）─────────────────────────
-# 注意本脚本运行时包**已经在磁盘上**了，所以它拦不住"解压了恶意包"——
-# 真正的前置防线是解压前执行 deploy/verify-release.sh。
-# 这里做的是"矛盾状态检查"：同一目录里既放 .sig 又放 release-signing-key.pub
-# 却验不过，说明产物被动过或公钥过期，必须让人看见。
-if command -v ssh-keygen >/dev/null 2>&1; then
-  _sig="$(find . -maxdepth 1 -name '*.tar.gz.sig' -print -quit 2>/dev/null || true)"
-  _pub="${SRC_DIR}/deploy/release-signing-key.pub"
-  if [ -n "${_sig}" ] && [ -f "${_pub}" ] && ! grep -q 'AAAA_REPLACE_ME' "${_pub}"; then
-    _pkg="${_sig%.sig}"
-    _signers="$(mktemp)"
-    printf 'release %s\n' "$(cat "${_pub}")" > "${_signers}"
-    if [ -f "${_pkg}" ] && ! ssh-keygen -Y verify -f "${_signers}" -I release -n file -s "${_sig}" < "${_pkg}" >/dev/null 2>&1; then
-      rm -f "${_signers}"
-      die "签名校验失败：${_pkg} 与签名/公钥不匹配 —— 产物可能被替换，停止安装"
-    fi
-    rm -f "${_signers}"
+# 安装包摘要提示（不判断、不阻断）────────────────────────────
+# 本脚本运行时包**已经在磁盘上**了，所以它拦不住「装了一个别处来的包」——
+# 想核对就在解压前跑：bash deploy/verify-release.sh <包> <Releases 页面的 sha256>。
+# 这里只把同目录里的官方包摘要打出来，方便和 Releases 页面对一眼。
+for _pkg in $(find . -maxdepth 1 -name 'workbuddy-manager-*.tar.gz' -print 2>/dev/null); do
+  if command -v sha256sum >/dev/null 2>&1; then
+    info "$(basename "${_pkg}")  sha256=$(sha256sum "${_pkg}" | cut -d' ' -f1)"
   fi
-fi
+done
 
 HAVE_DOCKER=0
 if command -v docker >/dev/null 2>&1; then

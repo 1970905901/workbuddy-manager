@@ -7,7 +7,7 @@
 |---|---|
 | `start.cmd` | 前台启动面板（**关掉窗口即停**），顺带拉起上游网关；首次运行会自动生成 `.env`、初始化上游 `config.json`、准备 Python 虚拟环境 |
 | `stop.cmd` | 停掉面板与上游网关 |
-| `update.cmd` | 一键更新：下载发布包 → **验签** → 替换 `server/` 与 `web/out/` → 同步依赖 |
+| `update.cmd` | 一键更新：下载发布包 → **核对 sha256** → 替换 `server/` 与 `web/out/` → 同步依赖 |
 | `service-tools.ps1` | 后台常驻方式：`start` / `stop` / `status` / `restart`（日志写 `data\manager.out.log`） |
 
 ```powershell

@@ -11,7 +11,6 @@ import {
   RotateCcw,
   Server,
   ShieldCheck,
-  ShieldOff,
   Sparkles,
   Terminal,
   Trash2,
@@ -244,27 +243,16 @@ export function UpdatePanel() {
             <div className="text-[11px] text-muted-foreground">{t('updatePanel.manager')}</div>
             <div className="mt-1 flex items-center gap-1.5 text-sm font-semibold tabular-nums">
               {versions?.manager || status?.version || '—'}
-              {/* 供应链防护：本次更新的包是否经过签名校验，必须让用户看得见 */}
-              {status?.signature?.status === 'verified' && (
+              {/* 本次装的东西有没有被核对过：让用户看得见，不只留在日志里 */}
+              {status?.integrity?.status === 'digest' && (
                 <span
                   className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
-                  title={
-                    status.signature.detail
-                      ? t('updatePanel.signedTitleDetail', {detail: status.signature.detail})
-                      : t('updatePanel.signedTitle')
-                  }
+                  title={status.integrity.digest
+                    ? t('updatePanel.verifiedTitleDetail', {digest: status.integrity.digest})
+                    : t('updatePanel.verifiedTitle')}
                 >
                   <ShieldCheck className="h-3 w-3" />
-                  {t('updatePanel.signed')}
-                </span>
-              )}
-              {status?.signature?.status === 'skipped' && (
-                <span
-                  className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
-                  title={t('updatePanel.unsignedTitle')}
-                >
-                  <ShieldOff className="h-3 w-3" />
-                  {t('updatePanel.unsigned')}
+                  {t('updatePanel.verified')}
                 </span>
               )}
             </div>
@@ -317,13 +305,13 @@ export function UpdatePanel() {
                     <span className="font-medium text-foreground">{check.manager.latest}</span>
                   </div>
                 )}
-                {/* 签名未就绪：发布后到维护者签名之间有个窗口期，这时更新一定会被
-                    拒绝。先说清楚、并把按钮收起来，比让人点下去看到「已拒绝安装」好
-                    （issue #127/#129）。签名上传后最迟五分钟、或点一次刷新就会恢复。 */}
-                {check.manager.has_update && check.manager.sig_ready === false && (
+                {/* 产物未就位：版本可见但没有 .tar.gz 时点更新只会拿到 404。先说清楚、
+                    并把按钮收起来（issue #127/#129 是同一类窗口期问题）。产物上传后
+                    最迟五分钟、或点一次刷新就会恢复。 */}
+                {check.manager.has_update && check.manager.assets_ready === false && (
                   <div className="flex items-start gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <span>{t('updatePanel.sigPending')}</span>
+                    <span>{t('updatePanel.assetsPending')}</span>
                   </div>
                 )}
                 {check.upstream.has_update && (
@@ -407,10 +395,10 @@ export function UpdatePanel() {
                 <Button
                   size="sm"
                   className="rounded-full"
-                  // 签名未就绪时不放行：这条路必然以「已拒绝安装」收场，让用户点了
-                  // 再失败只是把同一条信息换个地方说（见上方提示）。
-                  disabled={!isAdmin || busy || running || check.manager.sig_ready === false}
-                  title={check.manager.sig_ready === false ? t('updatePanel.sigPending') : undefined}
+                  // 产物未就位时不放行：这条路必然以 404 收场，让用户点了再失败只是把
+                  // 同一条信息换个地方说（见上方提示）。
+                  disabled={!isAdmin || busy || running || check.manager.assets_ready === false}
+                  title={check.manager.assets_ready === false ? t('updatePanel.assetsPending') : undefined}
                   onClick={async () => {
                     setBusy(true);
                     try {
@@ -482,17 +470,10 @@ export function UpdatePanel() {
               {status?.ok
                 ? (status?.duration ? t('updatePanel.doneDuration', {n: status.duration}) : '') +
                   t('updatePanel.doneRestart') +
-                  (status?.signature?.status === 'verified' ? t('updatePanel.doneSigned') : '')
+                  (status?.integrity?.status === 'digest' ? t('updatePanel.doneVerified') : '')
                 : t('updatePanel.failedDetail')}
             </div>
-            {status?.ok && status?.signature?.status === 'skipped' && (
-              <div className="flex items-start gap-1.5 pt-1 text-[11px] text-amber-600 dark:text-amber-400">
-                <ShieldOff className="mt-0.5 h-3 w-3 shrink-0" />
-                <span>
-                  <RichText text={t('updatePanel.skippedWarn')} />
-                </span>
-              </div>
-            )}
+
           </div>
           <button
             type="button"

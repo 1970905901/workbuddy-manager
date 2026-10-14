@@ -925,11 +925,11 @@ export interface UpdateStatus {
   /** 日志原文（便于复制反馈） */
   log_tail?: string;
   /**
-   * 发布包签名校验结果（供应链防护）。
-   * verified = 已验签通过；skipped = 走了 WB_SKIP_SIGNATURE 绕过开关（有风险）；
-   * none 或缺失 = 未执行验签（如旧版本更新器）。
+   * 发布包完整性校验结果。
+   * digest = sha256 与发布页一致；none = 走的回退路径拿不到发布页摘要，
+   * 只打印了本地摘要（如实标注，不假装校验过）；缺失 = 更新器太旧，没这一项。
    */
-  signature?: {status: 'verified' | 'skipped' | 'none'; detail?: string};
+  integrity?: {status: 'digest' | 'none'; digest?: string};
 }
 
 export interface VersionSide {
@@ -947,12 +947,12 @@ export interface ManagerVersion extends VersionSide {
   /** Release 页面地址 */
   url: string;
   /**
-   * 该 Release 是否已附带签名文件。
+   * 该 Release 的产物（.tar.gz）是否就位。
    *
-   * `false` = 新版本已发布但维护者还没签名（发布后有个窗口期）：这时更新会被
-   * 拒绝，界面要**先说清楚**，别让人点下去才失败。`null` = 未知（旧缓存）。
+   * `false` = 版本可见但产物还没上传（手工建的 Release 会这样）：这时点了更新
+   * 只会拿到 404，界面要**先说清楚**。`null` = 未知（旧缓存）。
    */
-  sig_ready: boolean | null;
+  assets_ready: boolean | null;
   repo: string;
 }
 

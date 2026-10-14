@@ -36,3 +36,64 @@ v1.0.86 起发布包不再带 `.sig`，仓库里的 `update.ps1` 也从「验签
 前置条件与原生模式的边界（更新上游不可用、手动构建 `wb2api.exe` 等）见
 [`deploy/windows-native/README.md`](../deploy/windows-native/README.md) 与
 [`deploy/README.md`](../deploy/README.md) 的「Windows 原生部署」一节。
+
+## 启动器（安装版）
+
+`launcher/` 是一个把上面这套脚本包成图形界面的安装器 + 启动器，产出**单文件 exe**：
+
+| 产物 | 作用 |
+|---|---|
+| `build.ps1` | 从源码构建安装包：组装 payload、编译上游 `wb2api.exe`（本机无 Go 时自动下载便携工具链）、预置 Python 3.11 运行时与依赖、csc 编译 |
+| `dist\WorkBuddyManagerSetup.exe` | 双击进入安装向导：选择目录安装、生成桌面与开始菜单快捷方式、注册「设置 → 应用」卸载入口 |
+| 安装目录里的 `WorkBuddyManager.exe` | 控制窗口：启动 / 重启 / 关闭项目、运行状态、修改监听 IP 与端口、打开面板；点 X 可选最小化到托盘或退出（可记住选择） |
+| 安装目录里的 `Uninstall.exe` | 卸载程序：停止服务、清理快捷方式与注册表，可选保留账号与配置数据 |
+
+```powershell
+# 构建安装包（产物在 windows\launcher\dist\）
+powershell -ExecutionPolicy Bypass -File windows\launcher\build.ps1
+```
+
+安装包内嵌全部运行环境（Python 解释器与依赖、上游网关二进制、前端产物），
+目标机器**无需安装 Python / Node / Go**，安装后即可直接启动。构建细节见
+[`launcher/build.ps1`](launcher/build.ps1) 顶部注释。
+
+### 发布资产、第三方来源与安全提示
+
+当前 `.github/workflows/release.yml` 运行在 Ubuntu runner 上，只会自动生成并上传
+`.tar.gz` / `.zip` 发布包，**不会自动生成 `WorkBuddyManagerSetup.exe`**。因此 Release
+页面只有在维护者额外用 Windows 环境构建并上传后才会出现这个 exe；如果对应版本没有
+该资产，请按上面的命令自行构建。是否为每个版本额外构建并托管约 40 MB 的安装器，
+由维护者另行决定。
+
+默认构建的第三方来源如下：
+
+- **Python**：来自 [Astral python-build-standalone](https://github.com/astral-sh/python-build-standalone)
+  的 CPython 3.11 Windows x64 MSVC `install_only_stripped` 运行时。脚本优先解析最新的
+  3.11 匹配包，网络解析失败时回退到 `3.11.17+20261009`；构建日志会打印实际下载 URL。
+  Python 的 `LICENSE.txt` 会随 `.runtime\python\` 一起打包，构建脚本在预置运行时
+  缺少该文件时拒绝复用/打包。
+- **上游网关**：从固定的
+  [上游源码载体](https://github.com/ithtelab/workbuddy-manager/releases/download/upstream-src/workbuddy2api-src.tar.gz)
+  下载源码，再用 Go 编译 `./cmd/server` 生成 `wb2api.exe`；不是下载上游预编译二进制。
+  上游源码中的 `upstream\LICENSE` 也会随包分发。
+- **无代码签名**：当前安装器没有 Authenticode 签名，Windows SmartScreen 可能显示
+  “Windows 已保护你的电脑”等警告。这不代表安装器必然恶意；请只从可信的项目 Release
+  或自行构建来源取得文件，确认来源后再按 Windows 提示继续运行。
+
+使用 `-SkipRuntime`，或默认构建时 Python 预置失败而退回 uv 时，安装包只内置 `uv.exe`，
+首次启动需要联网准备 Python 环境；构建结束日志会明确显示当前属于哪种模式。
+
+### 安装器自身升级
+
+应用内的 `update.ps1` 只更新项目代码、前端和依赖，并保护本机 Windows 脚本；它**不会
+自更新 `WorkBuddyManager.exe` / `Uninstall.exe`**。升级安装器本身的步骤是：
+
+1. 停止正在运行的 WorkBuddy Manager。
+2. 从新版本 Release 下载新的 `WorkBuddyManagerSetup.exe`，或在源码分支重新构建。
+3. 运行新的安装器并选择原安装目录，确认覆盖安装。
+4. 覆盖安装会保留 `.env`、`data`、`upstream\auths` 和 `upstream\config.json`；
+   新的启动器与卸载程序会覆盖旧版本。
+
+因此，安装器不是“自己去取新版”的自更新程序；发布包没有 exe 资产时，只能先自行构建
+或等待维护者上传 Windows 安装器。
+

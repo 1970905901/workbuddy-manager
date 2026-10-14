@@ -376,11 +376,19 @@ foreach ($s in $scriptsToProtect) {
 # ── 9. 安全解压并覆盖（包在解压前已核对摘要）──────────────
 Write-Host "[INFO] 正在安全解压并更新前端静态资源 (web/out) 与服务端核心文件..." -ForegroundColor Cyan
 
+# Python 解释器：预置运行时（.runtime\python）优先，uv 虚拟环境（.venv）兜底
+# 先于清空 web/out 解析：缺解释器时立即中止，不破坏现有部署
+. (Join-Path $scriptDir 'python-env.ps1')
+$pyExe = Get-WbPython -Root $root
+if (-not $pyExe) {
+    Write-Host '[ERROR] 未找到可用的 Python 环境（.runtime\python 或 .venv），无法解压更新包；本次更新已中止。' -ForegroundColor Red
+    exit 1
+}
+
 # 清空旧的前端静态编译目录，避免历史版本残留
 $webOut = Join-Path $root 'web\out'
 if (Test-Path $webOut) { Remove-Item $webOut -Recurse -Force }
 
-$venvPython = Join-Path $root '.venv\Scripts\python.exe'
 $extractScript = Join-Path $root '.tools\extract_release.py'
 New-Item -ItemType Directory -Path (Join-Path $root '.tools') -Force | Out-Null
 
@@ -430,7 +438,7 @@ with tarfile.open(archive_path, "r:gz") as tf:
 
 [System.IO.File]::WriteAllText($extractScript, $pyContent, [System.Text.Encoding]::UTF8)
 
-& $venvPython $extractScript $tempTar $root
+& $pyExe $extractScript $tempTar $root
 Remove-Item $extractScript -Force -ErrorAction SilentlyContinue
 
 # 更新本地 .version 标记文件
@@ -465,8 +473,9 @@ Write-Host "[INFO] 正在同步 Python 依赖库..." -ForegroundColor Cyan
 $uvExe = Join-Path $root '.tools\uv\uv.exe'
 $reqFile = Join-Path $root 'server\requirements.txt'
 
-if ((Test-Path $uvExe) -and (Test-Path $venvPython) -and (Test-Path $reqFile)) {
-    & $uvExe pip install -r $reqFile --python $venvPython
+if ((Test-Path $reqFile) -and $pyExe) {
+    if (Test-Path $uvExe) { & $uvExe pip install -r $reqFile --python $pyExe }
+    else { & $pyExe -m pip install -r $reqFile }
 }
 
 Write-Host "==================================================" -ForegroundColor Green

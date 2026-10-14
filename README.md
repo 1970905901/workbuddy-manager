@@ -117,15 +117,33 @@
 
 ## 快速开始
 
-部署需要一台能跑 Docker 的服务器（1 核 1G 起）。两种方式任选：
+服务器部署需要 Docker（1 核 1G 起）；Windows 桌面用户可直接用图形安装器。三种方式任选：
 
-**① Docker（自己起容器）**
+**① Windows 安装器（桌面图形化，无需 Docker / 命令行）**
+
+1. 如果该版本 [Release](https://github.com/ithtelab/workbuddy-manager/releases) 已提供
+   `WorkBuddyManagerSetup.exe`，下载后双击运行；**当前 Release CI 运行在 Ubuntu，默认不会
+   自动生成这个 Windows exe**，没有资产时请按[构建说明](windows/README.md#启动器安装版)
+   自行构建。
+2. 按向导选择安装目录 → 安装 → 完成时可勾选「立即启动」。
+3. 之后用桌面快捷方式打开控制台：点 **启动项目**，状态变「运行中」并自动打开管理面板；
+   随时可 **重启 / 关闭项目**、修改监听 IP 与端口（保存后重启生效）、点 **打开面板** 回到页面。
+4. 点 X 可选「最小化到托盘」或「退出程序」（可记住选择，托盘图标随时恢复）。
+
+> 默认成功构建的单文件安装包内置全部运行环境（Python 运行时、上游网关、前端页面），
+> 目标机器**无需安装任何依赖**，Windows 10 (1903+) / 11 双击即用。当前安装器没有
+> Authenticode 签名，SmartScreen 可能显示警告；请确认文件来自可信 Release 或自行构建。
+> 安装器自身不会自动升级，升级时重新获取新 exe 并覆盖安装即可；`.env`、账号和 `data`
+> 等个人数据会保留。卸载：**设置 → 应用** 或开始菜单「卸载 WorkBuddy Manager」，
+> 可选保留账号与配置。细节见 [Windows 启动器](windows/README.md#启动器安装版)。
+
+**② Docker（自己起容器）**
 
 ```bash
 docker run -d --name workbuddy-manager -p 7864:7864 -v /opt/workbuddy-manager/data:/app/data ghcr.io/ithtelab/workbuddy-manager:latest
 ```
 
-**② 服务器一键脚本（装依赖、拉包、配 systemd）**
+**③ 服务器一键脚本（装依赖、拉包、配 systemd）**
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/ithtelab/workbuddy-manager/main/deploy/install.sh)

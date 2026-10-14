@@ -118,7 +118,9 @@ class ToolOutputImageTest(unittest.TestCase):
       · 只取文字 → 工具输出的图片**静默丢失**，模型看不到图；
       · 把整段内容 str() → 图片 base64 被当**文本**分词，一张几 MB 的图能算出
         上百万 token，直接撑爆上下文（Anthropic 层实测 3.36MB ≈ 234 万 token）。
-    正确做法：文字留在 tool 消息，图片提升为紧随其后的 user 消息。
+    正确做法：文字留在 tool 消息；图片提升到**整组** tool 结果之后的一条
+    user 消息 —— 不能插在两条 tool 之间（上游按组配对校验，插在中间会
+    返回 400 / 11148）。
     """
 
     def test_image_only_output_is_lifted_not_stringified(self) -> None:
@@ -136,6 +138,9 @@ class ToolOutputImageTest(unittest.TestCase):
                         f'图片被序列化进文本了：长度 {len(tool_msg["content"])}')
         img_msg = next(m for m in out['messages'] if m['role'] == 'user')
         self.assertEqual([b['type'] for b in img_msg['content']], ['image_url'])
+        # 单工具单图：序列保持 调用→tool→user（与本修复一致，未变成更多 user）
+        self.assertEqual([m['role'] for m in out['messages']],
+                         ['assistant', 'tool', 'user'])
 
     def test_text_and_image_keeps_both(self) -> None:
         out = R.to_chat_request({'model': 'm', 'input': [
@@ -165,15 +170,79 @@ class ToolOutputImageTest(unittest.TestCase):
         img_msg = next(m for m in out['messages'] if m['role'] == 'user')
         self.assertEqual(img_msg['content'][0]['image_url']['url'], 'https://x/y.png')
 
-    def test_image_follows_its_own_tool_message(self) -> None:
-        """图片必须紧跟它那次工具调用的 tool 消息（顺序即归属）。"""
+    def test_tool_images_follow_the_whole_tool_group(self) -> None:
+        """一轮里多个工具结果各自带图：整组 tool 排完，图片按序合并进一条 user。
+
+        旧契约是每个 tool 后面紧跟自己的图片（tool→user→tool→user）。
+        后一条 user 插在两条 tool 结果中间，破坏上游「tool_calls 后成组
+        连续配对」校验，返回 400 / 11148（tool calls and tool results do
+        not match），整个会话从此不可继续——这是线上实际观察到的失败，
+        因此改为整组合并。
+        """
         out = R.to_chat_request({'model': 'm', 'input': [
             {'type': 'function_call_output', 'call_id': 'c1', 'output': [
                 {'type': 'input_image', 'image_url': 'https://x/a.png'}]},
-            {'type': 'function_call_output', 'call_id': 'c2', 'output': 'done'},
+            {'type': 'function_call_output', 'call_id': 'c2', 'output': [
+                {'type': 'input_image', 'image_url': 'https://x/b.png'}]},
         ]})
         roles = [m['role'] for m in out['messages']]
-        self.assertEqual(roles, ['tool', 'user', 'tool'])
+        self.assertEqual(roles, ['tool', 'tool', 'user'])
+        img_msg = out['messages'][-1]
+        self.assertEqual(
+            [b['image_url']['url'] for b in img_msg['content']],
+            ['https://x/a.png', 'https://x/b.png'])
+
+    def test_group_with_one_image_merges_only_that_image(self) -> None:
+        """多工具其一无图：仍是 tool→tool→user，user 只含那张图。"""
+        out = R.to_chat_request({'model': 'm', 'input': [
+            {'type': 'function_call_output', 'call_id': 'c1', 'output': 'done'},
+            {'type': 'function_call_output', 'call_id': 'c2', 'output': [
+                {'type': 'input_image', 'image_url': 'https://x/only.png'}]},
+        ]})
+        roles = [m['role'] for m in out['messages']]
+        self.assertEqual(roles, ['tool', 'tool', 'user'])
+        self.assertEqual(out['messages'][0]['content'], 'done')
+        img_msg = out['messages'][-1]
+        self.assertEqual(
+            [b['image_url']['url'] for b in img_msg['content']],
+            ['https://x/only.png'])
+
+    def test_group_text_and_images_keep_text_in_tool_and_merge_images(self) -> None:
+        """多工具均有「文字+图」：文字留在各自 tool 消息，图片合并进一条 user。"""
+        out = R.to_chat_request({'model': 'm', 'input': [
+            {'type': 'function_call_output', 'call_id': 'c1', 'output': [
+                {'type': 'input_text', 'text': '第一张'},
+                {'type': 'input_image', 'image_url': 'https://x/1.png'}]},
+            {'type': 'function_call_output', 'call_id': 'c2', 'output': [
+                {'type': 'input_text', 'text': '第二张'},
+                {'type': 'input_image', 'image_url': 'https://x/2.png'}]},
+        ]})
+        roles = [m['role'] for m in out['messages']]
+        self.assertEqual(roles, ['tool', 'tool', 'user'])
+        tools = [m for m in out['messages'] if m['role'] == 'tool']
+        self.assertEqual([m['content'] for m in tools], ['第一张', '第二张'])
+        img_msg = out['messages'][-1]
+        self.assertEqual(
+            [b['image_url']['url'] for b in img_msg['content']],
+            ['https://x/1.png', 'https://x/2.png'])
+
+    def test_realistic_multi_call_group_stays_contiguous(self) -> None:
+        """真实形状：一条 assistant 两个 tool_calls，两条 tool 结果连续，图片组后合成。"""
+        out = R.to_chat_request({'model': 'm', 'input': [
+            {'type': 'function_call', 'call_id': 'c1', 'name': 'view_image', 'arguments': '{}'},
+            {'type': 'function_call', 'call_id': 'c2', 'name': 'view_image', 'arguments': '{}'},
+            {'type': 'function_call_output', 'call_id': 'c1', 'output': [
+                {'type': 'input_image', 'image_url': 'https://x/1.png'}]},
+            {'type': 'function_call_output', 'call_id': 'c2', 'output': [
+                {'type': 'input_image', 'image_url': 'https://x/2.png'}]},
+        ]})
+        roles = [m['role'] for m in out['messages']]
+        self.assertEqual(roles, ['assistant', 'tool', 'tool', 'user'])
+        self.assertEqual(
+            [c['id'] for c in out['messages'][0]['tool_calls']], ['c1', 'c2'])
+        self.assertEqual(
+            [m['tool_call_id'] for m in out['messages'] if m['role'] == 'tool'],
+            ['c1', 'c2'])
 
 
 class RequestConversionTest(unittest.TestCase):

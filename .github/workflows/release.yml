@@ -158,6 +158,7 @@ jobs:
       - name: 生成发布说明
         run: |
           TAG="${{ steps.vars.outputs.tag }}"
+          STAGE="${{ steps.pack.outputs.stage }}"
           # 优先取 CHANGELOG 中该版本的段落；取不到则退回提交摘要
           python3 - "$TAG" > RELEASE_NOTES.md <<'PY'
           import re, sys, subprocess
@@ -196,8 +197,14 @@ jobs:
             echo "$(sha256sum "${STAGE}.tar.gz" | cut -d' ' -f1)  $(basename "${STAGE}").tar.gz"
             echo '```'
           } >> RELEASE_NOTES.md
+          # 摘要为空说明上面那条 sha256sum 没算出来（例如忘了给 STAGE 赋值）——
+          # 发布说明里挂着一行空的哈希，用户拿去核对只会对不上，不如当场报红。
+          if ! grep -qE '^[0-9a-f]{64}  workbuddy-manager' RELEASE_NOTES.md; then
+            echo "::error::发布说明里的产物 sha256 为空，检查 STAGE 变量与打包步骤"
+            exit 1
+          fi
           echo "--- 发布说明预览 ---"
-          head -24 RELEASE_NOTES.md
+          head -26 RELEASE_NOTES.md
 
       - name: 创建 Release 并上传产物
         env:

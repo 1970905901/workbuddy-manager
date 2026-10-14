@@ -76,13 +76,13 @@ def _sanitize_tool_name(name: str) -> str:
 
 
 class _ToolBridge:
-    """Flatten namespace children for Chat, then restore Responses names/types."""
+    """展开 namespace 子工具供 Chat 使用，并在回程还原 Responses 元数据。"""
 
     def __init__(self, tools: object):
         self.chat_tools: list[dict] = []
         self.custom_names: set[str] = set()
         self._forward: dict[str, str] = {}
-        self._reverse: dict[str, tuple[str, str]] = {}
+        self._reverse: dict[str, tuple[str, str, str | None]] = {}
         self._taken: set[str] = set()
         if isinstance(tools, list):
             self._walk(tools, ())
@@ -118,7 +118,8 @@ class _ToolBridge:
                 self._forward['.'.join(path + (name,))] = chat_name
                 self._forward['__'.join(path + (name,))] = chat_name
             restored_kind = 'custom' if kind == 'custom' else 'function'
-            self._reverse[chat_name] = (name, restored_kind)
+            namespace = '.'.join(path) if path else None
+            self._reverse[chat_name] = (name, restored_kind, namespace)
             spec = {
                 'type': 'function',
                 'function': {
@@ -157,13 +158,20 @@ class _ToolBridge:
                     )
             self.chat_tools.append(spec)
 
-    def outbound_name(self, name: object) -> str:
+    def outbound_name(self, name: object, namespace: object = None) -> str:
         value = name if isinstance(name, str) else ''
+        if isinstance(namespace, str) and namespace:
+            qualified = f'{namespace}.{value}'
+            if qualified in self._forward:
+                return self._forward[qualified]
         return self._forward.get(value, value)
 
-    def restore(self, name: object) -> tuple[str, str]:
+    def restore(self, name: object) -> tuple[str, str, str | None]:
         value = name if isinstance(name, str) else ''
-        return self._reverse.get(value, (value, 'custom' if value in self.custom_names else 'function'))
+        return self._reverse.get(
+            value,
+            (value, 'custom' if value in self.custom_names else 'function', None),
+        )
 
 
 def _custom_tool_names(body: dict) -> set[str]:
@@ -271,6 +279,18 @@ def _text_of_parts(content: object) -> tuple[str, list[dict]]:
         if kind in ('input_text', 'output_text', 'text', 'summary_text'):
             text = part.get('text')
             if isinstance(text, str) and text:
+                texts.append(text)
+                blocks.append({'type': 'text', 'text': text})
+        elif kind == 'encrypted_content':
+            text = part.get('encrypted_content')
+            if isinstance(text, str) and text:
+                if text.startswith('gAAAAA'):
+                    # 本层无法解密 Fernet 风格载荷；不把密文放进提示词或日志。
+                    logger.warning(
+                        '忽略无法解密的 encrypted_content 输入块'
+                    )
+                    continue
+                # 部分客户端把明文任务放进这个字段，按普通文本保留，不能静默丢弃。
                 texts.append(text)
                 blocks.append({'type': 'text', 'text': text})
         elif kind in ('input_image', 'image_url'):
@@ -517,7 +537,7 @@ def to_chat_request(body: dict, custom_tool_names: set[str] | None = None,
                 if kind == 'custom_tool_call' and not isinstance(item.get('input'), str):
                     raise CustomToolArgumentsError(
                         'Custom tool history input must be a string.')
-                name = bridge.outbound_name(item.get('name'))
+                name = bridge.outbound_name(item.get('name'), item.get('namespace'))
                 raw_arguments = (
                     json.dumps({'input': item.get('input')}, ensure_ascii=False)
                     if kind == 'custom_tool_call'
@@ -760,8 +780,14 @@ def _message_item(text: str, item_id: str) -> dict:
     }
 
 
-def _function_call_item(call_id: str, item_id: str, name: str, arguments: str) -> dict:
-    return {
+def _function_call_item(
+    call_id: str,
+    item_id: str,
+    name: str,
+    arguments: str,
+    namespace: str | None = None,
+) -> dict:
+    item = {
         'type': 'function_call',
         'id': item_id,
         'call_id': call_id,
@@ -769,6 +795,9 @@ def _function_call_item(call_id: str, item_id: str, name: str, arguments: str) -
         'arguments': arguments,
         'status': 'completed',
     }
+    if namespace:
+        item['namespace'] = namespace
+    return item
 
 
 def _custom_call_item(call_id: str, item_id: str, name: str, raw_input: str) -> dict:
@@ -848,7 +877,7 @@ def to_responses_object(
             continue
         fn = call.get('function') or {}
         raw_name = str(fn.get('name') or '')
-        name, restored_kind = bridge.restore(raw_name)
+        name, restored_kind, namespace = bridge.restore(raw_name)
         is_custom = restored_kind == 'custom' or raw_name in custom_tool_names
         output.append(_custom_call_item(
             str(call.get('id') or f'call_{uuid.uuid4().hex[:12]}'),
@@ -860,6 +889,7 @@ def to_responses_object(
             'fc_' + uuid.uuid4().hex[:20],
             name,
             _normalize_tool_arguments(fn.get('arguments')),
+            namespace,
         ))
     text = message.get('content')
     if isinstance(text, str) and text:
@@ -1076,13 +1106,17 @@ class _StreamTranslator:
             # custom、而 `custom_inputs` 里没有这一项，下面取值就会 KeyError 并把
             # 整条流打断。`custom_inputs` 的键恰好就是 custom 的判据
             # （名字在 custom_names 里的 seq），所以两处都用它。
-            restored_name, _kind = self.bridge.restore(state['name'])
+            restored_name, _kind, namespace = self.bridge.restore(state['name'])
             custom = seq in custom_inputs
             value = custom_inputs[seq] if custom else state['args']
             field = 'input' if custom else 'arguments'
             family = 'custom_tool_call_input' if custom else 'function_call_arguments'
-            item = (_custom_call_item if custom else _function_call_item)(
-                state['call_id'], state['id'], restored_name, value)
+            if custom:
+                item = _custom_call_item(
+                    state['call_id'], state['id'], restored_name, value)
+            else:
+                item = _function_call_item(
+                    state['call_id'], state['id'], restored_name, value, namespace)
             self.items.append(item)
             if self.custom_tool_names:
                 out.append(_event('response.output_item.added', {

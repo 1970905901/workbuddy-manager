@@ -268,6 +268,64 @@ class RequestConversionTest(unittest.TestCase):
         ]})
         self.assertEqual(out['messages'], [{'role': 'user', 'content': 'q'}])
 
+    def test_agent_message_plain_encrypted_content_is_forwarded(self) -> None:
+        """明文任务正文即使放在 encrypted_content 块里也不能被静默丢弃。"""
+        out = R.to_chat_request({'model': 'm', 'input': [
+            {'type': 'agent_message', 'content': [
+                {'type': 'input_text', 'text': '子代理任务：'},
+                {'type': 'encrypted_content', 'encrypted_content': '读取 parser.py 并总结'},
+            ]},
+        ]})
+        self.assertEqual(out['messages'], [
+            {'role': 'user', 'content': '子代理任务：\n读取 parser.py 并总结'},
+        ])
+
+    def test_agent_message_ciphertext_is_omitted_and_warned(self) -> None:
+        """不可解的 Fernet 风格载荷不应作为乱码转发，也不应把载荷写进日志。"""
+        ciphertext = 'gAAAAABforeign-encrypted-payload'
+        with self.assertLogs(R.logger, level='WARNING') as captured:
+            out = R.to_chat_request({'model': 'm', 'input': [
+                {'type': 'agent_message', 'content': [
+                    {'type': 'input_text', 'text': '子代理任务：'},
+                    {'type': 'encrypted_content', 'encrypted_content': ciphertext},
+                ]},
+            ]})
+        self.assertEqual(out['messages'], [
+            {'role': 'user', 'content': '子代理任务：'},
+        ])
+        self.assertTrue(any('encrypted_content' in line for line in captured.output))
+        self.assertNotIn(ciphertext, '\n'.join(captured.output))
+
+    def test_agent_message_plain_payload_preserves_image_block_order(self) -> None:
+        """明文任务与图片混排时，不能因压平成字符串而丢图或改变块顺序。"""
+        out = R.to_chat_request({'model': 'm', 'input': [
+            {'type': 'agent_message', 'content': [
+                {'type': 'input_text', 'text': '任务：'},
+                {'type': 'encrypted_content', 'encrypted_content': '说明这张图'},
+                {'type': 'input_image', 'image_url': 'https://example.com/image.png'},
+            ]},
+        ]})
+        self.assertEqual(out['messages'], [{
+            'role': 'user',
+            'content': [
+                {'type': 'text', 'text': '任务：'},
+                {'type': 'text', 'text': '说明这张图'},
+                {'type': 'image_url', 'image_url': {'url': 'https://example.com/image.png'}},
+            ],
+        }])
+
+    def test_agent_message_invalid_encrypted_content_is_ignored(self) -> None:
+        """空值和非字符串不是明文任务，不得字符串化后送给模型。"""
+        for value in (None, '', 42, {'text': '不是字符串'}, ['任务']):
+            with self.subTest(value=value):
+                out = R.to_chat_request({'model': 'm', 'input': [
+                    {'type': 'agent_message', 'content': [
+                        {'type': 'input_text', 'text': '任务：'},
+                        {'type': 'encrypted_content', 'encrypted_content': value},
+                    ]},
+                ]})
+                self.assertEqual(out['messages'], [{'role': 'user', 'content': '任务：'}])
+
     def test_developer_role_maps_to_system(self) -> None:
         """Chat Completions 没有 developer 角色，原样传会被上游拒。"""
         out = R.to_chat_request({'model': 'm', 'input': [
@@ -437,6 +495,31 @@ class RequestConversionTest(unittest.TestCase):
         ]})
         self.assertEqual(out['tools'][0]['function']['name'], 'get')
 
+    def test_namespaced_history_uses_qualified_tool_mapping(self) -> None:
+        tools = [
+            {'type': 'namespace', 'name': 'collaboration', 'tools': [
+                {'type': 'function', 'name': 'spawn_agent'},
+            ]},
+            {'type': 'namespace', 'name': 'other', 'tools': [
+                {'type': 'function', 'name': 'spawn_agent'},
+            ]},
+        ]
+        out = R.to_chat_request({
+            'model': 'm',
+            'tools': tools,
+            'input': [{
+                'type': 'function_call',
+                'call_id': 'call_1',
+                'name': 'spawn_agent',
+                'namespace': 'other',
+                'arguments': '{}',
+            }],
+        })
+        mapped_call_name = out['messages'][0]['tool_calls'][0]['function']['name']
+        declared_names = [tool['function']['name'] for tool in out['tools']]
+        self.assertEqual(mapped_call_name, declared_names[1])
+        self.assertNotEqual(mapped_call_name, declared_names[0])
+
     def test_nested_tools_also_accepted(self) -> None:
         out = R.to_chat_request({'model': 'm', 'input': 'x', 'tools': [
             {'type': 'function', 'function': {'name': 'get', 'parameters': {}}},
@@ -584,6 +667,25 @@ class NonStreamingResponseTest(unittest.TestCase):
         self.assertEqual(item['name'], 'get')
         self.assertEqual(item['arguments'], '{"a":1}')
         self.assertTrue(item['id'].startswith('fc_'))
+        self.assertNotIn('namespace', item)
+
+    def test_namespaced_tool_call_restores_namespace(self) -> None:
+        bridge = R._ToolBridge([{
+            'type': 'namespace',
+            'name': 'collaboration',
+            'tools': [{'type': 'function', 'name': 'spawn_agent'}],
+        }])
+        chat_name = bridge.chat_tools[0]['function']['name']
+        obj = R.to_responses_object({
+            'choices': [{'message': {'content': None, 'tool_calls': [
+                {'id': 'call_1', 'type': 'function',
+                 'function': {'name': chat_name, 'arguments': '{}'}},
+            ]}, 'finish_reason': 'tool_calls'}],
+        }, 'm', 'resp_1', bridge=bridge)
+        item = obj['output'][0]
+        self.assertEqual(item['type'], 'function_call')
+        self.assertEqual(item['name'], 'spawn_agent')
+        self.assertEqual(item['namespace'], 'collaboration')
 
     def test_custom_tool_call_is_restored(self) -> None:
         patch = '*** Begin Patch\n*** Add File: probe.txt\n+ok\n*** End Patch'
@@ -658,6 +760,72 @@ class StreamContractTest(unittest.TestCase):
         self.assertEqual(len(tools), 1)
         self.assertEqual(tools[0]['name'], 'get')
         self.assertEqual(tools[0]['arguments'], '{"a":1}', '参数分片没被拼回')
+
+    def test_namespaced_tool_call_restores_namespace_in_stream_output(self) -> None:
+        bridge = R._ToolBridge([{
+            'type': 'namespace',
+            'name': 'collaboration',
+            'tools': [{'type': 'function', 'name': 'spawn_agent'}],
+        }])
+        chat_name = bridge.chat_tools[0]['function']['name']
+        t = R._StreamTranslator('m', 'resp_1', bridge=bridge)
+        chunks: list[bytes] = []
+        chunks += t.feed(delta(tool={
+            'index': 0,
+            'id': 'call_1',
+            'function': {'name': chat_name, 'arguments': '{}'},
+        }))
+        chunks += t.feed(delta(finish='tool_calls'))
+        events = [
+            json.loads(line[5:].strip())
+            for chunk in chunks
+            for line in chunk.decode().splitlines()
+            if line.startswith('data:')
+        ]
+        done = next(event for event in events
+                    if event['type'] == 'response.output_item.done')
+        completed = next(event for event in events
+                         if event['type'] == 'response.completed')
+        self.assertEqual(done['item']['name'], 'spawn_agent')
+        self.assertEqual(done['item']['namespace'], 'collaboration')
+        self.assertEqual(
+            completed['response']['output'][0]['namespace'], 'collaboration')
+
+    def test_buffered_namespaced_function_keeps_metadata_with_fragmented_name(self) -> None:
+        """含 custom 工具的缓冲路径必须等名字拼完整，再一致地发 added/done。"""
+        bridge = R._ToolBridge([
+            {'type': 'custom', 'name': 'apply_patch'},
+            {'type': 'namespace', 'name': 'collaboration', 'tools': [
+                {'type': 'function', 'name': 'spawn_agent'},
+            ]},
+        ])
+        t = R._StreamTranslator('m', 'resp_1', bridge.custom_names, bridge)
+        chunks = t.feed(delta(tool={
+            'index': 0, 'id': 'call_1',
+            'function': {'name': 'spawn_', 'arguments': '{"task":'},
+        }))
+        chunks += t.feed(delta(tool={
+            'index': 0, 'function': {'name': 'agent', 'arguments': '"检查"}'},
+        }))
+        self.assertFalse(any(b'event: response.output_item.added' in c for c in chunks))
+        chunks += t.feed(delta(finish='tool_calls'))
+        events = [
+            json.loads(line[5:].strip())
+            for chunk in chunks
+            for line in chunk.decode().splitlines()
+            if line.startswith('data:')
+        ]
+        added = next(e['item'] for e in events if e['type'] == 'response.output_item.added')
+        done = next(e['item'] for e in events if e['type'] == 'response.output_item.done')
+        completed = next(e['response']['output'][0] for e in events
+                         if e['type'] == 'response.completed')
+        for item in (added, done, completed):
+            self.assertEqual(item['type'], 'function_call')
+            self.assertEqual(item['name'], 'spawn_agent')
+            self.assertEqual(item['namespace'], 'collaboration')
+        self.assertEqual(added['id'], done['id'])
+        self.assertEqual(added['arguments'], '')
+        self.assertEqual(done['arguments'], '{"task":"检查"}')
 
     def test_custom_tool_stream_uses_raw_input_events(self) -> None:
         t = R._StreamTranslator('m', 'resp_1', {'apply_patch'})
@@ -958,6 +1126,148 @@ class EndpointTest(unittest.TestCase):
         self.assertEqual(text, 'Hello there')
         self.assertEqual(terminal['response']['status'], 'completed')
         self.assertEqual(terminal['response']['usage']['total_tokens'], 6)
+
+    def test_namespaced_tool_call_roundtrips_through_endpoint(self) -> None:
+        """HTTP 入口真实走请求/响应转换；只有上游 HTTP 被本地 mock 替代。"""
+        token = keysvc.create_key('t')['key']
+        tool_defs = [
+            {'type': 'namespace', 'name': 'collaboration', 'tools': [
+                {'type': 'function', 'name': 'spawn_agent'},
+            ]},
+            {'type': 'namespace', 'name': 'other', 'tools': [
+                {'type': 'function', 'name': 'spawn_agent'},
+            ]},
+        ]
+        upstream_stream = b''.join(sse(
+            delta(tool={'index': 0, 'id': 'call_1',
+                        'function': {'name': 'spawn_agent', 'arguments': '{}'}}),
+            delta(tool={'index': 1, 'id': 'call_2',
+                        'function': {'name': 'other__spawn_agent', 'arguments': '{}'}}),
+            delta(finish='tool_calls',
+                  usage={'prompt_tokens': 5, 'completion_tokens': 2}),
+        )) + b'data: [DONE]\n\n'
+        replay_data = {
+            'choices': [{
+                'message': {'role': 'assistant', 'content': 'replayed'},
+                'finish_reason': 'stop',
+            }],
+            'usage': {'prompt_tokens': 6, 'completion_tokens': 1},
+        }
+
+        class _StreamResponse:
+            status_code = 200
+            headers = {'content-type': 'text/event-stream'}
+
+            async def aiter_bytes(self):
+                yield upstream_stream
+
+            async def aclose(self):
+                return None
+
+        class _JsonResponse:
+            status_code = 200
+
+            def json(self):
+                return replay_data
+
+            @property
+            def text(self):
+                return json.dumps(replay_data)
+
+        class _Client:
+            def __init__(self):
+                self.requests = []
+                self.responses = [_StreamResponse(), _JsonResponse()]
+
+            def build_request(self, method, url, **kwargs):
+                self.requests.append(kwargs['json'])
+                return object()
+
+            async def send(self, request, stream=True):
+                return self.responses.pop(0)
+
+            async def post(self, url, *, json, **kwargs):
+                self.requests.append(json)
+                return self.responses.pop(0)
+
+            async def aclose(self):
+                return None
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+        fake_client = _Client()
+        fake_upstream = {
+            'base_url': 'http://mock-upstream.invalid',
+            'api_key': 'test-only',
+            'is_default': False,
+        }
+        with mock.patch.object(config, 'http_client',
+                               lambda *args, **kwargs: fake_client), \
+             mock.patch.object(R.upstreamsvc, 'resolve_for_key',
+                               return_value=fake_upstream):
+            streamed = self.client.post(
+                '/v1/responses',
+                headers={'Authorization': f'Bearer {token}'},
+                json={
+                    'model': 'glm-5.2',
+                    'stream': True,
+                    'input': 'invoke namespaced tools',
+                    'tools': tool_defs,
+                },
+            )
+            replayed = self.client.post(
+                '/v1/responses',
+                headers={'Authorization': f'Bearer {token}'},
+                json={
+                    'model': 'glm-5.2',
+                    'input': [
+                        {'type': 'function_call', 'call_id': 'call_1',
+                         'name': 'spawn_agent', 'namespace': 'collaboration',
+                         'arguments': '{}'},
+                        {'type': 'function_call', 'call_id': 'call_2',
+                         'name': 'spawn_agent', 'namespace': 'other',
+                         'arguments': '{}'},
+                    ],
+                    'tools': tool_defs,
+                },
+            )
+
+        self.assertEqual(streamed.status_code, 200, streamed.text)
+        events = [
+            json.loads(line[5:].strip())
+            for line in streamed.content.decode().splitlines()
+            if line.startswith('data:')
+        ]
+        done_items = [
+            event['item'] for event in events
+            if event['type'] == 'response.output_item.done'
+            and event['item']['type'] == 'function_call'
+        ]
+        completed = next(event for event in events
+                         if event['type'] == 'response.completed')
+        expected_namespaces = ['collaboration', 'other']
+        self.assertEqual([item['namespace'] for item in done_items],
+                         expected_namespaces)
+        self.assertEqual(
+            [item['namespace'] for item in completed['response']['output']],
+            expected_namespaces,
+        )
+
+        self.assertEqual(replayed.status_code, 200, replayed.text)
+        self.assertEqual(replayed.json()['output_text'], 'replayed')
+        declared_names = [
+            tool['function']['name'] for tool in fake_client.requests[0]['tools']
+        ]
+        replay_names = [
+            call['function']['name']
+            for call in fake_client.requests[1]['messages'][0]['tool_calls']
+        ]
+        self.assertEqual(declared_names, ['spawn_agent', 'other__spawn_agent'])
+        self.assertEqual(replay_names, declared_names)
 
     def test_upstream_midstream_error_becomes_response_failed(self) -> None:
         """中途出错要以 response.failed 收尾——该事件会让客户端抛错，

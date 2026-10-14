@@ -121,17 +121,21 @@
 
 **① Windows 安装器（桌面图形化，无需 Docker / 命令行）**
 
-1. 从 [Releases](https://github.com/ithtelab/workbuddy-manager/releases) 下载 `WorkBuddyManagerSetup.exe`
-   （也可自行构建：`powershell -ExecutionPolicy Bypass -File windows\launcher\build.ps1`）。
-2. 双击运行，按向导选择安装目录 → 安装 → 完成时可勾选「立即启动」。
+1. 如果该版本 [Release](https://github.com/ithtelab/workbuddy-manager/releases) 已提供
+   `WorkBuddyManagerSetup.exe`，下载后双击运行；**当前 Release CI 运行在 Ubuntu，默认不会
+   自动生成这个 Windows exe**，没有资产时请按[构建说明](windows/README.md#启动器安装版)
+   自行构建。
+2. 按向导选择安装目录 → 安装 → 完成时可勾选「立即启动」。
 3. 之后用桌面快捷方式打开控制台：点 **启动项目**，状态变「运行中」并自动打开管理面板；
    随时可 **重启 / 关闭项目**、修改监听 IP 与端口（保存后重启生效）、点 **打开面板** 回到页面。
 4. 点 X 可选「最小化到托盘」或「退出程序」（可记住选择，托盘图标随时恢复）。
 
-> 单文件安装包已内置全部运行环境（Python 运行时、上游网关、前端页面），目标机器
-> **无需安装任何依赖**，Windows 10 (1903+) / 11 双击即用。卸载：**设置 → 应用** 或
-> 开始菜单「卸载 WorkBuddy Manager」，可选保留账号与配置。细节见
-> [Windows 启动器](windows/README.md#启动器安装版)。
+> 默认成功构建的单文件安装包内置全部运行环境（Python 运行时、上游网关、前端页面），
+> 目标机器**无需安装任何依赖**，Windows 10 (1903+) / 11 双击即用。当前安装器没有
+> Authenticode 签名，SmartScreen 可能显示警告；请确认文件来自可信 Release 或自行构建。
+> 安装器自身不会自动升级，升级时重新获取新 exe 并覆盖安装即可；`.env`、账号和 `data`
+> 等个人数据会保留。卸载：**设置 → 应用** 或开始菜单「卸载 WorkBuddy Manager」，
+> 可选保留账号与配置。细节见 [Windows 启动器](windows/README.md#启动器安装版)。
 
 **② Docker（自己起容器）**
 

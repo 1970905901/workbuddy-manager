@@ -3,6 +3,15 @@
 # 从源码构建单文件安装器 WorkBuddyManagerSetup.exe（内嵌可运行的项目、
 # 预置 Python 运行时与上游网关二进制，目标机零环境要求）。
 #
+# 第三方来源与发布注意事项：
+# - Python 默认取 Astral 的 python-build-standalone：CPython 3.11、Windows x64
+#   MSVC、install_only_stripped；优先解析最新匹配发行包，失败回退到固定的
+#   3.11.17+20261009。实际构建 URL 会在构建日志中打印，LICENSE.txt 必须随运行时保留。
+# - 上游网关从固定 Release 载体下载源码包，再用 Go 在本机编译 ./cmd/server；不下载
+#   上游预编译 wb2api.exe，upstream/LICENSE 随 payload 分发。
+# - 生成的安装器没有 Authenticode 代码签名，Windows SmartScreen 可能显示警告。
+# - 安装器本身不自动更新；新版本需要重新取得/构建安装器并覆盖安装，个人数据由安装器保留。
+#
 # 用法（在仓库根目录）：
 #   powershell -ExecutionPolicy Bypass -File windows\launcher\build.ps1
 # 可选参数：
@@ -114,6 +123,13 @@ function Get-RequirementsHash {
     return (Get-FileHash $requirements -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Assert-PythonRuntimeLicense($pyDir) {
+    $licensePath = Join-Path $pyDir 'LICENSE.txt'
+    if (-not (Test-Path -LiteralPath $licensePath -PathType Leaf)) {
+        throw ('Python 运行时缺少许可证文件：' + $licensePath)
+    }
+}
+
 # 命中缓存时校验依赖哈希并做关键包导入自检，避免复用不完整缓存
 function Find-CachedPythonRuntime($requirementsHash, $runtimeSourceUrl, $recipeVersion, $buildScriptHash) {
     if ($RefreshRuntime -or -not (Test-Path $runtimeCacheMeta) -or
@@ -129,6 +145,7 @@ function Find-CachedPythonRuntime($requirementsHash, $runtimeSourceUrl, $recipeV
         if (-not $meta -or $meta.requirements_sha256 -ne $requirementsHash -or
             -not $sourceMatches -or $meta.recipe_version -ne $recipeVersion -or
             $meta.build_script_sha256 -ne $buildScriptHash) { return $null }
+        Assert-PythonRuntimeLicense $runtimeCachePython
         $pythonExe = Join-Path $runtimeCachePython 'python.exe'
         & $pythonExe -c 'import fastapi, uvicorn' 2>$null | Out-Null
         if ($LASTEXITCODE -eq 0) { return $runtimeCachePython }
@@ -177,6 +194,7 @@ function Prepare-PythonRuntime($pyDir) {
         --disable-pip-version-check -q -r (Join-Path $repoRoot 'server\requirements.txt')
     if ($LASTEXITCODE -ne 0) { throw 'Python 依赖预装失败' }
     Trim-PythonRuntime $pyDir
+    Assert-PythonRuntimeLicense $pyDir
 }
 
 # 扫描本机 uv 管理的 Python（新旧默认位置都查），返回 3.11+ 中版本最高的一个

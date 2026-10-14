@@ -141,6 +141,45 @@ export interface AccountsResponse {
   manageable?: boolean;
 }
 
+/**
+ * 令牌刷新计划（计划任务）：每 `interval_days` 天的 `hour` 整点，全量刷新一次
+ * 所有账号的 accessToken。与「快过期才续期」的自动续期是并列的两条路径。
+ *
+ * `last_run` / `next_run` 都是 epoch 秒；`last_run=0` = 从未跑过，
+ * `next_run=null` = 计划未启用。
+ */
+export interface RefreshPlan {
+  enabled: boolean;
+  interval_days: number;
+  hour: number;
+  last_run: number;
+  next_run: number | null;
+}
+
+/** 每日任务计划里的单个任务（签到 / 领奖 / 做任务） */
+export interface DailyTaskConfig {
+  enabled: boolean;
+  /** 0-23 整点 */
+  hour: number;
+  /** 本小时是否已跑（`YYYY-MM-DD-HH`；空串 = 从未） */
+  last_run: string;
+}
+
+export type DailyTask = 'checkin' | 'claim' | 'full';
+
+/**
+ * 每日任务计划（`/api/accounts/daily-plan`）。
+ *
+ * 与「令牌刷新计划」并列，跑的是管理端的「一键」动作。三者安全等级不同：`claim`
+ * 只认领已完成任务的奖励（幂等）、`checkin` 幂等，而 `full` 会**伪造活跃上报**
+ * （上游脚本自己都标「慎用」）——所以默认全关，界面对 full 必须带警告。
+ */
+export interface DailyPlan {
+  checkin: DailyTaskConfig;
+  claim: DailyTaskConfig;
+  full: DailyTaskConfig;
+}
+
 /** 上游为一组账号给出的计数（`/status` 的顶层汇总与 realm_totals 同构） */
 export interface PoolCounts {
   total: number;
@@ -650,6 +689,34 @@ export interface UsageHourPoint {
   credit: number;
   /** 该小时的失败请求数（来自请求日志，与 `UsagePoint.failed` 同一口径） */
   failed: number;
+}
+
+/** 一天的积分收入 / 支出（`/api/stats/credits` 的 daily 项） */
+export interface CreditsFlowPoint {
+  day: string;
+  /** 收入：余额增加流水（kind='credit'）当日合计 */
+  income: number;
+  /** 支出：调用实际扣费（usage.credit）当日合计 */
+  expense: number;
+  /** income - expense */
+  net: number;
+}
+
+/**
+ * 积分收支统计。
+ *
+ * 收入与支出是**两套口径**（见后端 `credits_flow` 的说明）：收入是「余额比
+ * 上次查询增加的部分」，按查询时刻归日，属于近似值；支出是每次调用的真实扣费，
+ * 精确到请求。所以界面上必须分开标注，不能只拿「净额」下结论。
+ */
+export interface CreditsFlow {
+  days: number;
+  from: string;
+  to: string;
+  today: {income: number; expense: number; net: number};
+  week: {income: number; expense: number; net: number};
+  total: {income: number; expense: number; net: number};
+  daily: CreditsFlowPoint[];
 }
 
 export interface UsageBreakdown {

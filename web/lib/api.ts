@@ -5,6 +5,10 @@ import type {Realm} from './realm-context';
 import type {
   Account,
   AccountsResponse,
+  RefreshPlan,
+  DailyPlan,
+  DailyTask,
+  CreditsFlow,
   ApiKey,
   ApiToken,
   AuditLogPage,
@@ -293,6 +297,33 @@ export const accountApi = {
   refresh: (file: string, upstreamId?: number | null) =>
     post<{ok: boolean; message: string}>(
       `/api/accounts/${encodeURIComponent(file)}/refresh${groupQs(upstreamId)}`),
+  /** 一键刷新所有账号的 accessToken（真实续期，末尾只重载一次上游） */
+  refreshAllTokens: (upstreamId?: number | null) =>
+    post<{
+      total: number;
+      succeeded: number;
+      failed: string[];
+      results: {file: string; nickname: string; uid: string; ok: boolean; message: string}[];
+      reload_triggered: boolean;
+    }>(`/api/accounts/refresh-tokens${groupQs(upstreamId)}`),
+  /** 令牌刷新计划（计划任务：每 N 天自动全量刷新一次） */
+  refreshPlan: () => get<RefreshPlan>('/api/accounts/refresh-plan'),
+  saveRefreshPlan: (enabled: boolean, intervalDays: number, hour: number) =>
+    put<RefreshPlan>('/api/accounts/refresh-plan',
+                     {enabled, interval_days: intervalDays, hour}),
+  /** 立即执行一次计划（全量刷新；串行，不重载上游） */
+  runRefreshPlan: () => post<{
+    checked: number; renewed: number; failed: number; skipped: number;
+    last_run: number; next_run: number | null;
+  }>('/api/accounts/refresh-plan/run'),
+  /** 每日任务计划（签到 / 领奖 / 做任务，到点自动跑） */
+  dailyPlan: () => get<DailyPlan>('/api/accounts/daily-plan'),
+  saveDailyPlan: (plan: DailyPlan) =>
+    put<DailyPlan>('/api/accounts/daily-plan', plan),
+  /** 立即执行一次某个每日任务（不等定时） */
+  runDailyTask: (task: DailyTask) =>
+    post<{ok: boolean; message: string; task: string; plan: DailyPlan}>(
+      '/api/accounts/daily-plan/run', {task}),
   /** 强制清除账号级冷却、熔断/降权与模型级限流（会重启一次上游）。 */
   clearCooling: (file: string, upstreamId?: number | null) =>
     post<{ok: boolean; message: string; uid?: string; backup?: string}>(
@@ -540,6 +571,10 @@ export const statsApi = {
    */
   hourly: (day?: string, realm?: Realm) =>
     get<UsageHourPoint[]>('/api/stats/hourly', {day, realm}),
+
+  /** 积分收支（收入 / 支出）按天聚合 + 今日 / 近 7 天合计 */
+  creditsFlow: (days = 30, realm?: Realm) =>
+    get<CreditsFlow>('/api/stats/credits', {days, realm}),
   byModel: (days = 30, realm?: Realm) =>
     get<UsageBreakdown[]>('/api/stats/by-model', {days, realm}),
   byKey: (days = 30, realm?: Realm) =>

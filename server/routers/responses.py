@@ -474,9 +474,17 @@ def to_chat_request(body: dict, custom_tool_names: set[str] | None = None,
         # 在「上一个工具结果还没回」的校验上直接 400。
         pending_calls: list[dict] = []
         # 当前一组连续工具结果里提升出来的图片，攒到组结束再合并成一条 user
-        # 消息（见 flush_tool_images）：多条 tool 结果之间插 user 消息会
-        # 破坏上游的成组配对校验（400 / 11148）。
+        # 消息（见 flush_tool_group）：多条 tool 结果之间插 user 消息会
+        # 破坏上游的成组配对校验（400 / 11148）；组内夹带的 system/developer
+        # 通知同理，也要延后到整组 tool 结果之后。
         pending_tool_images: list[dict] = []
+        # 组内夹带的 system/developer 通知（例如客户端插入的
+        # `<image_resize_notice>`）：同样必须等本组 tool 结果全部排完再落。
+        # 否则它会插在两条 tool 结果之间，上游照样报 11148
+        # （线上实证：tool → user(图) → system(通知) → tool → user 全被拒）。
+        pending_tool_notices: list[dict] = []
+        # 是否处于「已发 assistant.tool_calls、tool 结果还没排完」的窗口。
+        tool_group_open = False
         # 待挂到下一条 assistant 消息上的推理文本（见下面 `kind == 'reasoning'`）。
         # 用 None 表示「没见到 reasoning item」，空串表示「见到了但没文本」——
         # 两者必须区分：上游的触发条件是**字段存在**，空串一样能触发它的回填。
@@ -494,6 +502,7 @@ def to_chat_request(body: dict, custom_tool_names: set[str] | None = None,
             return value
 
         def flush_calls() -> None:
+            nonlocal tool_group_open
             if pending_calls:
                 msg: dict = {
                     'role': 'assistant',
@@ -506,10 +515,13 @@ def to_chat_request(body: dict, custom_tool_names: set[str] | None = None,
                 if pending is not None:
                     attach_reasoning(msg, pending)
                 messages.append(msg)
+                # 从这里开始到本组 tool 结果（及其图片/通知）排完之前，
+                # 任何 system/developer 通知都要延后，不能插进 tool 之间。
+                tool_group_open = True
                 pending_calls.clear()
 
-        def flush_tool_images() -> None:
-            """一组工具结果收尾：把本组图片按原顺序合并成一条 user 消息。
+        def flush_tool_group() -> None:
+            """一组工具结果收尾：图片合并成一条 user，夹带通知排在其后。
 
             为什么不是每个 tool 后面紧跟自己的图片：上游对历史做
             「assistant.tool_calls 后必须**成组连续**跟着 tool 结果」的配对
@@ -518,12 +530,20 @@ def to_chat_request(body: dict, custom_tool_names: set[str] | None = None,
             该会话从此不可继续（线上实际失败：同一轮两个工具结果各带一
             张图，客户端重试同一段历史仍全部被拒）。所以等整组 tool 结果
             都排完后，才补这一条携带本组全部图片的 user 消息。
+
+            组内夹带的 system/developer 通知同理：它们（如客户端插入的
+            `<image_resize_notice>`）可能落在两条 tool 结果之间，直接透传
+            会把 tool 结果再次隔断，所以一并延后、排在图片之后
+            （通知原文说的是「preceding tool output」，放图片后语义仍对）。
             """
-            nonlocal pending_tool_images
-            if not pending_tool_images:
-                return
-            messages.extend(_images_as_user_messages(pending_tool_images))
-            pending_tool_images = []
+            nonlocal pending_tool_images, pending_tool_notices, tool_group_open
+            if pending_tool_images:
+                messages.extend(_images_as_user_messages(pending_tool_images))
+                pending_tool_images = []
+            if pending_tool_notices:
+                messages.extend(pending_tool_notices)
+                pending_tool_notices = []
+            tool_group_open = False
 
         for item in raw_input:
             if not isinstance(item, dict):
@@ -533,7 +553,7 @@ def to_chat_request(body: dict, custom_tool_names: set[str] | None = None,
                 # 防御性收尾：工具结果后若直接跟新调用（非正常历史），先把
                 # 本组图片落成 user，保持「tool 组 → user 图片」先于新的
                 # assistant（与旧行为一致）。
-                flush_tool_images()
+                flush_tool_group()
                 if kind == 'custom_tool_call' and not isinstance(item.get('input'), str):
                     raise CustomToolArgumentsError(
                         'Custom tool history input must be a string.')
@@ -556,13 +576,23 @@ def to_chat_request(body: dict, custom_tool_names: set[str] | None = None,
                 })
                 continue
 
+            defer_notice = (
+                # 「调用已排队但 assistant 还没落」或「assistant 落了、结果还没排完」
+                # 都算在工具窗口内：通知落进来都会隔断 tool 结果配对。
+                (tool_group_open or bool(pending_calls))
+                and kind not in ('function_call_output', 'custom_tool_call_output')
+                and kind != 'reasoning'
+                and str(item.get('role') or '') in ('developer', 'system')
+            )
             if kind not in ('function_call_output', 'custom_tool_call_output') \
-                    and kind != 'reasoning':
+                    and kind != 'reasoning' and not defer_notice:
                 # 一组连续工具结果到此结束：先把本组图片按原顺序补成一条
                 # user，再让 flush_calls 落 assistant 消息。
                 # reasoning 不落消息、不打断分组（它与 tool 结果同批出现时
                 # 也不该把 user 插进 tool 之间）。
-                flush_tool_images()
+                # 组内夹带的 system/developer 通知（defer_notice）同样不打断
+                # 分组：延后到本组 tool 结果排完再落，见 flush_tool_group。
+                flush_tool_group()
 
             flush_calls()
 
@@ -574,7 +604,7 @@ def to_chat_request(body: dict, custom_tool_names: set[str] | None = None,
                 # 一张几 MB 的图就能算出上百万 token，直接撑爆上下文。
                 # 所以：文字留在 tool 消息里；图片提取出来先攒着，等这一组
                 # tool 结果全部排完后，统一合并进一条 user 消息（见
-                # flush_tool_images；顺序即语义，图片属于这批工具调用）。
+                # flush_tool_group；顺序即语义，图片属于这批工具调用）。
                 output = item.get('output')
                 out_text, out_images = _split_tool_output(output)
                 messages.append({
@@ -583,7 +613,7 @@ def to_chat_request(body: dict, custom_tool_names: set[str] | None = None,
                     'content': out_text,
                 })
                 # 图片**不立即落**：插在两条 tool 结果之间会破坏上游的
-                # 成组配对校验（11148），等组结束由 flush_tool_images 补。
+                # 成组配对校验（11148），等组结束由 flush_tool_group 补。
                 pending_tool_images.extend(out_images)
                 continue
             if kind == 'reasoning':
@@ -647,6 +677,11 @@ def to_chat_request(body: dict, custom_tool_names: set[str] | None = None,
             else:
                 msg = None
             if msg is not None:
+                if defer_notice:
+                    # 这条通知落在 tool 结果之间：延后到整组排完（排在图片后），
+                    # 否则会把 tool 结果隔断触发上游 11148。
+                    pending_tool_notices.append(msg)
+                    continue
                 # 只在 assistant 消息上挂推理 —— 腾讯的校验针对 assistant 回合。
                 # 客户端把 reasoning 放在别处（少见）时不硬塞，免得造出上游不认的组合。
                 #
@@ -659,8 +694,10 @@ def to_chat_request(body: dict, custom_tool_names: set[str] | None = None,
                         attach_reasoning(msg, pending)
                 messages.append(msg)
         # 历史以工具结果收尾时，本组图片还没补 user 消息。
-        flush_tool_images()
         flush_calls()
+        # 先落未收尾的 assistant（含 tool_calls），再补图片与延后的通知，
+        # 保证「assistant → tool 组 → user 图片 → 通知」的顺序。
+        flush_tool_group()
 
         # 收尾：推理项排在**最后一条 assistant 之后**时，循环里没有「下一条
         # assistant」可以挂，它仍是待挂状态。回填到已发出的最后一条 assistant 上
@@ -737,7 +774,7 @@ def _split_tool_output(output: object) -> tuple[str, list[dict]]:
 def _images_as_user_messages(images: list[dict]) -> list[dict]:
     """把提升出来的图片（一组）合并成一条 user 消息（content 块数组）。
 
-    调用点只有 `to_chat_request` 里的 `flush_tool_images`：必须等**整组**
+    调用点只有 `to_chat_request` 里的 `flush_tool_group`：必须等**整组**
     tool 结果都排完再补这条消息，而不是紧跟每个 tool —— 见该函数注释
     （上游成组配对校验，tool→user→tool 会 400 / 11148）。
     """

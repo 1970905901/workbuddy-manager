@@ -286,6 +286,34 @@ class OfflineUpdaterTest(unittest.TestCase):
         self.assertEqual(updater._read_package_version(self.pkg), 'v9.9.9')
 
 
+class NoStringLstripOnDigestTest(unittest.TestCase):
+    """发布包摘要的处理不许用 `str.lstrip('sha256:')`。
+
+    为什么单列一条（2026-10-14 实测）：`lstrip` 的参数是**字符集**不是前缀 ——
+    摘要若以 `5`/`a`/`2` 这种字符开头，会被啃掉一位（长度从 64 变 63），于是
+    在 CI 上表现为「sha256 与发布页不一致」，而在本机碰巧不出现（摘要开头不在
+    那个集合里）。这种错只在特定数据上炸，最难查，所以直接禁止这个写法。
+    """
+
+    def test_no_char_set_strip_on_digest(self) -> None:
+        offenders = []
+        for path in (_ROOT / 'server' / 'tests').glob('*.py'):
+            if path.name == Path(__file__).name:
+                continue        # 本文件里有「坏写法的演示」与说明，跳过自己
+            text = path.read_text(encoding='utf-8')
+            # 拼出被禁的写法：本文件里不出现这个字面量，否则守卫会扫到自己
+            banned = '.lstrip' + "('sha256:')"
+            if banned in text:
+                offenders.append(path.name)
+        self.assertEqual(offenders, [], '摘要去前缀请用 removeprefix 或切片：' + '、'.join(offenders))
+
+    def test_removeprefix_is_the_right_tool(self) -> None:
+        digest = 'sha256:5f3a' + '0' * 60
+        self.assertEqual(len(digest.removeprefix('sha256:')), 64)
+        self.assertNotEqual(len(digest.lstrip('sha256:')), 64,
+                            'lstrip 是字符集剥离，这里必须能看出它把开头也啃了')
+
+
 class LimitsStayConsistentTest(unittest.TestCase):
     """包大小上限、请求体上限、中间件豁免路径三者不能脱节。"""
 

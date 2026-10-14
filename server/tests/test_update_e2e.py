@@ -526,6 +526,7 @@ class UpdateEndToEndTest(unittest.TestCase):
         pkg, digest = self._make_release('offline')
         mod = self._load(inst, WB_UPDATE_PACKAGE=str(pkg),
                          WB_UPDATE_PACKAGE_SHA256=digest.lstrip('sha256:'))
+        mod.run = lambda *a, **kw: (0, '')      # pip / systemctl 不真跑（与 _wire_release 同）
         # 故意不接 GitHub 元信息：只要代码去查网络，这一步就会炸
         rep = _Rep()
         mod.update_manager(rep)
@@ -539,6 +540,7 @@ class UpdateEndToEndTest(unittest.TestCase):
         pkg, _digest = self._make_release('offline-bad')
         mod = self._load(inst, WB_UPDATE_PACKAGE=str(pkg),
                          WB_UPDATE_PACKAGE_SHA256='0' * 64)
+        mod.run = lambda *a, **kw: (0, '')
         rep = _Rep()
         with self.assertRaises(RuntimeError) as ctx:
             mod.update_manager(rep)
@@ -552,6 +554,7 @@ class UpdateEndToEndTest(unittest.TestCase):
         pkg, digest = self._make_release('offline-same', version='1.0.0')
         mod = self._load(inst, WB_UPDATE_PACKAGE=str(pkg),
                          WB_UPDATE_PACKAGE_SHA256=digest.lstrip('sha256:'))
+        mod.run = lambda *a, **kw: (0, '')
         rep = _Rep()
         mod.update_manager(rep)          # 不应被「已是最新」短路
         self.assertIn('# NEW', (inst / 'server' / 'main.py').read_text(encoding='utf-8'))

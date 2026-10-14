@@ -2,6 +2,8 @@ using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 using System.Threading.Tasks;
@@ -175,12 +177,27 @@ namespace WorkBuddyLauncher
             _tray.ContextMenuStrip = menu;
         }
 
+        private string InitialCredentialsShownKey
+        {
+            get
+            {
+                // 偏好文件按用户共享，但「首次展示」必须按安装目录隔离，
+                // 否则另一份测试安装会抑制正式安装的首次密码提示。
+                string path = Path.GetFullPath(_root).TrimEnd(Path.DirectorySeparatorChar).ToUpperInvariant();
+                using (SHA256 sha = SHA256.Create())
+                {
+                    byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(path));
+                    return "initial_pwd_shown_" + BitConverter.ToString(hash, 0, 8).Replace("-", "");
+                }
+            }
+        }
+
         /// 首次启动成功后提示一次初始管理员账号（服务端随机生成，只打印进 stderr 日志）。
         /// 日志可能比 healthz 晚几百毫秒落盘，所以在后台重试几秒；成功后写标记，
-        /// 后续再次打开启动器不会重复弹出。
+        /// 后续再次打开同一安装目录的启动器不会重复弹出。
         private void MaybeShowInitialCredentials()
         {
-            if (_settings.Get("initial_pwd_shown", null) != null || _credentialLookupRunning) { return; }
+            if (_settings.Get(InitialCredentialsShownKey, null) != null || _credentialLookupRunning) { return; }
             _credentialLookupRunning = true;
             string errLog = Path.Combine(Path.Combine(_root, "data"), "manager.err.log");
             Task.Factory.StartNew(delegate
@@ -215,15 +232,27 @@ namespace WorkBuddyLauncher
             {
                 if (!markShown)
                 {
-                    MessageBox.Show(this,
-                        "日志中未找到初始账号记录。\n若安装时未在 .env 预设 WB_ADMIN_PASSWORD，该记录只出现在首次启动的日志里。",
-                        "初始管理员账号", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    string message;
+                    if (HasConfiguredAdminPassword())
+                    {
+                        message = ".env 已配置 WB_ADMIN_PASSWORD，因此服务端不会生成或记录随机初始密码。请使用该配置值登录。";
+                    }
+                    else if (File.Exists(Path.Combine(Path.Combine(_root, "data"), "users.json")))
+                    {
+                        message = "该安装目录已有管理员账号，但日志中没有初始密码记录。账号密码只以哈希保存，无法从 users.json 反查。\n" +
+                            "覆盖安装会保留账号数据；请使用原密码登录，或通过受信任的本机重置流程重设密码。";
+                    }
+                    else
+                    {
+                        message = "日志中未找到初始账号记录。请先启动项目并等待服务就绪；若 .env 预设了 WB_ADMIN_PASSWORD，则使用该配置值登录。";
+                    }
+                    MessageBox.Show(this, message, "初始管理员账号", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
                 return;
             }
             if (markShown)
             {
-                _settings.Set("initial_pwd_shown", "1");
+                _settings.Set(InitialCredentialsShownKey, "1");
                 _settings.Save();
             }
             try { Clipboard.SetText(pwd); } catch { }
@@ -232,6 +261,24 @@ namespace WorkBuddyLauncher
                 "\n\n请登录后立即在「设置 → 管理用户」中修改密码。\n" +
                 "（若你已修改过密码，此处显示的是初始密码、已失效。随时可在托盘菜单再次查看。）",
                 "初始管理员账号", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private bool HasConfiguredAdminPassword()
+        {
+            try
+            {
+                string envPath = LauncherPaths.EnvFilePath(_root);
+                if (!File.Exists(envPath)) { return false; }
+                foreach (string line in File.ReadAllLines(envPath, Encoding.UTF8))
+                {
+                    int separator = line.IndexOf('=');
+                    if (separator <= 0 || line.Substring(0, separator).Trim() != "WB_ADMIN_PASSWORD") { continue; }
+                    string value = line.Substring(separator + 1).Trim().Trim('"').Trim();
+                    return value.Length > 0 && value != "''" && !value.StartsWith("#", StringComparison.Ordinal);
+                }
+            }
+            catch { }
+            return false;
         }
 
         private void LoadConfig()

@@ -1,11 +1,18 @@
 ﻿# 初始管理员密码流程测试：重装 → 启动 → 弹窗显示 → 剪贴板 → 只弹一次
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
 . (Join-Path $PSScriptRoot 'ui-helpers.ps1')
 
 $installDir = 'D:\ai-project\_wb_test_install'
 $setupExe = 'D:\ai-project\workbuddy-manager\windows\launcher\dist\WorkBuddyManagerSetup.exe'
 $testPort = 17864
 $settingsFile = Join-Path $env:APPDATA 'WorkBuddyManager\launcher.conf'
+# 与客户端相同：首次提示标记按安装目录哈希隔离，不清除用户其他偏好
+$installKeyPath = [System.IO.Path]::GetFullPath($installDir).TrimEnd([System.IO.Path]::DirectorySeparatorChar).ToUpperInvariant()
+$sha = [System.Security.Cryptography.SHA256]::Create()
+try { $installHash = [BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($installKeyPath)), 0, 8).Replace('-', '') }
+finally { $sha.Dispose() }
+$shownKey = 'initial_pwd_shown_' + $installHash
 $script:failed = $false
 
 function Check($ok, $label) {
@@ -13,7 +20,8 @@ function Check($ok, $label) {
 }
 
 # 1. 重装（新 exe + 干净环境）
-& (Join-Path $installDir 'windows\service-tools.ps1') stop 2>&1 | Out-Null
+$stopScript = Join-Path $installDir 'windows\service-tools.ps1'
+if (Test-Path $stopScript) { & $stopScript stop 2>&1 | Out-Null }
 Get-Process -Name 'WorkBuddyManager' -ErrorAction SilentlyContinue | Stop-Process -Force
 if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
 if (Test-Path $settingsFile) { Remove-Item $settingsFile -Force }
@@ -99,12 +107,21 @@ Start-Sleep -Seconds 1
 
 # 6. 只弹一次：再次触发重启不应再弹（重启会经历 Wait-Healthy，但 initial_pwd_shown 已标记）
 if (Test-Path $settingsFile) {
-    $conf = Get-Content $settingsFile
-    Check (($conf | Where-Object { $_ -match 'initial_pwd_shown=1' }) -ne $null) 'initial_pwd_shown 已标记'
+    $conf = @(Get-Content $settingsFile -ErrorAction SilentlyContinue)
+    $keyPattern = '^' + [regex]::Escape($shownKey) + '=1$'
+    Check (($conf | Where-Object { $_ -match $keyPattern }) -ne $null) '当前安装目录的首次提示标记已写入'
 } else { Check $false 'launcher.conf 存在' }
 
-# 收尾
+# 再次打开同一安装的控制台：服务本来已运行时也会检查，但不能重复弹密码
 if (-not $proc.HasExited) { $proc.Kill() }
+Start-Sleep -Seconds 1
+$proc2 = Start-Process (Join-Path $installDir 'WorkBuddyManager.exe') -PassThru
+Start-Sleep -Seconds 3
+$secondDialog = [WbTop]::FindDialog($proc2.Id)
+Check ($secondDialog -eq [IntPtr]::Zero) '第二次启动同一安装不重复弹初始密码'
+if (-not $proc2.HasExited) { $proc2.Kill() }
+
+# 收尾
 & (Join-Path $installDir 'windows\service-tools.ps1') stop 2>&1 | Out-Null
 if ($failed) { Write-Host 'RESULT: FAIL'; exit 1 }
 Write-Host 'RESULT: PASS'

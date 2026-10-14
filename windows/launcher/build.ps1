@@ -8,10 +8,12 @@
 # 可选参数：
 #   -SkipUpstream  不打包上游网关（跳过源码下载与 wb2api.exe 编译）
 #   -SkipRuntime   不预置 Python 运行时（改内嵌 uv.exe，首次启动联网准备）
+#   -RefreshRuntime 忽略项目缓存，重新下载/准备 Python 运行时
 #   -ForceWeb      强制重新构建前端产物
 param(
     [switch]$SkipUpstream,
     [switch]$SkipRuntime,
+    [switch]$RefreshRuntime,
     [switch]$ForceWeb
 )
 
@@ -21,6 +23,9 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent (Split-Path -Parent $scriptDir)
 $distDir = Join-Path $scriptDir 'dist'
 $stageDir = Join-Path $env:TEMP ('wb-payload-' + [Guid]::NewGuid().ToString('N'))
+$runtimeCacheDir = Join-Path $repoRoot '.tools\cache\python-runtime'
+$runtimeCachePython = Join-Path $runtimeCacheDir 'python'
+$runtimeCacheMeta = Join-Path $runtimeCacheDir 'cache.json'
 
 $UpstreamSrcUrl = 'https://github.com/ithtelab/workbuddy-manager/releases/download/upstream-src/workbuddy2api-src.tar.gz'
 $UvUrl = 'https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip'
@@ -43,6 +48,54 @@ function Copy-Tree($source, $destination, $excludeDirs = @(), $excludeFiles = @(
     foreach ($f in $excludeFiles) { $rcArgs += @('/XF', $f) }
     & robocopy @rcArgs | Out-Null
     if ($LASTEXITCODE -ge 8) { throw ('robocopy 失败（' + $source + ' → ' + $destination + '，退出码 ' + $LASTEXITCODE + '）') }
+}
+
+function Get-RequirementsHash {
+    $requirements = Join-Path $repoRoot 'server\requirements.txt'
+    if (-not (Test-Path $requirements)) { throw ('缺少依赖清单：' + $requirements) }
+    return (Get-FileHash $requirements -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+# 命中缓存时校验依赖哈希并做关键包导入自检，避免复用不完整缓存
+function Find-CachedPythonRuntime($requirementsHash) {
+    if ($RefreshRuntime -or -not (Test-Path $runtimeCacheMeta) -or
+        -not (Test-Path (Join-Path $runtimeCachePython 'python.exe'))) { return $null }
+    try {
+        $meta = Get-Content $runtimeCacheMeta -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($meta.requirements_sha256 -ne $requirementsHash) { return $null }
+        $pythonExe = Join-Path $runtimeCachePython 'python.exe'
+        & $pythonExe -c 'import fastapi, uvicorn' 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { return $runtimeCachePython }
+        Write-Warn2 'Python 运行时缓存缺少关键依赖，将重新准备'
+    } catch {
+        Write-Warn2 ('Python 运行时缓存无效，将重新准备：' + $_.Exception.Message)
+    }
+    return $null
+}
+
+# 成功准备后写入项目本地缓存；缓存写入失败不阻断本次构建
+function Save-PythonRuntimeCache($pythonRoot, $requirementsHash, $sourceUrl) {
+    $cacheParent = Split-Path -Parent $runtimeCacheDir
+    $tempCache = $runtimeCacheDir + '.tmp-' + [Guid]::NewGuid().ToString('N')
+    try {
+        New-Item -ItemType Directory $cacheParent -Force | Out-Null
+        New-Item -ItemType Directory $tempCache -Force | Out-Null
+        Copy-Tree $pythonRoot (Join-Path $tempCache 'python')
+        $meta = @{
+            requirements_sha256 = $requirementsHash
+            source_url = $sourceUrl
+            cached_at = [DateTime]::UtcNow.ToString('o')
+        } | ConvertTo-Json
+        [System.IO.File]::WriteAllText((Join-Path $tempCache 'cache.json'), $meta,
+            (New-Object System.Text.UTF8Encoding($false)))
+        if (Test-Path $runtimeCacheDir) { Remove-Item $runtimeCacheDir -Recurse -Force }
+        Move-Item $tempCache $runtimeCacheDir -Force | Out-Null
+        return $runtimeCachePython
+    } catch {
+        Write-Warn2 ('写入 Python 运行时缓存失败（本次构建继续）：' + $_.Exception.Message)
+        Remove-Item $tempCache -Recurse -Force -ErrorAction SilentlyContinue
+        return $pythonRoot
+    }
 }
 
 # 预装依赖 + 运行时瘦身（网络下载与本机复用两条路径共用）
@@ -210,29 +263,45 @@ if (-not $SkipUpstream) {
 }
 
 
-# ── 3. Python 运行时（网络预置 → 本机复用 → uv 兜底）────────
+# ── 3. Python 运行时（项目缓存 → 网络预置 → 本机复用 → uv 兜底）
 $runtimeOk = $false
 $pyRoot = $null
 $uvExeStaged = $null
 if (-not $SkipRuntime) {
-    # 3a. 网络下载 python-build-standalone（标准路径，可复现）
-    try {
-        $url = Resolve-PythonRuntimeUrl
-        Write-Step ('下载 Python 3.11 独立运行时（stripped）：' + $url)
-        $tarPath = Join-Path $env:TEMP 'wb-python-runtime.tar.gz'
-        Invoke-Curl $url $tarPath
-        $pyStage = Join-Path $env:TEMP ('wb-python-' + [Guid]::NewGuid().ToString('N'))
-        New-Item -ItemType Directory $pyStage -Force | Out-Null
-        & $TarExe -xzf $tarPath -C $pyStage
-        if ($LASTEXITCODE -ne 0) { throw 'Python 运行时解压失败' }
-        Remove-Item $tarPath -Force
-        $pyRoot = Join-Path $pyStage 'python'
-        if (-not (Test-Path (Join-Path $pyRoot 'python.exe'))) { throw 'Python 运行时结构异常（缺少 python.exe）' }
-        Prepare-PythonRuntime $pyRoot
-        $runtimeOk = $true
-    } catch {
-        Write-Warn2 $_.Exception.Message
-        $pyRoot = $null
+    $requirementsHash = Get-RequirementsHash
+
+    # 同一项目重复构建时直接复用已预装依赖的运行时，不访问下载源、不重复 pip install
+    if (-not $RefreshRuntime) {
+        $cachedRuntime = Find-CachedPythonRuntime $requirementsHash
+        if ($cachedRuntime) {
+            Write-Step ('复用项目 Python 运行时缓存：' + $cachedRuntime)
+            $pyRoot = $cachedRuntime
+            $runtimeOk = $true
+        }
+    }
+
+    if (-not $runtimeOk) {
+        $sourceUrl = $null
+        # 3a. 网络下载 python-build-standalone（标准路径，可复现）
+        try {
+            $sourceUrl = Resolve-PythonRuntimeUrl
+            Write-Step ('下载 Python 3.11 独立运行时（stripped）：' + $sourceUrl)
+            $tarPath = Join-Path $env:TEMP 'wb-python-runtime.tar.gz'
+            Invoke-Curl $sourceUrl $tarPath
+            $pyStage = Join-Path $env:TEMP ('wb-python-' + [Guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory $pyStage -Force | Out-Null
+            & $TarExe -xzf $tarPath -C $pyStage
+            if ($LASTEXITCODE -ne 0) { throw 'Python 运行时解压失败' }
+            Remove-Item $tarPath -Force
+            $pyRoot = Join-Path $pyStage 'python'
+            if (-not (Test-Path (Join-Path $pyRoot 'python.exe'))) { throw 'Python 运行时结构异常（缺少 python.exe）' }
+            Prepare-PythonRuntime $pyRoot
+            $pyRoot = Save-PythonRuntimeCache $pyRoot $requirementsHash $sourceUrl
+            $runtimeOk = $true
+        } catch {
+            Write-Warn2 $_.Exception.Message
+            $pyRoot = $null
+        }
     }
 
     # 3b. 本机回退：复用 uv 管理的 Python（离线构建场景）
@@ -246,6 +315,7 @@ if (-not $SkipRuntime) {
                 Copy-Tree $localPy (Join-Path $pyStage 'python')
                 $pyRoot = Join-Path $pyStage 'python'
                 Prepare-PythonRuntime $pyRoot
+                $pyRoot = Save-PythonRuntimeCache $pyRoot $requirementsHash ('local:' + $localPy)
                 $runtimeOk = $true
             }
         } catch {

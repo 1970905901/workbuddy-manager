@@ -10,33 +10,84 @@ Set-Location $root
 # 启用现代 TLS 协议支持
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls13
 
-# 1. 自动初始化 .env 配置（若首次使用）
+# 1. 自动初始化并迁移 .env
 $envPath = Join-Path $root '.env'
+
+function Convert-WindowsEnvContent([string]$content) {
+    $rootSlash = ($root -replace '\\', '/')
+    $upstreamDir = Join-Path $root 'upstream'
+    $nativeBundleReady = (Test-Path (Join-Path $upstreamDir 'wb2api.exe')) -and
+        (Test-Path (Join-Path $upstreamDir 'start-workbuddy2api.cmd'))
+    $lines = @($content -split "`r?`n")
+
+    # 只把仓库模板里的 Linux 默认值迁成当前安装目录路径；用户自定义值不改。
+    $pathDefaults = @{
+        'WB_AUTH_DIR' = @('/opt/workbuddy2api/auths', "$rootSlash/upstream/auths")
+        'WB_UPSTREAM_CONFIG' = @('/opt/workbuddy2api/config.json', "$rootSlash/upstream/config.json")
+        'WB_UPSTREAM_DIR' = @('/opt/workbuddy2api', "$rootSlash/upstream")
+        'WB2API_START_SCRIPT' = @('/opt/workbuddy2api/start-workbuddy2api.cmd', "$rootSlash/upstream/start-workbuddy2api.cmd")
+        'WB2API_STOP_SCRIPT' = @('/opt/workbuddy2api/stop-workbuddy2api.cmd', "$rootSlash/upstream/stop-workbuddy2api.cmd")
+        'WB2API_LOG_FILE' = @('/opt/workbuddy2api/data/server.err.log', "$rootSlash/upstream/data/server.err.log")
+        'WB_DATA_DIR' = @('/opt/workbuddy-manager/data', "$rootSlash/data")
+        'WB_DB' = @('/opt/workbuddy-manager/data/manager.db', "$rootSlash/data/manager.db")
+        'WB_USERS_FILE' = @('/opt/workbuddy-manager/data/users.json', "$rootSlash/data/users.json")
+        'WB_STATIC_DIR' = @('/opt/workbuddy-manager/web/out', "$rootSlash/web/out")
+    }
+
+    $hasLinuxUpstreamDefault = $false
+    foreach ($line in $lines) {
+        if ($line -match '^\s*WB_UPSTREAM_(?:DIR|CONFIG)\s*=\s*(.*?)\s*$') {
+            $value = $Matches[1].Trim().Trim('"').Trim("'")
+            if ($value -eq '/opt/workbuddy2api' -or $value -eq '/opt/workbuddy2api/config.json') {
+                $hasLinuxUpstreamDefault = $true
+                break
+            }
+        }
+    }
+
+    if (-not $nativeBundleReady) { return ($lines -join [Environment]::NewLine) }
+
+    $changed = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -notmatch '^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$') { continue }
+        $key = $Matches[1]
+        $value = $Matches[2].Trim().Trim('"').Trim("'")
+
+        if ($pathDefaults.ContainsKey($key) -and $value -eq $pathDefaults[$key][0]) {
+            $lines[$i] = $key + '=' + $pathDefaults[$key][1]
+            $changed = $true
+        } elseif ($key -eq 'WB2API_MODE' -and $value -eq 'docker' -and $hasLinuxUpstreamDefault) {
+            $lines[$i] = 'WB2API_MODE=native'
+            $changed = $true
+        } elseif ($key -eq 'WB_MANAGER_HOST' -and $value -eq '0.0.0.0') {
+            $lines[$i] = 'WB_MANAGER_HOST=127.0.0.1'
+            $changed = $true
+        } elseif ($key -eq 'WB_SECURE_COOKIE' -and $value -eq 'auto') {
+            $lines[$i] = 'WB_SECURE_COOKIE=false'
+            $changed = $true
+        }
+    }
+
+    if ($changed) {
+        Write-Host '[MIGRATE] 检测到旧版 Linux/Docker 模板默认配置，已迁移为当前 Windows 原生路径；自定义配置保持不变。' -ForegroundColor Yellow
+    }
+    return ($lines -join [Environment]::NewLine)
+}
+
 if (-not (Test-Path $envPath)) {
     $envExample = Join-Path $root '.env.example'
     if (Test-Path $envExample) {
-        Write-Host "[INIT] 首次运行，正在自动根据模板生成适配 Windows 的 .env 配置文件..." -ForegroundColor Cyan
+        Write-Host "[INIT] 首次运行，正在根据模板生成 Windows 配置文件..." -ForegroundColor Cyan
         $envContent = Get-Content $envExample -Raw -Encoding UTF8
-        $rootSlash = ($root -replace '\\', '/')
-
-        # 将 Linux /opt 模板路径自动转换为 Windows 本地路径，并启用 native 模式
-        $envContent = $envContent.Replace('/opt/workbuddy2api/auths', "$rootSlash/upstream/auths")
-        $envContent = $envContent.Replace('/opt/workbuddy2api/config.json', "$rootSlash/upstream/config.json")
-        $envContent = $envContent.Replace('/opt/workbuddy2api/start-workbuddy2api.cmd', "$rootSlash/upstream/start-workbuddy2api.cmd")
-        $envContent = $envContent.Replace('/opt/workbuddy2api/stop-workbuddy2api.cmd', "$rootSlash/upstream/stop-workbuddy2api.cmd")
-        $envContent = $envContent.Replace('/opt/workbuddy2api/data/server.err.log', "$rootSlash/upstream/data/server.err.log")
-        $envContent = $envContent.Replace('/opt/workbuddy2api', "$rootSlash/upstream")
-        $envContent = $envContent.Replace('/opt/workbuddy-manager/data/manager.db', "$rootSlash/data/manager.db")
-        $envContent = $envContent.Replace('/opt/workbuddy-manager/data/users.json', "$rootSlash/data/users.json")
-        $envContent = $envContent.Replace('/opt/workbuddy-manager/data', "$rootSlash/data")
-        $envContent = $envContent.Replace('/opt/workbuddy-manager/web/out', "$rootSlash/web/out")
-        $envContent = $envContent.Replace('WB2API_MODE=docker', 'WB2API_MODE=native')
-        $envContent = $envContent.Replace('WB_MANAGER_HOST=0.0.0.0', 'WB_MANAGER_HOST=127.0.0.1')
-        $envContent = $envContent.Replace('WB_SECURE_COOKIE=auto', 'WB_SECURE_COOKIE=false')
-
-        # 无 BOM：模板首行虽然目前是注释（BOM 落在注释里无害），但一旦有人调整模板顺序，
-        # 第一个变量名就会带 BOM 前缀而整个失效 —— 不给自己留这种地雷。
+        $envContent = Convert-WindowsEnvContent $envContent
         [System.IO.File]::WriteAllText($envPath, $envContent, (New-Object System.Text.UTF8Encoding($false)))
+    }
+} else {
+    # 覆盖安装会保留 .env：只迁移仍等于模板默认值的 Linux 路径/模式，不覆盖自定义值。
+    $existingEnv = Get-Content $envPath -Raw -Encoding UTF8
+    $migratedEnv = Convert-WindowsEnvContent $existingEnv
+    if ($migratedEnv -cne $existingEnv) {
+        [System.IO.File]::WriteAllText($envPath, $migratedEnv, (New-Object System.Text.UTF8Encoding($false)))
     }
 }
 

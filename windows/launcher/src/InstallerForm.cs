@@ -21,11 +21,13 @@ namespace WorkBuddyLauncher
         private CheckBox _chkStartMenu;
         private Label _lblSpace;
         private ProgressBar _progress;
+        private Label _lblProgressTitle;
         private Label _lblStatus;
         private CheckBox _chkLaunch;
         private Label _lblDoneDetail;
 
         private int _pageIndex;
+        private bool _installFailed;
         private bool _isOverwrite;
         private string _installTarget;
 
@@ -115,7 +117,7 @@ namespace WorkBuddyLauncher
 
         private void BuildProgressPage()
         {
-            MakePageTitle(_pageProgress, "正在安装 " + LauncherPaths.AppName, 28);
+            _lblProgressTitle = MakePageTitle(_pageProgress, "正在安装 " + LauncherPaths.AppName, 28);
             MakePageText(_pageProgress, "正在复制文件，请稍候…", 66, 24);
 
             _progress = new ProgressBar();
@@ -140,16 +142,26 @@ namespace WorkBuddyLauncher
 
         private void UpdateNav()
         {
-            // 进度页（2）安装中不可操作：隐藏全部导航
-            BackButton.Visible = _pageIndex == 1;
-            NextButton.Visible = _pageIndex != 2;
-            BtnCancel.Visible = _pageIndex != 2;
-            NextButton.Text = _pageIndex == 3 ? "完成(&F)" : "下一步(&N) >";
+            // 安装进行中禁止导航；失败时留在当前页显示错误，允许原路径重试或主动返回改路径。
+            bool failedOnProgress = _pageIndex == 2 && _installFailed;
+            BackButton.Visible = _pageIndex == 1 || failedOnProgress;
+            BtnCancel.Visible = _pageIndex != 2 || failedOnProgress;
+            NextButton.Visible = _pageIndex != 2 || failedOnProgress;
+            BackButton.Text = failedOnProgress ? "返回(&B)" : "< 上一步(&B)";
+            NextButton.Text = failedOnProgress ? "重试(&R)" :
+                (_pageIndex == 3 ? "完成(&F)" : "下一步(&N) >");
             if (_pageIndex == 1) { UpdateSpaceInfo(); }
         }
 
         protected override void OnBack()
         {
+            if (_pageIndex == 2 && _installFailed)
+            {
+                _pageIndex = 1;
+                ShowPage(_pageLocation);
+                UpdateNav();
+                return;
+            }
             if (_pageIndex != 1) { return; }
             _pageIndex = 0;
             ShowPage(_pageWelcome);
@@ -167,6 +179,9 @@ namespace WorkBuddyLauncher
                     break;
                 case 1:
                     if (ValidateLocation()) { StartInstall(); }
+                    break;
+                case 2:
+                    if (_installFailed) { StartInstall(); }
                     break;
                 case 3:
                     FinishAndMaybeLaunch();
@@ -189,6 +204,7 @@ namespace WorkBuddyLauncher
 
         private bool ValidateLocation()
         {
+            _isOverwrite = false;
             string raw = _txtDir.Text.Trim();
             if (raw.Length == 0)
             {
@@ -249,6 +265,10 @@ namespace WorkBuddyLauncher
 
         private void StartInstall()
         {
+            _installFailed = false;
+            _progress.Value = 0;
+            _lblProgressTitle.Text = "正在安装 " + LauncherPaths.AppName;
+            _lblStatus.Text = "正在复制文件，请稍候…";
             _pageIndex = 2;
             ShowPage(_pageProgress);
             UpdateNav();
@@ -259,13 +279,16 @@ namespace WorkBuddyLauncher
                 {
                     if (task.IsFaulted)
                     {
-                        MessageBox.Show(this,
-                            "安装失败：" + task.Exception.GetBaseException().Message,
-                            "安装", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        _lblStatus.Text = "安装失败：可点「上一步」返回重新选择目录。";
-                        _pageIndex = 1;
-                        ShowPage(_pageLocation);
+                        Exception error = task.Exception.GetBaseException();
+                        _installFailed = true;
+                        _lblProgressTitle.Text = "安装未完成";
+                        _lblStatus.Text = "安装失败：" + error.Message +
+                            "\n已保留安装目录：" + target + "\n可直接重试，或点「返回」修改安装路径。";
                         UpdateNav();
+                        MessageBox.Show(this,
+                            "安装失败，已保留所选安装路径。\n\n原因：" + error.Message +
+                            "\n\n可在当前页重试，或点「返回」更换安装目录。",
+                            "安装失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         return;
                     }
                     _lblDoneDetail.Text = "程序已安装到：\n" + target;

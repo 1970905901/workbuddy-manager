@@ -180,9 +180,9 @@ def update_user(username: str, body: UserPatch, request: Request,
             target['sv'] = 1
 
     security.save_users(cfg)
-    if changed_pwd:
+    if changed_pwd and username == 'admin':
         # 改掉初始密码后，把 issue #179 留的那份明文副本抹掉 ——
-        # 否则它会变成一份永远有效的凭据。
+        # 这里只存了初始 admin 密码，改其他用户的密码不应让它失效。
         security.clear_initial_password_file()
     if changed_pwd or changed_role:
         parts = []

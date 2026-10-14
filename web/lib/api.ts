@@ -52,6 +52,7 @@ import type {
   TaskLogResponse,
   TaskRunStatus,
   UpdateCheck,
+  UpdatePackageMeta,
   UpdateStatus,
   UpstreamConfig,
   UpstreamEndpoint,
@@ -680,9 +681,25 @@ export const systemApi = {
   /** 检测新版本；force=true 绕过 6 小时缓存 */
   checkUpdate: (force = false) => get<UpdateCheck>('/api/system/check-update', {force}),
   versions: () => get<Versions>('/api/system/versions'),
-  /** 启动一键更新；target: manager | upstream | both */
-  startUpdate: (target: 'manager' | 'upstream' | 'both') =>
-    post<{ok: boolean; message: string}>('/api/system/update', {target}),
+  /**
+   * 启动一键更新；target: manager | upstream | both。
+   * source='uploaded' 用面板里已上传的离线升级包（issue #153）。
+   */
+  startUpdate: (target: 'manager' | 'upstream' | 'both', source: 'release' | 'uploaded' = 'release') =>
+    post<{ok: boolean; message: string}>('/api/system/update', {target, source}),
+  /** 已上传的离线升级包元信息 */
+  packageMeta: () => get<UpdatePackageMeta>('/api/system/update-package'),
+  /**
+   * 上传离线升级包（发布页下载的 .tar.gz）。
+   * `expectedSha256` 填发布页那串摘要时会当场核对，不一致直接拒收。
+   */
+  uploadPackage: (file: File, expectedSha256 = '') => {
+    const body = new FormData();
+    body.append('file', file, file.name);
+    body.append('expected_sha256', expectedSha256);
+    return post<UpdatePackageMeta>('/api/system/update-package', body);
+  },
+  deletePackage: () => del<{ok: boolean}>('/api/system/update-package'),
   /** 固定上游版本（空串 = 取消固定，恢复跟随分支） */
   setUpstreamRef: (ref: string) =>
     post<{ok: boolean; upstream_ref: string}>('/api/system/upstream-ref', {ref}),

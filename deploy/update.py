@@ -177,6 +177,12 @@ UPSTREAM_REF_FILE = Path(os.environ.get('WB_UPSTREAM_REF_FILE') or DATA_DIR / 'u
 
 STEP_TIMEOUT = int(os.environ.get('WB_UPDATE_STEP_TIMEOUT') or 900)
 
+# 离线升级包（面板「上传更新包」用；issue #153）：指向本机的一份发布包 tar.gz。
+# 走这条路时**不查 GitHub**：版本号从包里的 .version 读；完整性核对复用
+# verify_download（用户在面板里填了发布页 sha256 的话，这里就一并核对）。
+OFFLINE_PACKAGE = (os.environ.get('WB_UPDATE_PACKAGE') or '').strip()
+OFFLINE_PACKAGE_SHA256 = (os.environ.get('WB_UPDATE_PACKAGE_SHA256') or '').strip().lower()
+
 # ── 发布包完整性校验 ─────────────────────────────────────
 # 更新器从项目的 GitHub Release 拉包（HTTPS），并核对**发布页给的 sha256 摘要**
 # 与文件大小 —— 也就是绝大多数开源项目让用户做的那个手工校验，这里自动做了。
@@ -1277,14 +1283,69 @@ _release_cache: tuple[Path, dict] | None = None
 _release_tmp: tempfile.TemporaryDirectory | None = None
 
 
+def read_package_version(archive: Path) -> str:
+    """从发布包里读出 `.version`（只解那一个成员，不展开整包）。
+
+    两条路径都用到它：离线升级包要靠它拿版本号（不查 GitHub），面板上传时也用
+    它回显「包内版本」。读 64 字节足够（里面就是 `v1.0.86` 这种短串）。
+    """
+    try:
+        with tarfile.open(archive, 'r:gz') as tf:
+            for member in tf:
+                name = member.name.replace('\\', '/')
+                if name.count('/') == 1 and name.endswith('/.version'):
+                    fh = tf.extractfile(member)
+                    return fh.read(64).decode('utf-8', 'replace').strip() if fh else ''
+    except (OSError, tarfile.TarError) as exc:
+        raise RuntimeError(
+            f'升级包读不了（{exc}）—— 确认它是发布页面下载的 .tar.gz，且下载完整') from exc
+    return ''
+
+
+def offline_package_info(rep: Reporter) -> dict:
+    """离线升级包的元信息（不联网）。
+
+    版本号取自包内 `.version` 而不是文件名：文件名谁都能改，而 `.version` 是
+    打包时写进去的（面板侧也按同一份读，两边口径一致）。
+    """
+    archive = Path(OFFLINE_PACKAGE)
+    if not archive.is_file():
+        raise RuntimeError(f'找不到离线升级包：{archive}')
+    size = archive.stat().st_size
+    if size < 100_000:
+        raise RuntimeError('离线升级包过小，不像是完整的发布包（下载可能中断了）')
+    version = read_package_version(archive)
+    if not version:
+        raise RuntimeError('离线升级包里没有 .version —— 不是本项目的发布包，已中止')
+    rep.log(f'使用离线升级包：{archive.name}（{size / 1024 / 1024:.1f} MB，包内版本 {version}）')
+    if not OFFLINE_PACKAGE_SHA256:
+        rep.log('未提供发布页 sha256：本次只校验包能不能解开、内容结构对不对，'
+                '包本身的可信度取决于你从哪拿到它', 'warn')
+    return {
+        'tag': version,
+        'pkg_url': '',
+        'pkg_name': archive.name,
+        'pkg_size': None,          # 没有独立的「期望大小」（文件就在本机）
+        'pkg_digest': f'sha256:{OFFLINE_PACKAGE_SHA256}' if OFFLINE_PACKAGE_SHA256 else '',
+        'local_package': str(archive),
+    }
+
+
 def _fetch_release_info(rep: Reporter) -> dict:
     """取最新 Release 的元信息（**不下载**）。同一进程内只查一次。
 
     API 优先（认证后 5000 次/小时；未认证仅 60 次/小时/IP，共享出口极易被同出口
     用户打满而 403）；失败时回退到 releases/latest 的 302 重定向（不走 API、无配额）。
+
+    指定了离线升级包（`WB_UPDATE_PACKAGE`）时不联网：内网机器上这条路本来就是
+    为了「完全拿不到 GitHub」才存在的。
     """
     global _release_info_cache
     if _release_info_cache is not None:
+        return _release_info_cache
+
+    if OFFLINE_PACKAGE:
+        _release_info_cache = offline_package_info(rep)
         return _release_info_cache
 
     info: dict | None = None
@@ -1324,7 +1385,14 @@ def _release_root(rep: Reporter, info: dict | None = None) -> tuple[Path, dict]:
     _release_tmp = tempfile.TemporaryDirectory(prefix='wbm-update-')
     tmp = Path(_release_tmp.name)
     archive = tmp / info['pkg_name']
-    download(info['pkg_url'], archive, rep)
+    local = str(info.get('local_package') or '')
+    if local:
+        # 离线升级包：文件就在本机，复制一份到临时目录只是让后续步骤共用同一条
+        # 路径（解压、清理都在 tmp 里，不动用户上传的那份原件）。
+        shutil.copyfile(local, archive)
+        rep.log('离线升级包已就位（跳过下载）')
+    else:
+        download(info['pkg_url'], archive, rep)
     verify_download(archive, info, rep)
 
     rep.log('解压…')
@@ -1358,13 +1426,17 @@ def update_manager(rep: Reporter) -> None:
     #    _fetch_release_info；上游那条路径也走它，所以回退只修一处。
     info = _fetch_release_info(rep)
     tag = info['tag']
-    rep.log(f'最新版本：{tag or "(未知)"}')
+    rep.log(('升级包版本：' if info.get('local_package') else '最新版本：') + f'{tag or "(未知)"}')
     rep.set_target_version(tag)
 
     current = read_local_version()
-    if current and tag and current == tag.lstrip('v'):
+    if not info.get('local_package') and current and tag and current == tag.lstrip('v'):
         rep.log(f'当前已是最新版本（{tag}）')
         return
+    if info.get('local_package'):
+        # 离线包是用户**显式指定**的：即使版本号与当前相同也继续装（重装/修复
+        # 正是它最常见的用法之一），所以这里不套用上面的「已是最新就跳过」。
+        rep.log('离线升级包：按你指定的包安装，不比较版本新旧')
 
     pkg_name = info['pkg_name']
     pkg_url = info['pkg_url']

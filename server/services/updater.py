@@ -32,6 +32,77 @@ LOG_FILE = config.DATA_DIR / 'update.log'
 # 用于上游某提交自身有问题（如 Dockerfile 引用了已删除的文件）时回退。
 UPSTREAM_REF_FILE = config.DATA_DIR / 'upstream-ref.txt'
 
+# ── 离线升级包（issue #153）────────────────────────────────
+# 内网 / 拿不到 GitHub 的机器：从别处下载发布包，在面板里上传，再走同一套更新流程。
+# 文件名固定（客户端不参与命名，只往这一个位置覆盖写），元信息存面板设置。
+PACKAGE_FILE = config.DATA_DIR / 'update-package.tar.gz'
+PACKAGE_META_KEY = 'update_package'
+# 发布包现在约 11 MB，留到 63 MB（= 请求体上限 64 MB 减去 multipart 的边界与
+# 表头开销）：上传是往磁盘写，没有上限就等于给了一个能把磁盘填满的入口。
+# `server/main.py` 的 MAX_PACKAGE_BODY_BYTES 必须比它大（有测试盯着）。
+PACKAGE_MAX_BYTES = 63 * 1024 * 1024
+
+
+def _read_package_version(path: Path) -> str:
+    """从发布包里读出 `.version`（只解那一个成员，不展开整包）。
+
+    更新器（deploy/update.py）里有一份同样的实现 —— 这条刻意不共用：面板不该为了
+    读一个字符串去 import 那个脚本。`server/tests/test_update_package.py` 拿同一份
+    包断言两边读出来的版本号一致，防漂移。
+    """
+    import tarfile
+
+    try:
+        with tarfile.open(path, 'r:gz') as tf:
+            for member in tf:
+                name = member.name.replace('\\', '/')
+                if name.count('/') == 1 and name.endswith('/.version'):
+                    fh = tf.extractfile(member)
+                    return fh.read(64).decode('utf-8', 'replace').strip() if fh else ''
+    except (OSError, tarfile.TarError) as exc:
+        raise ValueError(
+            f'升级包读不了（{err_text(exc)}）—— 确认它是发布页面下载的 .tar.gz') from exc
+    return ''
+
+
+def package_meta() -> dict:
+    """已上传升级包的元信息 + 文件是否还在（界面据此决定按钮可不可点）。"""
+    raw = db.get_setting(PACKAGE_META_KEY, {}) or {}
+    meta = dict(raw) if isinstance(raw, dict) else {}
+    meta['present'] = PACKAGE_FILE.is_file()
+    if meta['present']:
+        try:
+            meta['size'] = PACKAGE_FILE.stat().st_size
+        except OSError:
+            meta['present'] = False
+    return meta
+
+
+def record_package(*, name: str, size: int, sha256: str, version: str,
+                   expected_sha256: str = '', uploaded_by: str = '') -> dict:
+    meta = {
+        'name': name,
+        'size': int(size),
+        'sha256': sha256,
+        # 用户填的「发布页 sha256」：更新时交给更新器核对；空 = 只做了结构校验
+        'expected_sha256': expected_sha256,
+        'version': version,
+        'uploaded_at': int(time.time()),
+        'uploaded_by': uploaded_by,
+    }
+    db.set_setting(PACKAGE_META_KEY, meta)
+    return {**meta, 'present': True}
+
+
+def clear_package() -> None:
+    """删掉升级包与记录（更新完成后、或用户手动清掉时调）。"""
+    try:
+        PACKAGE_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+    db.set_setting(PACKAGE_META_KEY, {})
+
+
 # 锁有效期：超过此时间视为异常退出遗留，允许再次更新
 LOCK_TTL = 3600
 
@@ -375,10 +446,26 @@ def _write_initial_status(target: str, pid: int) -> None:
         pass
 
 
-def start_update(target: str) -> tuple[bool, str]:
-    """启动更新（后台脱离运行）。返回 (是否已启动, 说明)。"""
+def start_update(target: str, *, source: str = 'release') -> tuple[bool, str]:
+    """启动更新（后台脱离运行）。返回 (是否已启动, 说明)。
+
+    `source`：
+      · `release` —— 从 GitHub 拉最新发布包（默认，原有的路）；
+      · `uploaded` —— 用面板里已上传的离线升级包（issue #153，内网机器用）。
+        文件路径由服务端给出（固定文件名），客户端永远不传路径。
+    """
     if target not in ('manager', 'upstream', 'both'):
         return False, '参数不合法'
+    if source not in ('release', 'uploaded'):
+        return False, '参数不合法'
+    package_path: Path | None = None
+    package_expected = ''
+    if source == 'uploaded':
+        meta = package_meta()
+        if not meta.get('present'):
+            return False, '还没有上传升级包（在「离线升级包」里选一个发布包上传后再试）'
+        package_path = PACKAGE_FILE
+        package_expected = str(meta.get('expected_sha256') or '')
     if os.name == 'nt' and config.WB2API_MODE == 'native':
         return False, (
             'Windows 原生部署暂不支持网页一键更新；'
@@ -434,6 +521,13 @@ def start_update(target: str) -> tuple[bool, str]:
         'PYTHONIOENCODING': 'utf-8',
         'PYTHONUTF8': '1',
     })
+    if package_path is not None:
+        # 离线升级包：更新器不查 GitHub，版本号从包里读；用户填过发布页 sha256
+        # 的话一并传下去让它核对（没填就只做结构校验，更新器会在日志里说明）。
+        env['WB_UPDATE_PACKAGE'] = str(package_path)
+        env.pop('WB_UPDATE_PACKAGE_SHA256', None)
+        if package_expected:
+            env['WB_UPDATE_PACKAGE_SHA256'] = package_expected
 
     try:
         logfh = open(LOG_FILE, 'ab')

@@ -1057,6 +1057,24 @@ export interface UpdateCheck {
   has_any: boolean;
 }
 
+/** 已上传的离线升级包（issue #153）：内网机器用它代替「从 GitHub 拉最新」 */
+export interface UpdatePackageMeta {
+  /** 文件是否还在（记录存在但文件被清掉时为 false） */
+  present: boolean;
+  /** 上传时的原始文件名（只用于显示） */
+  name?: string;
+  /** 文件大小（字节） */
+  size?: number;
+  /** 服务端算出的 sha256 */
+  sha256?: string;
+  /** 用户在界面上填的「发布页 sha256」，空 = 没填、更新时只做结构校验 */
+  expected_sha256?: string;
+  /** 包内 .version（发布包打进包里的版本号） */
+  version?: string;
+  uploaded_at?: number;
+  uploaded_by?: string;
+}
+
 export interface Versions {
   manager: string;
   upstream_connected: boolean;

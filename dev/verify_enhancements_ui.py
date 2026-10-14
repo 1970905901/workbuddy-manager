@@ -206,6 +206,15 @@ const BASE = process.env.BASE, OUT = process.env.OUT;
     step(false, '找不到「一键刷新令牌」按钮');
   }
 
+  // ── 系统更新页：离线升级包卡片（issue #153）──
+  await p.goto(`${BASE}/settings/system`,{waitUntil:'load'});
+  await p.waitForTimeout(2500);
+  text = await body();
+  step(text.includes('离线升级包'), '系统更新页有「离线升级包」卡片');
+  step(text.includes('发布包文件') && text.includes('sha256'), '卡片里有文件选择与摘要输入');
+  step(text.includes('一键更新') || text.includes('更新'), '更新卡片仍在（没被新卡片挤掉）');
+  await p.screenshot({path:`${OUT}/offline-package.png`, fullPage:true});
+
   const realErrors = errors.filter(e => !/favicon|404|Failed to load resource/i.test(e));
   step(realErrors.length === 0, '控制台没有报错', realErrors.slice(0,3).join(' | '));
 

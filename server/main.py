@@ -91,7 +91,7 @@ def _warn_if_exposed() -> None:
 
 app = FastAPI(
     title='WorkBuddy Manager',
-    version='1.0.87',
+    version='1.0.88',
     lifespan=lifespan,
     # 生产环境默认关闭交互式文档与 OpenAPI 描述：
     # 它们会把管理接口全貌（路径、参数、结构）暴露给任何未认证访问者，
@@ -126,10 +126,17 @@ if config.CORS_ORIGINS:
 # 取得比网关默认（8MB）宽松些：管理端有「保存上游配置」这类正常的大请求。
 MAX_API_BODY_BYTES = 16 * 1024 * 1024
 
+# 唯一需要更大请求体的管理端路径：上传离线升级包（issue #153）。发布包现在约
+# 11 MB，将来会变大，所以这里给到 64 MB —— 仍然是个**硬上限**，不是没有上限：
+# 上传本身还要过会话管理员鉴权，且落盘后立刻做 tar.gz 结构与 .version 校验。
+# 与 `updater.PACKAGE_MAX_BYTES` 必须一致（有测试盯着，别只改一边）。
+MAX_PACKAGE_BODY_BYTES = 64 * 1024 * 1024
+PACKAGE_UPLOAD_PATHS = ('/api/system/update-package',)
+
 
 @app.middleware('http')
 async def limit_api_body(request: Request, call_next):
-    """给 `/api/*` 的请求体加上限。
+    """给 `/api/*` 的请求体加上限（上传升级包那条路放宽，见上面的常量）。
 
     只看 `Content-Length`：本中间件拦的是「声明了超大长度」这条最容易发起、
     也最容易自动化的路径（无鉴权即可打 /api/login）。ASGI 在中间件之前不会把
@@ -141,9 +148,11 @@ async def limit_api_body(request: Request, call_next):
             declared = int(request.headers.get('content-length') or 0)
         except ValueError:
             declared = 0
-        if declared > MAX_API_BODY_BYTES:
+        limit = (MAX_PACKAGE_BODY_BYTES
+                 if request.url.path in PACKAGE_UPLOAD_PATHS else MAX_API_BODY_BYTES)
+        if declared > limit:
             return JSONResponse(
-                {'detail': f'请求体过大（上限 {MAX_API_BODY_BYTES // 1024 // 1024} MB）'},
+                {'detail': f'请求体过大（上限 {limit // 1024 // 1024} MB）'},
                 status_code=413,
             )
     return await call_next(request)

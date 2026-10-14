@@ -13,18 +13,20 @@ import {
   ShieldCheck,
   Sparkles,
   Terminal,
+  Upload,
   Trash2,
   X,
   XCircle,
 } from 'lucide-react';
 import {errText, systemApi} from '@/lib/api';
-import type {UpdateCheck, UpdateStatus} from '@/lib/types';
+import type {UpdateCheck, UpdatePackageMeta, UpdateStatus} from '@/lib/types';
 import {notify} from '@/lib/toast';
 import {fmtAgo} from '@/lib/format';
 import {useAuth} from '@/lib/auth-context';
 import {Button} from '@/components/ui/button';
 import {Badge} from '@/components/ui/badge';
 import {Input} from '@/components/ui/input';
+import {Label} from '@/components/ui/label';
 import {ConfirmDialog} from '@/components/common/layout/ConfirmDialog';
 import {RichText} from '@/lib/i18n/rich-text';
 import {useT} from '@/lib/i18n/provider';
@@ -73,9 +75,12 @@ export function UpdatePanel() {
    * 不依赖 finished_at 是否存在，避免时间戳缺失时关不掉。
    */
   const [resultDismissed, setResultDismissed] = useState(false);
+  /** 离线升级包（issue #153）：已上传的包 + 上传在途状态 + 用户填的发布页摘要 */
+  const [pkg, setPkg] = useState<UpdatePackageMeta | null>(null);
+  const [pkgBusy, setPkgBusy] = useState(false);
+  const [pkgSha, setPkgSha] = useState('');
   /** 清除上次更新记录（issue #105）在途状态 */
   const [clearBusy, setClearBusy] = useState(false);
-  /** 上游版本固定输入（空 = 跟随分支） */
   const [refInput, setRefInput] = useState('');
   const [refBusy, setRefBusy] = useState(false);
   const refInited = useRef(false);
@@ -83,11 +88,13 @@ export function UpdatePanel() {
 
   const load = useCallback(async () => {
     try {
-      const [st, vs, ck] = await Promise.allSettled([
+      const [st, vs, ck, pk] = await Promise.allSettled([
         systemApi.updateStatus(),
         systemApi.versions(),
         systemApi.checkUpdate(),
+        systemApi.packageMeta(),
       ]);
+      if (pk.status === 'fulfilled') setPkg(pk.value);
       if (st.status === 'fulfilled') {
         setStatus(st.value);
         if (!refInited.current) {
@@ -101,6 +108,53 @@ export function UpdatePanel() {
       /* 更新期间服务重启，忽略瞬时失败 */
     }
   }, []);
+
+  /**
+   * 上传离线升级包。
+   *
+   * 前端只做「选文件 + 可选填发布页摘要」，核对与落盘都在服务端：填了摘要就当场
+   * 比对（不一致直接拒收），没填就只验证结构，界面把这一点写清楚。
+   */
+  const uploadPackage = useCallback(async (file: File) => {
+    setPkgBusy(true);
+    try {
+      const meta = await systemApi.uploadPackage(file, pkgSha.trim());
+      setPkg(meta);
+      notify.ok(t('updatePanel.pkgUploaded', {version: meta.version || ''}),
+                t('updatePanel.pkgUploadedDesc', {mb: String(Math.round((meta.size || 0) / 1024 / 1024))}));
+      setPkgSha('');
+    } catch (e) {
+      notify.err(errText(e));
+    } finally {
+      setPkgBusy(false);
+    }
+  }, [pkgSha, t]);
+
+  const startFromPackage = useCallback(async (target: 'manager' | 'both') => {
+    setBusy(true);
+    try {
+      const r = await systemApi.startUpdate(target, 'uploaded');
+      notify.ok(t('updatePanel.updateStarted'), r.message);
+      await load();
+    } catch (e) {
+      notify.err(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [load, t]);
+
+  const dropPackage = useCallback(async () => {
+    setPkgBusy(true);
+    try {
+      await systemApi.deletePackage();
+      setPkg({present: false});
+      notify.ok(t('updatePanel.pkgCleared'));
+    } catch (e) {
+      notify.err(errText(e));
+    } finally {
+      setPkgBusy(false);
+    }
+  }, [t]);
 
   /** 强制重新检测（绕过服务端 6 小时缓存） */
   const recheck = useCallback(async () => {
@@ -554,6 +608,91 @@ export function UpdatePanel() {
           <p className="mt-2 text-[11px] text-muted-foreground">{t('updatePanel.readonlyNote')}</p>
         )}
       </div>
+
+      {/* 离线升级包（issue #153）：内网 / 拿不到 GitHub 的机器，从别处下载发布包上传 */}
+      {isAdmin && (
+        <div className="rounded-[20px] bg-muted p-4">
+          <div className="mb-1 flex flex-wrap items-center gap-2 text-sm font-medium">
+            <Upload className="h-4 w-4" />
+            {t('updatePanel.pkgTitle')}
+            {pkg?.present && pkg.version && (
+              <Badge variant="secondary" className="rounded-full font-mono text-[10px]">
+                {pkg.version}
+              </Badge>
+            )}
+          </div>
+          <div className="mb-3 text-[11px] leading-4 text-muted-foreground">
+            <RichText text={t('updatePanel.pkgDesc')} />
+          </div>
+
+          {pkg?.present ? (
+            <div className="space-y-2">
+              <div className="rounded-2xl bg-background/60 px-3.5 py-2.5 text-[11px] leading-5">
+                <div className="font-mono">{pkg.name || t('updatePanel.pkgUnnamed')}</div>
+                <div className="text-muted-foreground break-all">
+                  sha256 {pkg.sha256 || '—'}
+                  {pkg.size ? ` · ${(pkg.size / 1024 / 1024).toFixed(1)} MB` : ''}
+                  {pkg.expected_sha256 ? ` · ${t('updatePanel.pkgCompared')}` : ` · ${t('updatePanel.pkgNotCompared')}`}
+                </div>
+                {!pkg.expected_sha256 && (
+                  <div className="mt-1 text-amber-600 dark:text-amber-500">
+                    {t('updatePanel.pkgCompareHint')}
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm" className="rounded-full"
+                        disabled={busy || running}
+                        onClick={() => void startFromPackage('both')}>
+                  <DownloadCloud className="mr-1.5 h-3.5 w-3.5" />
+                  {t('updatePanel.pkgUseBoth')}
+                </Button>
+                <Button size="sm" variant="outline" className="rounded-full"
+                        disabled={busy || running}
+                        onClick={() => void startFromPackage('manager')}>
+                  {t('updatePanel.pkgUseManager')}
+                </Button>
+                <Button size="sm" variant="ghost" className="rounded-full"
+                        disabled={pkgBusy || running}
+                        onClick={() => void dropPackage()}>
+                  {t('updatePanel.pkgClear')}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="flex flex-col gap-1">
+                  <Label className="text-[11px] text-muted-foreground">{t('updatePanel.pkgFile')}</Label>
+                  <input
+                    type="file"
+                    accept=".tar.gz,application/gzip"
+                    disabled={pkgBusy || running}
+                    className="text-[11px] file:mr-2 file:rounded-full file:border-0 file:bg-background file:px-3 file:py-1.5 file:text-[11px] file:text-foreground"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) void uploadPackage(file);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+                <label className="flex min-w-[16rem] flex-1 flex-col gap-1">
+                  <Label className="text-[11px] text-muted-foreground">{t('updatePanel.pkgShaLabel')}</Label>
+                  <Input className="h-8 bg-background font-mono text-[11px]"
+                         value={pkgSha} placeholder={t('updatePanel.pkgShaPlaceholder')}
+                         onChange={(e) => setPkgSha(e.target.value)} />
+                </label>
+              </div>
+              {pkgBusy && (
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  {t('updatePanel.pkgUploading')}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 上游版本固定：上游某个提交自身有问题时，固定回上一个可用提交 */}
       <div className="rounded-[20px] bg-muted p-4">

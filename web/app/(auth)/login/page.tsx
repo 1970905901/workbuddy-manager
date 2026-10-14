@@ -136,6 +136,14 @@ export default function LoginPage() {
 
             {error && <p className="text-xs text-red-500">{error}</p>}
 
+            {/* 登录失败才提示初始密码在哪：issue #179 —— 随机密码只打印一次，
+                日志被轮转 / 安装脚本没抓到 / 用户翻不过日志，都会让人彻底卡在
+                登录页外面。指路到那份落盘文件是唯一能自救的办法。成功登录就
+                永远看不到这行，所以不打扰老用户。 */}
+            {error && (
+              <p className="text-xs text-muted-foreground">{t('login.initialPwdHint')}</p>
+            )}
+
             <Button type="submit" disabled={busy} className="w-full rounded-full">
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
               {t('login.submit')}

@@ -300,7 +300,29 @@ fi
 
 systemctl daemon-reload
 systemctl enable --now workbuddy-web >/dev/null 2>&1
-sleep 3
+
+# 等初始密码那几行真正出现在日志里，而不是死等固定秒数。
+#
+# 之前是 `sleep 3` 然后直接 grep（issue #179）。3 秒是拍的：慢 VPS 上 uvicorn
+# import 完 FastAPI/httpx 常常要更久，那时bootstrap_users() 还没跑，grep 抓空
+# → 安装完成页只能打印一句「见下方命令」，而那条补救命令翻几屏日志也已经
+# 过去了，用户就此卡在登录页外面。
+#
+# 改成有上限的轮询：等到就等到，最多 ADMIN_PWD_WAIT 秒（默认 30）后放弃 ——
+# 首次启动本来就该几秒内出结果，30 秒还没出说明是别的问题，不该无限等下去。
+ADMIN_PWD_WAIT="${ADMIN_PWD_WAIT:-30}"
+_admin_pwd_log() {
+  journalctl -u workbuddy-web --no-pager --since "-${ADMIN_PWD_WAIT}s" 2>/dev/null \
+    | grep -A3 '初始管理员' | tail -n +2 | head -3
+}
+_admin_pwd=""
+for _i in $(seq 1 "$ADMIN_PWD_WAIT"); do
+  _admin_pwd="$(_admin_pwd_log || true)"
+  [ -n "$_admin_pwd" ] && break
+  systemctl is-active --quiet workbuddy-web || break   # 服务已挂，等下去也没意义
+  sleep 1
+done
+
 systemctl is-active --quiet workbuddy-web && ok "服务已启动" || {
   warn "服务未正常运行，最近日志："
   journalctl -u workbuddy-web -n 20 --no-pager || true
@@ -324,7 +346,17 @@ fi
 # ── 4. 完成 ───────────────────────────────────────────────
 step "4/4 完成"
 
-ADMIN_PWD_LINE="$(journalctl -u workbuddy-web -n 200 --no-pager 2>/dev/null | grep -A3 '初始管理员' | tail -n +2 | head -3 || true)"
+# 优先读服务端落盘的那份（0600），journal 只作备份来源。
+#
+# 落盘文件是服务端 bootstrap 时写的，与「日志被轮转 / grep 竞态 / 用户翻不过
+# 日志」这些全都无关 —— 正是 issue #179 里用户彻底看不到密码的原因。
+INITIAL_PW_FILE="${APP_DIR}/data/initial-admin-password.txt"
+ADMIN_PWD_LINE="$_admin_pwd"
+if [ -z "$ADMIN_PWD_LINE" ] && [ -r "$INITIAL_PW_FILE" ]; then
+  _pw="$(tr -d '\r\n' < "$INITIAL_PW_FILE")"
+  [ -n "$_pw" ] && ADMIN_PWD_LINE="  用户名: admin
+  密码  : ${_pw}"
+fi
 
 cat <<EOF
 
@@ -344,8 +376,11 @@ if [ -n "$ADMIN_PWD_LINE" ]; then
   echo "$ADMIN_PWD_LINE" | sed 's/^/    /'
 else
   echo ""
-  echo "  登录账号：admin / 首次启动时随机生成（见下方命令）"
+  echo "  登录账号：admin"
+  echo "  初始密码由服务端随机生成，只打印一次。三个地方都能取回："
+  echo "    cat ${INITIAL_PW_FILE}"
   echo "    journalctl -u workbuddy-web | grep -A3 '初始管理员'"
+  echo "  登录后请立即在「设置 → 管理用户」里改掉它（改完这份明文会自动删除）。"
 fi
 
 cat <<EOF

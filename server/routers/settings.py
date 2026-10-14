@@ -180,6 +180,10 @@ def update_user(username: str, body: UserPatch, request: Request,
             target['sv'] = 1
 
     security.save_users(cfg)
+    if changed_pwd:
+        # 改掉初始密码后，把 issue #179 留的那份明文副本抹掉 ——
+        # 否则它会变成一份永远有效的凭据。
+        security.clear_initial_password_file()
     if changed_pwd or changed_role:
         parts = []
         if changed_pwd:
@@ -212,6 +216,9 @@ def delete_user(username: str, request: Request,
         raise HTTPException(status_code=400, detail='不能删除当前登录用户')
     cfg['users'] = [u for u in users if u.get('username') != username]
     security.save_users(cfg)
+    if target.get('username') == 'admin':
+        # 被删掉的就是初始账号，那份明文初始密码也随之失效。
+        security.clear_initial_password_file()
     security.audit(user, 'delete_user', username, f'来源 {client_ip(request)}')
     return {'ok': True}
 

@@ -387,11 +387,23 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      - name: 这个 tag 有没有 launcher
+        id: check
+        shell: pwsh
+        run: |
+          # 安装器是 v1.0.88 才有的；给更早的 tag 补跑工作流时（workflow_dispatch），
+          # 这里必须**跳过而不是失败** —— 否则一个「老版本补产物」的动作会把 CI 标红。
+          $has = Test-Path 'windows/launcher/build.ps1'
+          "has_launcher=$($has.ToString().ToLower())" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          if (-not $has) { "::warning::这个 tag 里没有 windows/launcher，跳过安装器构建" }
+
       - name: 构建安装器（含上游编译与预置运行时）
+        if: steps.check.outputs.has_launcher == 'true'
         shell: pwsh
         run: windows/launcher/build.ps1
 
       - name: 记录安装器摘要
+        if: steps.check.outputs.has_launcher == 'true'
         shell: pwsh
         run: |
           $exe = 'windows/launcher/dist/WorkBuddyManagerSetup.exe'
@@ -406,6 +418,7 @@ jobs:
         id: hash
 
       - name: 挂到 Release 上（已发布则不覆盖）
+        if: steps.check.outputs.has_launcher == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

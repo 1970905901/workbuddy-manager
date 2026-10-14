@@ -51,9 +51,11 @@ function Convert-WindowsEnvContent([string]$content) {
     }
 
     $changed = $false
+    $seenKeys = @{}
     for ($i = 0; $i -lt $lines.Count; $i++) {
         if ($lines[$i] -notmatch '^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$') { continue }
         $key = $Matches[1]
+        $seenKeys[$key] = $true
         $value = $Matches[2].Trim().Trim('"').Trim("'")
 
         if ($pathDefaults.ContainsKey($key) -and
@@ -69,6 +71,32 @@ function Convert-WindowsEnvContent([string]$content) {
         } elseif ($key -eq 'WB_SECURE_COOKIE' -and $value -eq 'auto') {
             $lines[$i] = 'WB_SECURE_COOKIE=false'
             $changed = $true
+        }
+    }
+
+    # 打包版应自带原生上游；旧 .env 若缺少关键变量，补齐当前安装目录的安全默认值。
+    # 已存在的自定义值不覆盖，避免把用户的外部上游改掉。
+    $nativeBundleReady = (Test-Path (Join-Path $root 'upstream\wb2api.exe')) -and
+        (Test-Path (Join-Path $root 'upstream\start-workbuddy2api.cmd'))
+    if ($nativeBundleReady) {
+        $nativeDefaults = [ordered]@{
+            'WB2API_MODE' = 'native'
+            'WB_AUTH_DIR' = "$rootSlash/upstream/auths"
+            'WB_UPSTREAM_CONFIG' = "$rootSlash/upstream/config.json"
+            'WB_UPSTREAM_DIR' = "$rootSlash/upstream"
+            'WB2API_START_SCRIPT' = "$rootSlash/upstream/start-workbuddy2api.cmd"
+            'WB2API_STOP_SCRIPT' = "$rootSlash/upstream/stop-workbuddy2api.cmd"
+            'WB2API_LOG_FILE' = "$rootSlash/upstream/data/server.err.log"
+            'WB_DATA_DIR' = "$rootSlash/data"
+            'WB_DB' = "$rootSlash/data/manager.db"
+            'WB_USERS_FILE' = "$rootSlash/data/users.json"
+            'WB_STATIC_DIR' = "$rootSlash/web/out"
+        }
+        foreach ($entry in $nativeDefaults.GetEnumerator()) {
+            if (-not $seenKeys.ContainsKey($entry.Key)) {
+                $lines += $entry.Key + '=' + $entry.Value
+                $changed = $true
+            }
         }
     }
 

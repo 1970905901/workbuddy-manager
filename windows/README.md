@@ -57,6 +57,19 @@ powershell -ExecutionPolicy Bypass -File windows\launcher\build.ps1
 目标机器**无需安装 Python / Node / Go**，安装后即可直接启动。构建细节见
 [`launcher/build.ps1`](launcher/build.ps1) 顶部注释。
 
+### 安装目录与卸载（两点要知道）
+
+**安装目录**：向导里选中的文件夹被当作**父目录**，程序装进它的 `WorkBuddyManager`
+子目录（例如选 `D:\workspace` → 实际装到 `D:\workspace\WorkBuddyManager`）。
+两种例外按原样使用：选中的目录本身已经是本程序的安装目录（覆盖安装），或者它的名字
+就叫 `WorkBuddyManager`。
+
+**卸载只删自己的东西**：安装时会把「这个程序放下了哪些文件」写进安装目录里的
+`WorkBuddyManager.install.txt`；卸载只删清单里登记的、以及程序自有目录（`server`、
+`web`、`upstream`、`data`、`.runtime` 等）里的文件。**任何不属于本程序的文件都会被
+原样保留**，并在卸载完成页列出来。在不是安装目录的地方运行卸载（例如把它复制到别处
+再点）会直接拒绝，不动任何文件。
+
 ### 发布资产、第三方来源与安全提示
 
 发版时 `.github/workflows/release.yml` 会跑两个作业：Ubuntu 上打 `.tar.gz` / `.zip`

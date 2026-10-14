@@ -11,7 +11,14 @@ namespace WorkBuddyLauncher
     {
         /// 解压内嵌 payload 到目标目录（覆盖同名文件）。
         /// progress 回调参数：已完成条目数、总条目数、当前条目相对路径；可为 null。
+        /// collect：可选，把解压出来的相对路径收集起来（安装器据此写安装清单）。
         public static void ExtractPayload(string targetDir, Action<int, int, string> progress)
+        {
+            ExtractPayload(targetDir, progress, null);
+        }
+
+        public static void ExtractPayload(string targetDir, Action<int, int, string> progress,
+            System.Collections.Generic.List<string> collect)
         {
             Diag("ExtractPayload 开始");
             using (Stream stream = Assembly.GetExecutingAssembly()
@@ -41,6 +48,7 @@ namespace WorkBuddyLauncher
                         {
                             Directory.CreateDirectory(Path.GetDirectoryName(destination));
                             entry.ExtractToFile(destination, true);
+                            if (collect != null) { collect.Add(relative); }
                         }
                         done++;
                         // 逐条回调会把 UI 刷爆：按批次节流，最后一条必报

@@ -24,6 +24,8 @@ namespace WorkBuddyLauncher
         private int _pageIndex;
         private int _totalFiles;
         private int _failedFiles;
+        private int _keptFiles;
+        private string[] _keptSamples = new string[0];
         private bool _keepData;
 
         public UninstallForm()
@@ -171,6 +173,12 @@ namespace WorkBuddyLauncher
             {
                 done += "\n\n有 " + _failedFiles + " 个文件未能删除（可能被占用），可在重启后手动删除该目录。";
             }
+            if (_keptFiles > 0)
+            {
+                done += "\n\n目录里还有 " + _keptFiles + " 个**不是本程序**的文件，已原样保留（不会被删）：";
+                foreach (string sample in _keptSamples) { done += "\n  · " + sample; }
+                if (_keptFiles > _keptSamples.Length) { done += "\n  · …等"; }
+            }
             _lblDone.Text = done;
         }
 
@@ -189,13 +197,22 @@ namespace WorkBuddyLauncher
             _totalFiles = Maintenance.CountFiles(_installDir);
             _progress.Maximum = Math.Max(_totalFiles, 1);
             Report("正在删除项目文件（共 " + _totalFiles + " 个）…");
-            _failedFiles = Maintenance.DeleteProgramFiles(_installDir, _keepData, Application.ExecutablePath,
+            Maintenance.DeletionReport report = Maintenance.DeleteProgramFiles(_installDir, _keepData,
+                Application.ExecutablePath,
                 delegate(int done, int total, string name)
                 {
                     _progress.Maximum = Math.Max(total, 1);
                     _progress.Value = Math.Min(done, Math.Max(total, 1));
                     _lblStatus.Text = "正在删除项目文件（已删除 " + done + "/" + Math.Max(total, 1) + " 个）…";
                 });
+            if (report.Refused != null)
+            {
+                // 不是本程序的安装目录：什么都没删，如实说清（issue #178 的护栏）
+                throw new InvalidOperationException(report.Refused);
+            }
+            _failedFiles = report.Failed;
+            _keptFiles = report.KeptFiles;
+            _keptSamples = report.KeptSamples.ToArray();
         }
 
         /// 自删除：把自身改名（运行中的 exe 不能直接删），交给 cmd 在进程退出后清理。

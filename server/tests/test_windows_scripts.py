@@ -127,6 +127,28 @@ class GitAttributesTest(unittest.TestCase):
             '在 Linux 上检出/打包时 .cmd 会变成 LF，用户下到的发布包里脚本是坏的',
         )
 
+    def test_ps1_files_have_utf8_bom(self) -> None:
+        """`.ps1` 必须带 UTF-8 BOM。
+
+        为什么（dev/test-delete-rules.ps1 实测踩到）：没有 BOM 时 Windows PowerShell 5.1
+        按**系统 ANSI 代码页**读脚本，中文变成乱码 —— 而且某个汉字的第二字节可能正好是
+        `'` 或 `*`，于是引号被吃掉、代码直接解析失败（报「必须在 * 运算符后面提供一个
+        值表达式」这种与真实原因毫不相干的错）。`.cmd` 不能带 BOM（cmd.exe 会把 BOM 当
+        命令），`.ps1` 相反：PowerShell 认 BOM，本仓的 .ps1 一律带。
+        """
+        offenders = []
+        for path in _ROOT.rglob('*.ps1'):
+            parts = set(path.parts)
+            if parts & {'.git', 'node_modules', '.next', '.tools', '.runtime', 'dist'}:
+                continue
+            if not path.read_bytes().startswith(bytes([0xEF, 0xBB, 0xBF])):
+                offenders.append(str(path.relative_to(_ROOT)))
+        self.assertEqual(
+            offenders, [],
+            '这些 .ps1 缺 UTF-8 BOM —— PowerShell 5.1 会按 ANSI 读，中文会乱码甚至解析失败：'
+            + '、'.join(offenders),
+        )
+
     def test_rule_is_not_vacuous(self) -> None:
         """反证：确认这条规则真的会作用于我们的脚本路径（而不是没匹配上）。"""
         import subprocess

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
@@ -55,26 +56,53 @@ namespace WorkBuddyLauncher
             catch { }
         }
 
-        /// 删除安装目录里的程序文件；keepData 时跳过白名单数据，selfExclude 为运行中的自身 exe。
-        /// progress(done, total, 当前路径) 可为 null。返回删除失败的文件数。
-        public static int DeleteProgramFiles(string installDir, bool keepData, string selfExclude,
+        /// 删除结果：删了几个、失败几个、**保留**了几个（不属于本程序的文件）。
+        public sealed class DeletionReport
+        {
+            public int Deleted;
+            public int Failed;
+            public int KeptFiles;
+            public readonly List<string> KeptSamples = new List<string>();
+            public string Refused;
+        }
+
+        /// 删除安装目录里的**程序文件**；keepData 时跳过白名单数据，selfExclude 为运行中的自身 exe。
+        ///
+        /// 只删「本程序的东西」：安装清单里登记的（`InstallManifest`）、外加程序自己会创建
+        /// 的顶层目录/文件。**别的文件一律不动**，并在报告里如实列出 —— 这条规则来自
+        /// issue #178：早先递归删光整个安装目录，用户把程序装在自己的 `D:\workspace`
+        /// 里，卸载把那个目录连同他的资料一起删了。
+        ///
+        /// 另外：本目录必须先被认成**本程序的安装根**（server\main.py 或清单存在），
+        /// 否则直接拒绝（`Refused` 带原因）——在别处误点卸载不会伤到任何文件。
+        public static DeletionReport DeleteProgramFiles(string installDir, bool keepData, string selfExclude,
             Action<int, int, string> progress)
         {
+            var report = new DeletionReport();
+            if (!InstallManifest.LooksLikeInstallRoot(installDir))
+            {
+                report.Refused = "这个目录看起来不是 " + LauncherPaths.AppName +
+                    " 的安装目录（没找到 server\\main.py，也没有安装清单），已中止删除。";
+                return report;
+            }
             deleted = 0;
             int total = CountFiles(installDir);
-            int failures = DeleteTree(installDir, string.Empty, keepData, selfExclude,
+            var manifest = InstallManifest.Read(installDir);
+            report.Failed = DeleteTree(installDir, string.Empty, keepData, selfExclude,
+                manifest, report,
                 delegate(int done)
                 {
                     if (progress != null) { progress(done, total, string.Empty); }
                 });
+            report.Deleted = deleted;
             if (progress != null) { progress(total, total, string.Empty); }
-            return failures;
+            return report;
         }
 
         private static int deleted;
 
         private static int DeleteTree(string root, string relative, bool keepData, string selfExclude,
-            Action<int> onProgress)
+            HashSet<string> manifest, DeletionReport report, Action<int> onProgress)
         {
             int failures = 0;
             string absolute = relative.Length == 0 ? root : Path.Combine(root, relative);
@@ -86,6 +114,13 @@ namespace WorkBuddyLauncher
             {
                 string rel = relative.Length == 0 ? Path.GetFileName(file) : relative + "\\" + Path.GetFileName(file);
                 if (ShouldKeep(rel, keepData)) { continue; }
+                if (!InstallManifest.IsOwned(rel, manifest))
+                {
+                    // 不是本程序的文件：留着，记一笔（用户能在卸载完成页里看到）
+                    report.KeptFiles++;
+                    if (report.KeptSamples.Count < 5) { report.KeptSamples.Add(rel); }
+                    continue;
+                }
                 if (selfExclude != null &&
                     string.Equals(file, selfExclude, StringComparison.OrdinalIgnoreCase)) { continue; }
                 if (!TryDeleteFile(file)) { failures++; }
@@ -100,8 +135,12 @@ namespace WorkBuddyLauncher
             {
                 string rel = relative.Length == 0 ? Path.GetFileName(dir) : relative + "\\" + Path.GetFileName(dir);
                 if (ShouldKeep(rel, keepData)) { continue; }
-                failures += DeleteTree(root, rel, keepData, selfExclude, onProgress);
-                try { Directory.Delete(dir, false); }
+                failures += DeleteTree(root, rel, keepData, selfExclude, manifest, report, onProgress);
+                // 只在真的空了才删目录：里面有别人的文件时留着它
+                try
+                {
+                    if (Directory.GetFileSystemEntries(dir).Length == 0) { Directory.Delete(dir, false); }
+                }
                 catch { }
             }
             return failures;

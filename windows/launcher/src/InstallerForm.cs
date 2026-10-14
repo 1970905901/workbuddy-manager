@@ -202,6 +202,20 @@ namespace WorkBuddyLauncher
             }
         }
 
+        /// 把用户选的目录解析成**真正的安装根**（见 ValidateLocation 里的说明）。
+        public static string ResolveInstallTarget(string picked)
+        {
+            string clean = Path.GetFullPath(picked);
+            if (LauncherPaths.LooksInstalled(clean)) { return clean; }
+            string leaf = Path.GetFileName(clean.TrimEnd(Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar));
+            if (string.Equals(leaf, "WorkBuddyManager", StringComparison.OrdinalIgnoreCase))
+            {
+                return clean;
+            }
+            return Path.Combine(clean, "WorkBuddyManager");
+        }
+
         private bool ValidateLocation()
         {
             _isOverwrite = false;
@@ -229,6 +243,13 @@ namespace WorkBuddyLauncher
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
+
+            // 目录语义（issue #178）：把用户选的目录当**父目录**，程序装进它的
+            // WorkBuddyManager 子目录；只有在「选中的目录本身已经是本程序的安装目录」
+            // （覆盖安装）或「它的名字就叫 WorkBuddyManager」时才直接用它。
+            // 早先是照字面装进选中目录，于是有人选了自己的 D:\workspace —— 卸载时
+            // 那个目录被整份删掉。现在最坏情况也只是子目录陌生，不会把用户的目录当程序根。
+            target = ResolveInstallTarget(target);
 
             if (LauncherPaths.LooksInstalled(target))
             {
@@ -328,12 +349,19 @@ namespace WorkBuddyLauncher
             }
 
             Report("正在解压项目文件（约需十几秒）…");
-            PayloadInstaller.ExtractPayload(target, OnExtractProgress);
-            Diag("解压完成");
+            var extracted = new System.Collections.Generic.List<string>();
+            PayloadInstaller.ExtractPayload(target, OnExtractProgress, extracted);
+            Diag("解压完成：" + extracted.Count + " 个条目");
 
             Report("正在写入主程序与卸载程序…");
             PayloadInstaller.CopySelf(target);
             Diag("主程序复制完成");
+            extracted.Add(LauncherPaths.AppExeName);
+            extracted.Add(LauncherPaths.UninstallExeName);
+
+            Report("正在记录安装清单…");
+            InstallManifest.Write(target, extracted);
+            Diag("清单已写入（卸载只删清单与程序自有目录里的文件）");
 
             if (_chkDesktop.Checked || _chkStartMenu.Checked)
             {

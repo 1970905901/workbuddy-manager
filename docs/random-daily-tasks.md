@@ -32,7 +32,7 @@
 实现位于 `dev/upstream-patches/0003-random-daily-schedule.patch`，基于 2026-10-14 下载的 `upstream-src` 资产：
 
 ```text
-sha256: 68c08d139d8d460e55700a8c1796e6be732713164be1d643b28f3013383c036d
+sha256: b9946da7d53afc14eb585bbe3a31af7aac2c74361dc6ffeacb146a5ee5dd8454
 ```
 
 **只合并面板字段不会让旧 Go 服务支持随机排程。** 维护者需要按现有上游补丁流程重新生成并刷新 `upstream-src` 资产，再构建发布包；运行服务需要安装/重建相应上游。旧 Go 服务会忽略未知字段，不能把「保存成功」视为功能已生效。

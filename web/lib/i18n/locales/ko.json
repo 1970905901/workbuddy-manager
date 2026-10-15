@@ -64,7 +64,8 @@
     "submit": "로그인",
     "legal": "로그인하면 이 시스템에 대한 접근 권한이 있음을 확인하는 것으로 간주되며, 모든 작업이 기록됩니다.",
     "emptySubmit": "사용자 이름 또는 비밀번호가 비어 있습니다. 브라우저 자동 완성을 사용했다면 비밀번호를 직접 다시 입력해 주세요.",
-    "expiredHint": "세션이 만료되었습니다. 다시 로그인해 주세요."
+    "expiredHint": "세션이 만료되었습니다. 다시 로그인해 주세요.",
+    "initialPwdHint": "첫 로그인가요? 무작위로 생성된 초기 비밀번호는 data/initial-admin-password.txt 또는 서비스 로그(journalctl -u workbuddy-web | grep -A3 初始管理员)에 있습니다. 비밀번호를 변경하면 이 파일은 자동으로 삭제됩니다."
   },
   "notFound": {
     "line1": "페이지를",

@@ -137,10 +137,53 @@ namespace WorkBuddyLauncher
         }
     }
 
-    /// 从服务端 stderr 日志提取首次启动生成的管理员账号（bootstrap_users 只打印一次）。
+    /// 取首次启动生成的管理员账号。
+    ///
+    /// 优先读 data\initial-admin-password.txt（issue #179）：服务端把随机密码
+    /// 落了一份明文，就是为了让「日志那条记录已经翻过去了」也能取回。日志退为
+    /// 次选来源 —— err.log 会被轮转，也可能被用户手工清过。
     internal static class InitialCredentials
     {
         public static bool TryExtract(string errLogPath, out string username, out string password)
+        {
+            username = null;
+            password = null;
+
+            if (TryReadPasswordFile(errLogPath, out password))
+            {
+                username = "admin";
+                return true;
+            }
+            return TryExtractFromLog(errLogPath, out username, out password);
+        }
+
+        /// 落盘文件与 err.log 同级（都在 data\ 下）。文件不存在 = 已改过密码或
+        /// 走了 WB_ADMIN_PASSWORD，两种情况下都返回 false 是正确的。
+        private static bool TryReadPasswordFile(string errLogPath, out string password)
+        {
+            password = null;
+            try
+            {
+                string dataDir = Path.GetDirectoryName(Path.GetFullPath(errLogPath));
+                if (string.IsNullOrEmpty(dataDir)) { return false; }
+                string path = Path.Combine(dataDir, "initial-admin-password.txt");
+                if (!File.Exists(path)) { return false; }
+                string raw;
+                using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var reader = new StreamReader(stream, Encoding.UTF8))
+                {
+                    raw = reader.ReadToEnd();
+                }
+                string trimmed = (raw ?? string.Empty).Trim();
+                if (trimmed.Length == 0) { return false; }
+                password = trimmed;
+                return true;
+            }
+            catch { }
+            return false;
+        }
+
+        private static bool TryExtractFromLog(string errLogPath, out string username, out string password)
         {
             username = null;
             password = null;

@@ -64,7 +64,8 @@
     "submit": "登录",
     "legal": "登录即表示您已获得该系统的访问授权，所有操作将被记录。",
     "emptySubmit": "用户名或密码为空：若使用了浏览器自动填充，请手动把密码重新输入一次。",
-    "expiredHint": "会话已过期，请重新登录。"
+    "expiredHint": "会话已过期，请重新登录。",
+    "initialPwdHint": "首次登录？随机初始密码在 data/initial-admin-password.txt，或服务日志里（journalctl -u workbuddy-web | grep -A3 初始管理员）。改过密码后这份文件会自动删除。"
   },
   "notFound": {
     "line1": "页面",

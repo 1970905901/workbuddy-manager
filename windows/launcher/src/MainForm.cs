@@ -239,8 +239,10 @@ namespace WorkBuddyLauncher
                     }
                     else if (File.Exists(Path.Combine(Path.Combine(_root, "data"), "users.json")))
                     {
-                        message = "该安装目录已有管理员账号，但日志中没有初始密码记录。账号密码只以哈希保存，无法从 users.json 反查。\n" +
-                            "覆盖安装会保留账号数据；请使用原密码登录，或通过受信任的本机重置流程重设密码。";
+                        message = "该安装目录已有管理员账号，但既没有初始密码文件、日志里也没有初始密码记录。\n" +
+                            "通常意味着你已经改过密码（初始密码文件会随之删除）——请使用你改过的密码登录。\n" +
+                            "若是覆盖安装且你从未改过密码，密码只以哈希保存、无法从 users.json 反查，" +
+                            "请通过受信任的本机重置流程重设密码。";
                     }
                     else
                     {

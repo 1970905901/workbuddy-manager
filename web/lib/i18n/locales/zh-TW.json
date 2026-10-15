@@ -64,7 +64,8 @@
     "submit": "登入",
     "legal": "登入即表示您已獲得該系統的存取授權，所有操作將被記錄。",
     "emptySubmit": "使用者名稱或密碼為空：若使用了瀏覽器自動填入，請手動重新輸入一次密碼。",
-    "expiredHint": "工作階段已過期，請重新登入。"
+    "expiredHint": "工作階段已過期，請重新登入。",
+    "initialPwdHint": "首次登入？隨機初始密碼在 data/initial-admin-password.txt，或服務日誌裡（journalctl -u workbuddy-web | grep -A3 初始管理員）。改過密碼後這份檔案會自動刪除。"
   },
   "notFound": {
     "line1": "頁面",

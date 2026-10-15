@@ -64,7 +64,8 @@
     "submit": "Sign in",
     "legal": "Signing in confirms you are authorized to access this system; all actions are logged.",
     "emptySubmit": "Username or password is empty. If your browser auto-filled them, please type the password again manually.",
-    "expiredHint": "Your session has expired. Please sign in again."
+    "expiredHint": "Your session has expired. Please sign in again.",
+    "initialPwdHint": "First sign-in? The randomly generated initial password is in data/initial-admin-password.txt, or in the service log (journalctl -u workbuddy-web, look for the \"initial administrator account\" banner). This file is deleted automatically once you change the password."
   },
   "notFound": {
     "line1": "Page",

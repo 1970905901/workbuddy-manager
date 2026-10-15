@@ -132,6 +132,31 @@ class UpstreamConfigRoundTrip(unittest.TestCase):
             wb2api.save_upstream_config({'cooldown': {'soft_rate': 'soon'}})
         self.assertEqual(read_cfg(self.cfg_path)['pool']['breaker_cooldown'], '30m')
 
+    def test_credit_exhausted_allows_empty_but_not_zero(self) -> None:
+        """积分耗尽冷却（issue #78）：空 = 默认行为，`0` = 上游判非法。
+
+        这条与 expiring_soon / cost_explore_interval **相反**（那两个 0 = 关闭），
+        所以不能共用它们的分支：放行 `0` 会写进一份让上游启动失败（补丁里判
+        `d <= 0` 报错）的配置，用户看到的是「保存成功、然后反代挂了」。
+        """
+        write_cfg(self.cfg_path, {})
+        # 空串合法：等价于不启用，落盘为 ""，上游归一化成 0 → 保持旧行为
+        wb2api.save_upstream_config({'cooldown': {'credit_exhausted': ''}})
+        self.assertEqual(read_cfg(self.cfg_path)['cooldown']['credit_exhausted'], '')
+        # 正时长合法，且必须**原样存字符串**（上游是 time.ParseDuration）
+        wb2api.save_upstream_config({'cooldown': {'credit_exhausted': ' 10m '}})
+        self.assertEqual(read_cfg(self.cfg_path)['cooldown']['credit_exhausted'], '10m')
+        # 0 与 0s 必须拒（Go 的 ParseDuration 认它们，是补丁里的 d <= 0 判非法）
+        for bad in ('0', '0s'):
+            with self.assertRaises(ValueError, msg=f'{bad} 应被拒'):
+                wb2api.save_upstream_config({'cooldown': {'credit_exhausted': bad}})
+            self.assertEqual(read_cfg(self.cfg_path)['cooldown']['credit_exhausted'], '10m')
+        # 非法格式与 Go 不认的 d 单位同样拒
+        for bad in ('soon', '7d', '-5m', '10'):
+            with self.assertRaises(ValueError, msg=f'{bad} 应被拒'):
+                wb2api.save_upstream_config({'cooldown': {'credit_exhausted': bad}})
+        self.assertEqual(read_cfg(self.cfg_path)['cooldown']['credit_exhausted'], '10m')
+
     # ── 不覆盖同段其他键 ─────────────────────────────────
     def test_partial_patch_preserves_siblings(self) -> None:
         write_cfg(

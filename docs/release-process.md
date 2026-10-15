@@ -26,6 +26,32 @@
 - **改动上游代码**：改本地那份源码（`/opt/workbuddy2api`），
   然后 `docker compose up -d --build`。改的是别人的 MIT 代码，需保留其
   `LICENSE` 与版权声明。
+
+### 我们自己改上游的那条路（补丁 + 重打包）
+
+上游停更之后，「上游代码的改动」都由我们提出并留在 `dev/upstream-patches/*.patch`
+里，**补丁是唯一事实来源**；本地改完就直接改源码目录的那种做法不再用于需要随包的
+功能（那样改动只存在于某个人的机器上，下次重打包就丢了）。
+
+1. 改代码：从**当前 `upstream-src` 资产**解开一份干净树（`tar xzf` 即可，别在
+   本地运行目录上改），在里面写改动与 Go 用例；
+2. 出补丁：`git init` 一个只含基线的仓库 → 改完 `git add -N` 新文件 → `git diff`
+   存成 `dev/upstream-patches/000N-<名字>.patch`（**含测试文件**，0001/0003 都是这个
+   体例；后续补丁只描述自己的增量，不要重述前面几个补丁）；
+3. 验补丁：在一份**未被该补丁改动过**的资产基线上 `git apply --check` 通过、
+   `apply_upstream_patches.py` 报 `applied:`、再跑一次报 `already applied:`；
+4. 重打包：`dev/pack_fixed_upstream_src.py <那份树> -o <输出> --stamp '<一句话>'`
+   —— 它会按序号依次应用全部补丁（已应用的会跳过），再打成 `workbuddy2api-src.tar.gz`；
+5. 验收：解开新包 `go build ./...` + `go test ./...`（必要时加 `-race`）、
+   包内 `scripts/` 的 Python 用例，然后
+   `gh release upload upstream-src <包> --clobber` 覆盖载体 Release；
+6. 记录：上传后核对资产的 **size 与 sha256** 与本地一致，并把「基线摘要 → 产出摘要」
+   写进该功能自己的 docs（如 `docs/random-daily-tasks.md`、`docs/credit-exhausted-cooldown.md`）。
+
+**顺序要求**：重打包必须在**当次面板发版之前**完成 —— CI 是从载体 Release 取
+`upstream/` 塞进发布包的，晚一步设备装到的就还是旧上游。面板侧只加字段不算完成：
+旧上游会忽略未知字段，用户会看到「保存成功但没生效」。
+
 - **`adapt(upstream)` 提交**：有可访问的上游代码要跟时照旧写——把核对过的上游
   提交号写进提交信息，供下次对照。
 

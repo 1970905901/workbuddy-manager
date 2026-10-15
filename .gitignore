@@ -122,6 +122,9 @@ dev/.pack-test
 # 红包抽奖页验收（verify_claim_ui.py）的临时数据与截图
 dev/.claim-ui
 dev/.shots-claim-ui
+# 新增控件验收（verify_new_controls_ui.py）的临时数据与截图
+dev/.new-controls
+dev/.shots-new-controls
 # DeviceTokenTest 的临时文件现场（test_outbound_alignment.py，只清文件、目录保留）
 server/tests/_dt_tmp/
 

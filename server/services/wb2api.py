@@ -1368,6 +1368,39 @@ def _sanitize_section(section: str, incoming: dict) -> dict:
             if val and val != '0' and not _DURATION_RE.match(val):
                 raise ValueError('expiring_soon 时长格式有误，应为 168h / 1h；留空或 0 = 禁用')
             out[key] = val
+        elif section == 'cooldown' and key == 'credit_exhausted':
+            # 积分耗尽冷却（issue #78，我们自己的上游补丁 0004）：空 = 旧行为
+            # 「硬冷却到次日 04:00 等签到」，填了 = 只退出这一小段。
+            #
+            # 三条语义都必须和后端一致，否则就是「保存成功、然后上游起不来」：
+            #   · 空串合法（= 不启用），所以不能要求必须匹配时长格式；
+            #   · **"0" 非法** —— Go 的 ParseDuration 认 "0"，补丁里再判 d <= 0 报错。
+            #     这一点与 expiring_soon / cost_explore_interval 相反（那两个 0 = 关闭），
+            #     所以不能复用它们的那条分支；
+            #   · 其余必须匹配 s/m/h（Go 不认 d）。
+            val = str(raw or '').strip()
+            if val:
+                if not _DURATION_RE.match(val):
+                    raise ValueError(
+                        'credit_exhausted 时长格式有误：留空 = 冷却到次日 4 点；'
+                        '填正时长如 10m / 1h（不支持 0，也不支持 d）'
+                    )
+                # 格式已过正则，所以一定能拆出「整数 + 单位」。
+                digits = int(re.match(r'\d+', val).group())
+                seconds = digits * {'s': 1, 'm': 60, 'h': 3600}[val[-1].lower()]
+                # **`0s`/`0m`/`0h` 都能过 `_DURATION_RE`**（它只校验形状，不看取值）。
+                # 补丁里对 `d <= 0` 是报错 —— 不在这里拦，用户会「保存成功、上游起不来」，
+                # 正是本函数开头点名的那个最难查的形态。
+                if seconds <= 0:
+                    raise ValueError(
+                        'credit_exhausted 不能填 0：留空 = 冷却到次日 4 点等签到恢复（默认），'
+                        '或填正时长如 10m / 1h'
+                    )
+                # 上界防的是溢出：Go 的 ParseDuration 对超出上限的值同样报错（上游起不来）。
+                # 一年对「积分冷却」早就等于「不启用」，不会挡住任何真实配置。
+                if seconds > 365 * 24 * 3600:
+                    raise ValueError('credit_exhausted 最多 8760h（一年）；想等于不启用就留空')
+            out[key] = val
         elif key in _INT_RANGES:
             # 统一区间校验（activity_report_count 等；见 _INT_RANGES 注释）
             out[key] = _check_int(key, raw)

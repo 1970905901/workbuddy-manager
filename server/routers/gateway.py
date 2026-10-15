@@ -12,7 +12,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .. import config, db, iputil, keysvc, upstreamsvc
-from ..services import proxyroutes
+from ..services import modelmap, proxyroutes
 from ..config import _env_int
 from ..routers.security import get_config as get_security_config
 
@@ -521,18 +521,18 @@ def _key_reject_code(reason: object, is_model_list: bool) -> str:
 
 
 def _map_model(model: str | None) -> str | None:
-    """「模型映射」查表：别名 → 真名；没有映射时原样返回。
+    """「模型映射」查表：别名 → 真名；没命中就落到**兜底模型**（issue #173），
+    两者都没有时原样返回。
 
     设置坏掉（存成了非对象）时按「没有映射」处理，**不能让整个网关 5xx**：
     映射是可选的便利功能，坏数据只该影响它自己那一项，不连坐（与
     `db._json_list` 对非法 JSON 列的处理同一原则）。
+
+    语义集中在 `services/modelmap`，这里只取结果：白名单补条目与别名校验走同一份
+    实现 —— 三处各写一遍必然漂移，而漂移出来的错位（能调用、但客户端的模型清单里
+    没有它）只有用户能发现。
     """
-    if not model:
-        return model
-    mapping = db.get_setting('model_map', {}) or {}
-    if not isinstance(mapping, dict):
-        return model
-    return mapping.get(model, model)
+    return modelmap.target_for(db.get_setting('model_map', {}) or {}, model)
 
 
 def _upstream_headers(upstream: dict | None = None) -> dict:
@@ -781,6 +781,10 @@ def _alias_entries(items: list, allow: list[str]) -> list[dict]:
 
     条目取别名所指模型的信息，只把 `id` 换成别名——**那才是客户端要发的名字**
     （发清单里的真名会被白名单拒掉）。
+
+    解析走 `modelmap.target_for`（含兜底，issue #173）：配了兜底模型之后，白名单里
+    任意名字**都调得通**，那就不该只在没有兜底时补条目 —— 否则客户端拿到的清单里
+    缺了那个名字，用户会以为"白名单没生效"，而其实是清单没列。
     """
     mapping = db.get_setting('model_map', {}) or {}
     if not isinstance(mapping, dict) or not mapping:
@@ -796,7 +800,7 @@ def _alias_entries(items: list, allow: list[str]) -> list[dict]:
         # 本身就是清单里的模型 → 上面的白名单裁剪已保留它，不重复添加
         if not name or name in seen or name in by_bare:
             continue
-        target = mapping.get(name)
+        target = modelmap.target_for(mapping, name)
         src = by_bare.get(keysvc._bare_model(target)) if target else None
         if not src:
             continue          # 别名指向的模型不在本版本清单里 → 调不通，不给

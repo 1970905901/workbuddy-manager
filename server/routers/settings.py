@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from .. import db, security
 from ..iputil import client_ip
-from ..services import reload, updater, wb2api
+from ..services import modelmap, reload, updater, wb2api
 
 router = APIRouter(prefix='/api', tags=['settings'])
 
@@ -89,10 +89,22 @@ def get_model_map(user: dict = Depends(security.current_user)) -> dict:
 
 @router.post('/settings/model-map')
 def save_model_map(body: dict[str, str], user: dict = Depends(security.require_admin)) -> dict:
-    clean = {str(k): str(v) for k, v in body.items() if str(k).strip() and str(v).strip()}
+    """保存映射表。键既可以是真实别名，也可以是兜底的 `*`（issue #173）。
+
+    校验集中在 `services/modelmap.validate`：这里只拒「落库后一定会坏」的那一类
+    —— 目前只有「目标写成 `*`」（查表会把 `*` 当模型名发给上游，而界面上显示着
+    "已设置兜底"，用户从报错里反推不出原因）。
+
+    ValueError 要**转成 400**：服务端校验按 4xx 送达，浏览器里才能把 detail 那句
+    原因显示出来；漏了这一步它就是 500，用户只看到「服务器错误」而拿不到该改什么
+    （浏览器验收里真踩到过：直接调接口写 `{"*": "*"}` 得到的是 500 空 body）。
+    """
+    try:
+        clean = modelmap.validate(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.set_setting('model_map', clean)
     return clean
-
 
 # ── 管理端用户 ───────────────────────────────────────────
 class UserIn(BaseModel):

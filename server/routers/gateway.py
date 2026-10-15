@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import logging
 import time
 
@@ -60,8 +61,13 @@ def _bearer(request: Request) -> str:
 # （见 max_body_bytes），这样升级顺序不受限：先升哪边都不会出现「一边说 256MB
 # 另一边 413」的错配。
 _BODY_LIMIT_TTL = 10
-_body_limit_cache: dict[str, float | int] = {'at': 0.0, 'bytes': 0}
+_body_limit_cache: dict[str, float | int] = {'at': 0.0, 'bytes': 0, 'source': ''}
 DEFAULT_MAX_BODY_MB = _env_int('WB_GATEWAY_MAX_BODY_MB', 32)
+# 上限是**谁**定的：'upstream'（旧版上游 config.json 的 server.max_body_mb）/
+# 'env'（本端 WB_GATEWAY_MAX_BODY_MB）/ ''（默认值）。
+# 为什么要记它：413 的提示必须告诉用户「该去哪改」。issue #180 里用户按旧文案
+# 改了环境变量却毫无效果 —— 因为上限其实来自上游配置，文案指错了地方。
+_BODY_LIMIT_SOURCE: dict[str, str] = {'value': ''}
 
 
 def max_body_bytes() -> int:
@@ -78,25 +84,49 @@ def max_body_bytes() -> int:
     if cached and now - float(_body_limit_cache['at']) < _BODY_LIMIT_TTL:
         return cached
     limit = DEFAULT_MAX_BODY_MB * 1024 * 1024
+    source = 'env' if _env_set('WB_GATEWAY_MAX_BODY_MB') else ''
     try:
         cfg = json.loads(config.UPSTREAM_CONFIG.read_text(encoding='utf-8'))
         mb = int((cfg.get('server') or {}).get('max_body_mb') or 0)
         if mb > 0:
             limit = mb * 1024 * 1024
+            source = 'upstream'
     except Exception:  # noqa: BLE001
         # 配置读不到就沿用默认值：网关不能因为读不到配置而拒绝服务
         pass
     _body_limit_cache['at'] = now
     _body_limit_cache['bytes'] = limit
+    _body_limit_cache['source'] = source
+    _BODY_LIMIT_SOURCE['value'] = source
     return limit
 
 
+def _env_set(name: str) -> bool:
+    value = (os.environ.get(name) or '').strip()
+    return value != ''
+
+
 def _payload_too_large(limit: int) -> JSONResponse:
+    """413 的正文必须说清「上限是多少、谁定的、该去哪改」。
+
+    issue #180 的教训：以前不管上限从哪来都写「由环境变量 WB_GATEWAY_MAX_BODY_MB
+    决定」—— 而用户的上游是旧版、config.json 里还留着 `server.max_body_mb`，
+    面板**优先**听它，于是用户改了环境变量毫无效果，还以为面板不认这个配置。
+    """
     mb = limit // 1024 // 1024
+    source = _BODY_LIMIT_SOURCE.get('value') or ''
+    if source == 'upstream':
+        where = ('该上限来自**上游** config.json 的 server.max_body_mb（你的上游是旧版、'
+                 '还认这个键；面板优先听它，所以改环境变量不生效）：把那个值调大并重启上游，'
+                 '或者删掉该键，让面板改用环境变量 WB_GATEWAY_MAX_BODY_MB')
+    elif source == 'env':
+        where = ('该上限来自环境变量 WB_GATEWAY_MAX_BODY_MB（改完要重启面板）')
+    else:
+        where = ('当前用的是默认上限；可在 .env 里设 WB_GATEWAY_MAX_BODY_MB 提高'
+                 '（改完要重启面板）')
     return _oai_error(
-        f'请求体超过 {mb} MB 上限：请压缩内容（精简上下文或附件）。'
-        f'该上限由本网关设置（环境变量 WB_GATEWAY_MAX_BODY_MB），'
-        f'上游自 9d1a21b 起已不再限制请求体大小',
+        f'请求体超过 {mb} MB 上限：请压缩内容（精简上下文或附件），或提高上限。'
+        f'{where}。上游自 9d1a21b 起已不再限制请求体大小',
         413, 'invalid_request_error', 'payload_too_large',
     )
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from urllib.parse import urlsplit
 import logging
 import time
 
@@ -11,6 +12,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .. import config, db, iputil, keysvc, upstreamsvc
+from ..services import proxyroutes
 from ..config import _env_int
 from ..routers.security import get_config as get_security_config
 
@@ -551,6 +553,38 @@ def _upstream_headers(upstream: dict | None = None) -> dict:
     return headers
 
 
+def _upstream_hint(upstream: dict | None) -> str:
+    """502/503 时补一句「本次打的是哪个上游、这一跳会不会走出口代理」。
+
+    为什么要有（issue #167：两位用户都报「直接 curl 上游是通的、经面板全 502」）：
+    原来的报错只有异常文本，看不出面板往哪打的、中间有没有代理。而最常见的两种成因
+    恰恰要靠这两条信息才能自查：
+
+      · 上游地址 / 端口填错（面板打的是配置里那个地址，不是你以为的那个）；
+      · **上游地址写成公网域名、同时又配了出口代理**：面板→上游这一跳会走代理，
+        代理绕不回你自己那台机器，于是全 502 —— 而内网与本机地址是自动直连的。
+
+    `_is_internal_host` 与转发用的判断是同一个函数，所以这里说的「会走代理」就是
+    真实行为，不是提示语里另算一套。
+    """
+    up = upstream or upstreamsvc.default_upstream()
+    base = str(up.get('base_url') or '').strip()
+    if not base:
+        return ''
+    try:
+        host = urlsplit(base).hostname
+    except ValueError:
+        host = None
+    proxy = config.effective_http_proxy()
+    if proxy and host:
+        if config._is_internal_host(host):       # noqa: SLF001 —— 与转发判断同一份实现
+            return f'（本次请求的上游：{base}；该地址属内网/本机，这一跳直连）'
+        masked = proxyroutes.mask_url(proxy)
+        return (f'（本次请求的上游：{base}；这一跳会经出口代理 {masked} —— '
+                f'代理到不了这个地址就会 502）')
+    return f'（本次请求的上游：{base}）'
+
+
 def _upstream_for(key: dict | None, *, ip: str, model: str, mapped: str,
                   ua: str | None) -> tuple[dict | None, JSONResponse | None]:
     """按密钥解析本次请求该走哪个上游；不可用时返回**明确报错**。
@@ -563,6 +597,9 @@ def _upstream_for(key: dict | None, *, ip: str, model: str, mapped: str,
         return upstreamsvc.resolve_for_key(key), None
     except upstreamsvc.UpstreamUnavailable as exc:
         _record(key, ip, model, mapped, 503, 0, 0, 0, ua, str(exc), False)
+        # 这里不加 _upstream_hint：本函数讲的是「密钥绑定的上游不可用」，作用域里
+        # 也没有那个上游对象 —— 报出默认上游的地址只会把人带偏（异常文本已经说清
+        # 是哪个分组、该启用还是改绑）。
         return None, _oai_error(str(exc), 503, 'api_error', 'upstream_unavailable')
 
 
@@ -693,7 +730,7 @@ async def list_models(request: Request):
     except Exception as exc:  # noqa: BLE001
         latency = int((time.time() - started) * 1000)
         _record(key, ip, '', '', 502, 0, 0, latency, request.headers.get('user-agent'), str(exc), False)
-        return _oai_error(f'上游不可用: {exc}', 502, 'api_error', 'upstream_unavailable')
+        return _oai_error(f'上游不可用: {exc}' + _upstream_hint(upstream), 502, 'api_error', 'upstream_unavailable')
 
 
 def _as_anthropic_models(payload: object) -> object:
@@ -869,7 +906,7 @@ async def _chat(request: Request, upstream_path: str):
         except Exception as exc:  # noqa: BLE001
             latency = int((time.time() - started) * 1000)
             _record(key, ip, requested_model or '', mapped or '', 502, 0, 0, latency, ua, str(exc), False)
-            return _oai_error(f'上游不可用: {exc}', 502, 'api_error', 'upstream_unavailable')
+            return _oai_error(f'上游不可用: {exc}' + _upstream_hint(upstream), 502, 'api_error', 'upstream_unavailable')
 
     # 流式转发
     client = config.http_client(config.UPSTREAM_TIMEOUT, connect=5)
@@ -880,7 +917,7 @@ async def _chat(request: Request, upstream_path: str):
         await client.aclose()
         latency = int((time.time() - started) * 1000)
         _record(key, ip, requested_model or '', mapped or '', 502, 0, 0, latency, ua, str(exc), True)
-        return _oai_error(f'上游不可用: {exc}', 502, 'api_error', 'upstream_unavailable')
+        return _oai_error(f'上游不可用: {exc}' + _upstream_hint(upstream), 502, 'api_error', 'upstream_unavailable')
 
     status_code = resp.status_code
     content_type = resp.headers.get('content-type', 'text/event-stream')

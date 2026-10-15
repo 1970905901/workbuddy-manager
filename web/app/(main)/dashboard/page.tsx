@@ -584,7 +584,7 @@ export default function DashboardPage() {
           <div className="h-[220px] w-full">
             {chartData.length ? (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{top: 4, right: 8, bottom: 0, left: -16}}>
+                <AreaChart data={chartData} margin={{top: 4, right: 8, bottom: 0, left: 0}}>
                   <defs>
                     <linearGradient id="gReq" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.35} />
@@ -720,14 +720,16 @@ export default function DashboardPage() {
             <div className="mt-4 h-[220px] w-full">
               {hasFlow ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={flow.daily} margin={{top: 4, right: 4, bottom: 0, left: -16}}>
+                  {/* 左边距不能给负数：轴宽 48 减去它才是刻度的可用宽度，
+                      4 位数的刻度会越出图表左边缘被裁掉（issue #184 的遮挡就是这么来的）。 */}
+                  <LineChart data={flow.daily} margin={{top: 4, right: 4, bottom: 0, left: 0}}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                     <XAxis dataKey="day" tickLine={false} axisLine={false} fontSize={11}
                            stroke="var(--muted-foreground)" />
                     {/* 双 Y 轴：收入常是几千、支出常是几十。同一根轴会把支出压成
                         贴着 0 的直线，等于没画。左轴收入、右轴支出，颜色与曲线对应。 */}
                     <YAxis yAxisId="inc" tickLine={false} axisLine={false} fontSize={11}
-                           stroke="var(--chart-2)" width={48} />
+                           stroke="var(--chart-2)" width={52} />
                     <YAxis yAxisId="exp" orientation="right" tickLine={false} axisLine={false}
                            fontSize={11} stroke="var(--destructive)" width={48} />
                     <Tooltip

@@ -111,6 +111,20 @@ class SentToUpstreamTest(unittest.TestCase):
         })
         self.assertEqual(sent.get('max_tokens'), 4096)
 
+    def test_max_completion_tokens_clamps_on_the_wire(self) -> None:
+        """OpenAI 新字段名 max_completion_tokens：同样不得原样到达上游。
+
+        这是端到端才有意义的用例——纯函数测试证明不了 `_chat` 真的对所有字段
+        都调用了钳制（例如只钳了 max_tokens 而漏掉新名字）。
+        """
+        sent = self._sent_body('/v1/chat/completions', {
+            'model': 'm',
+            'messages': [{'role': 'user', 'content': 'hi'}],
+            'max_completion_tokens': 9999969112,
+        })
+        self.assertEqual(sent.get('max_completion_tokens'),
+                         gateway.MAX_TOKENS_CEILING)
+
     def test_responses_clamps_on_the_wire(self) -> None:
         """/v1/responses 用的是 max_output_tokens，同样要拦。"""
         sent = self._sent_body('/v1/responses', {

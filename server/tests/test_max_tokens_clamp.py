@@ -87,6 +87,40 @@ class ClampMaxTokensTest(unittest.TestCase):
         self.assertEqual(body['max_tokens'], gateway.MAX_TOKENS_CEILING)
         self.assertEqual(body['max_output_tokens'], gateway.MAX_TOKENS_CEILING)
 
+    def test_max_completion_tokens_clamped(self) -> None:
+        """OpenAI 较新的 `max_completion_tokens` 同样按 int32 读，实测越界也 503。
+
+        网关是透传的，客户端发什么就转发什么，不能因为本仓库没主动用过它
+        就漏掉——部分客户端已默认用这个名字。
+        """
+        body = {'max_completion_tokens': 9999969112}
+        gateway.clamp_max_tokens(body)
+        self.assertEqual(body['max_completion_tokens'], gateway.MAX_TOKENS_CEILING)
+
+    def test_max_completion_tokens_normal_untouched(self) -> None:
+        body = {'max_completion_tokens': 4096}
+        gateway.clamp_max_tokens(body)
+        self.assertEqual(body['max_completion_tokens'], 4096)
+
+    def test_all_three_fields_clamped(self) -> None:
+        """三种协议的输出上限字段同时出现时都要压回。"""
+        body = {'max_tokens': 10 ** 10,
+                'max_completion_tokens': 10 ** 10,
+                'max_output_tokens': 10 ** 10}
+        gateway.clamp_max_tokens(body)
+        for field in gateway._MAX_TOKENS_FIELDS:
+            with self.subTest(field=field):
+                self.assertEqual(body[field], gateway.MAX_TOKENS_CEILING)
+
+    def test_field_list_covers_all_protocols(self) -> None:
+        """字段清单本身要钉住：漏一个协议就等于防护缺失。
+
+        协议层用的是哪个名字（OpenAI / Anthropic / Responses）写在这里，
+        以后新增协议时这里会先响。
+        """
+        self.assertEqual(set(gateway._MAX_TOKENS_FIELDS),
+                         {'max_tokens', 'max_completion_tokens', 'max_output_tokens'})
+
     def test_non_numeric_left_to_upstream(self) -> None:
         """非数字不猜、不置默认，交回上游判——网关不替上游做协议决定。"""
         for value in (None, 'abc', '99999999999', [1], {'a': 1}):

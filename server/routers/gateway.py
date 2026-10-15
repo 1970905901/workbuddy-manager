@@ -105,9 +105,15 @@ def max_body_bytes() -> int:
 # 1e6 有约 7 倍余量，不会误伤正常请求，又能挡住这类减法式产物。
 MAX_TOKENS_CEILING = 1_000_000
 
+# 一并钳制的字段：三种协议各自的输出上限字段名。
+# `max_completion_tokens` 是 OpenAI 较新的名字（o-series / gpt-5 时代取代
+# `max_tokens`），部分客户端已默认用它；上游同样按 int32 读，实测越界时一样
+# 回 503。网关是透传的，客户端发什么就转发什么，故必须一并兜住。
+_MAX_TOKENS_FIELDS = ('max_tokens', 'max_completion_tokens', 'max_output_tokens')
+
 
 def clamp_max_tokens(body: dict) -> None:
-    """原地钳制请求体里的 max_tokens / max_output_tokens。
+    """原地钳制请求体里的输出上限字段（见 _MAX_TOKENS_FIELDS）。
 
     为什么是**原地改**而不是返回新 dict：`_chat` 与两个协议层都是拿到 body 后
     直接转发，原地把越界值压回上限，调用方无需改动其余逻辑。
@@ -117,7 +123,7 @@ def clamp_max_tokens(body: dict) -> None:
     """
     if not isinstance(body, dict):
         return
-    for field in ('max_tokens', 'max_output_tokens'):
+    for field in _MAX_TOKENS_FIELDS:
         value = body.get(field)
         # bool 是 int 的子类，必须排除；None 交给上游按「未提供」处理
         if isinstance(value, bool) or not isinstance(value, (int, float)):

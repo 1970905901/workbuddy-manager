@@ -67,7 +67,7 @@ export function RefreshPlanCard({onRan}: {onRan?: () => void}) {
     <section className="space-y-3 rounded-[20px] bg-muted px-3.5 py-3">
       <div className="flex items-center gap-2">
         <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <div className="text-sm font-medium">{t('accounts.planCardTitle')}</div>
+        <div className="text-sm font-medium">{t('tasks.planCardTitle')}</div>
       </div>
       <TokenPlanSection onRan={onRan} />
       <div className="border-t border-border/60 pt-3">
@@ -119,7 +119,7 @@ function TokenPlanSection({onRan}: {onRan?: () => void}) {
     setSaving(true);
     try {
       apply(await accountApi.saveRefreshPlan(enabled, days, hour));
-      notify.ok(t('accounts.planSaved'));
+      notify.ok(t('tasks.planSaved'));
     } catch (e) {
       notify.err(errText(e));
     } finally {
@@ -131,11 +131,11 @@ function TokenPlanSection({onRan}: {onRan?: () => void}) {
     setRunning(true);
     try {
       const r = await accountApi.runRefreshPlan();
-      const detail = t('accounts.planRunDetail', {ok: r.renewed, total: r.checked});
+      const detail = t('tasks.planRunDetail', {ok: r.renewed, total: r.checked});
       if (r.failed === 0) {
-        notify.ok(t('accounts.planRunDone'), detail);
+        notify.ok(t('tasks.planRunDone'), detail);
       } else {
-        notify.warn(t('accounts.planRunPartial', {failed: r.failed}), detail);
+        notify.warn(t('tasks.planRunPartial', {failed: r.failed}), detail);
       }
       await load();
       onRan?.();
@@ -160,27 +160,27 @@ function TokenPlanSection({onRan}: {onRan?: () => void}) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Switch checked={enabled} onCheckedChange={setEnabled}
-                  aria-label={t('accounts.planTokenSection')} />
+                  aria-label={t('tasks.planTokenSection')} />
           <div className="min-w-0">
-            <div className="text-xs font-medium">{t('accounts.planTokenSection')}</div>
-            <div className="text-[11px] text-muted-foreground">{t('accounts.planDesc')}</div>
+            <div className="text-xs font-medium">{t('tasks.planTokenSection')}</div>
+            <div className="text-[11px] text-muted-foreground">{t('tasks.planDesc')}</div>
           </div>
         </div>
       </div>
 
       <div className="mt-2.5 flex flex-wrap items-end gap-3">
         <div className="space-y-1">
-          <Label className="text-[11px] text-muted-foreground">{t('accounts.planInterval')}</Label>
+          <Label className="text-[11px] text-muted-foreground">{t('tasks.planInterval')}</Label>
           <div className="flex items-center gap-1.5">
             <Input type="number" min={1} max={365} value={days}
                    onChange={(e) => setDays(Number(e.target.value))}
-                   className="h-8 w-20 bg-background" aria-label={t('accounts.planInterval')} />
-            <span className="text-xs text-muted-foreground">{t('accounts.planDays')}</span>
+                   className="h-8 w-20 bg-background" aria-label={t('tasks.planInterval')} />
+            <span className="text-xs text-muted-foreground">{t('tasks.planDays')}</span>
           </div>
         </div>
         <div className="space-y-1">
-          <Label className="text-[11px] text-muted-foreground">{t('accounts.planHour')}</Label>
-          <HourSelect value={hour} onChange={setHour} ariaLabel={t('accounts.planHour')} />
+          <Label className="text-[11px] text-muted-foreground">{t('tasks.planHour')}</Label>
+          <HourSelect value={hour} onChange={setHour} ariaLabel={t('tasks.planHour')} />
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" className="rounded-full"
@@ -189,21 +189,21 @@ function TokenPlanSection({onRan}: {onRan?: () => void}) {
             {t('common.save')}
           </Button>
           <Button size="sm" variant="outline" className="rounded-full"
-                  disabled={running} onClick={runNow} title={t('accounts.planRunNowTitle')}>
+                  disabled={running} onClick={runNow} title={t('tasks.planRunNowTitle')}>
             {running ? <Loader2 className="animate-spin" /> : <Play />}
-            {t('accounts.planRunNow')}
+            {t('tasks.planRunNow')}
           </Button>
         </div>
       </div>
 
       <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
         <span>
-          {t('accounts.planLast')}：
-          {plan?.last_run ? fmtDateTime(plan.last_run) : t('accounts.planNever')}
+          {t('tasks.planLast')}：
+          {plan?.last_run ? fmtDateTime(plan.last_run) : t('tasks.planNever')}
         </span>
         <span>
-          {t('accounts.planNext')}：
-          {plan?.next_run ? fmtDateTime(plan.next_run) : t('accounts.planDisabled')}
+          {t('tasks.planNext')}：
+          {plan?.next_run ? fmtDateTime(plan.next_run) : t('tasks.planDisabled')}
         </span>
       </div>
     </div>
@@ -252,7 +252,7 @@ function DailyTasksSection({onRan}: {onRan?: () => void}) {
       const p = await accountApi.saveDailyPlan(draft);
       setPlan(p);
       setDraft({checkin: {...p.checkin}, claim: {...p.claim}, full: {...p.full}});
-      notify.ok(t('accounts.dailySaved'));
+      notify.ok(t('tasks.dailySaved'));
     } catch (e) {
       notify.err(errText(e));
     } finally {
@@ -265,9 +265,9 @@ function DailyTasksSection({onRan}: {onRan?: () => void}) {
     try {
       const r = await accountApi.runDailyTask(task);
       if (r.ok) {
-        notify.ok(t('accounts.dailyRunDone'), r.message);
+        notify.ok(t('tasks.dailyRunDone'), r.message);
       } else {
-        notify.warn(t('accounts.dailyRunFailed'), r.message);
+        notify.warn(t('tasks.dailyRunFailed'), r.message);
       }
       await load();
       onRan?.();
@@ -293,8 +293,8 @@ function DailyTasksSection({onRan}: {onRan?: () => void}) {
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-xs font-medium">{t('accounts.dailyTitle')}</div>
-        <div className="text-[11px] text-muted-foreground">{t('accounts.dailyHint')}</div>
+        <div className="text-xs font-medium">{t('tasks.dailyTitle')}</div>
+        <div className="text-[11px] text-muted-foreground">{t('tasks.dailyHint')}</div>
       </div>
 
       <div className="mt-2 space-y-2">
@@ -312,7 +312,7 @@ function DailyTasksSection({onRan}: {onRan?: () => void}) {
                   <span className={warn ? 'text-amber-600 dark:text-amber-400' : ''}>{t(labelKey)}</span>
                   {ranToday && (
                     <span className="rounded-full bg-muted-foreground/10 px-1.5 text-[10px] text-muted-foreground">
-                      {t('accounts.dailyRan')}
+                      {t('tasks.dailyRan')}
                     </span>
                   )}
                 </div>
@@ -330,7 +330,7 @@ function DailyTasksSection({onRan}: {onRan?: () => void}) {
               <Button size="sm" variant="outline" className="rounded-full"
                       disabled={running !== null} onClick={() => runNow(key)}>
                 {running === key ? <Loader2 className="animate-spin" /> : <Play />}
-                {t('accounts.planRunNow')}
+                {t('tasks.planRunNow')}
               </Button>
             </div>
           );

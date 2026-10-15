@@ -220,8 +220,8 @@ const BASE = process.env.BASE, OUT = process.env.OUT;
   await p.waitForTimeout(2500);
   text = await body();
   step(text.includes('一键刷新令牌') || text.includes('刷新令牌'), '账号页有「一键刷新令牌」入口');
-  step(text.includes('计划任务') && text.includes('令牌刷新'),
-       '账号页渲染出「计划任务 / 令牌刷新」卡片');
+  step(!text.includes('计划任务'),
+       '账号页**不再**显示计划任务（它不属于账号这一块）');
   step(text.includes('演示号'), '账号列表正常渲染', text.slice(0,40));
   await p.screenshot({path:`${OUT}/accounts-refresh.png`, fullPage:true});
 
@@ -235,6 +235,14 @@ const BASE = process.env.BASE, OUT = process.env.OUT;
   } else {
     step(false, '找不到「一键刷新令牌」按钮');
   }
+
+  // ── 任务页：计划任务卡片应该在这里（用户反馈：原先挂在账号页）──
+  await p.goto(`${BASE}/tasks`,{waitUntil:'load'});
+  await p.waitForTimeout(2500);
+  text = await body();
+  step(text.includes('计划任务') && text.includes('令牌刷新'), '任务页有「计划任务」卡片');
+  step(text.includes('每日任务') && text.includes('每日签到'), '卡片里含每日任务那一组');
+  await p.screenshot({path:`${OUT}/tasks-plan.png`, fullPage:true});
 
   // ── 系统更新页：离线升级包卡片（issue #153）──
   await p.goto(`${BASE}/settings/system`,{waitUntil:'load'});

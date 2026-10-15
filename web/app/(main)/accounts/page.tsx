@@ -69,7 +69,6 @@ import {AccountNoteDialog} from '@/components/common/accounts/AccountNoteDialog'
 import {MoveAccountDialog} from '@/components/common/accounts/MoveAccountDialog';
 import {UpstreamFormDialog} from '@/components/common/upstreams/UpstreamFormDialog';
 import {AccountTaskDialog} from '@/components/common/accounts/AccountTaskDialog';
-import {RefreshPlanCard} from '@/components/common/accounts/RefreshPlanCard';
 import {useAuth} from '@/lib/auth-context';
 import {realmLabel, useRealm} from '@/lib/realm-context';
 import {useT} from '@/lib/i18n/provider';
@@ -1199,10 +1198,6 @@ export default function AccountsPage() {
           所以放在这里一处即可。 */}
       <PageSectionTabs />
 
-      {/* 计划任务（令牌刷新计划）：每 N 天自动全量刷新一次所有账号的
-          accessToken。仅管理员可见——它改的是调度与凭证，只读账号看了也动不了。
-          立即执行后刷新列表，让新的到期时间马上显示出来。 */}
-      {isAdmin && <RefreshPlanCard onRan={reloadAll} />}
 
       {/* 账号分组（多账号池）：默认分组 = 升级前那套（环境变量 / 上游
           config.json）；「添加分组」只填名称即可（地址默认沿用默认分组的、

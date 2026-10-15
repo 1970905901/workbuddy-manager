@@ -91,6 +91,42 @@ def max_body_bytes() -> int:
     return limit
 
 
+# ── max_tokens 上限钳制 ────────────────────────────────────────────
+#
+# 上游的 `Request.max_tokens` 是 **int32**（上限 2147483647）。超出后上游拒绝时
+# 不是回 400，而是把它包成 `no_healthy_account` + 503——客户端据此以为「服务暂时
+# 不可用」而重试，但参数越界重试多少次都一样失败。
+#
+# 实测触发来源：有客户端按「剩余额度 → max_tokens」做减法（形如 `1e10 - 已消耗`，
+# 约 99.99 亿，是 int32 上限的 4.66 倍）。这类值是**算出来的**、不是用户填的，
+# 客户端那侧的换算逻辑我们改不到，只能由网关兜住。
+#
+# 阈值取 1e6：上游 /v1/models 里最大的 max_output_tokens 实测为 131072，
+# 1e6 有约 7 倍余量，不会误伤正常请求，又能挡住这类减法式产物。
+MAX_TOKENS_CEILING = 1_000_000
+
+
+def clamp_max_tokens(body: dict) -> None:
+    """原地钳制请求体里的 max_tokens / max_output_tokens。
+
+    为什么是**原地改**而不是返回新 dict：`_chat` 与两个协议层都是拿到 body 后
+    直接转发，原地把越界值压回上限，调用方无需改动其余逻辑。
+
+    非数字一律**原样保留**（不猜测、不置默认）：把它交回上游去判，网关不替
+    上游做协议决定——历史上替上游兜底过的字段都留下了难以回溯的偏差。
+    """
+    if not isinstance(body, dict):
+        return
+    for field in ('max_tokens', 'max_output_tokens'):
+        value = body.get(field)
+        # bool 是 int 的子类，必须排除；None 交给上游按「未提供」处理
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if value <= MAX_TOKENS_CEILING:
+            continue
+        body[field] = MAX_TOKENS_CEILING
+
+
 def _payload_too_large(limit: int) -> JSONResponse:
     mb = limit // 1024 // 1024
     return _oai_error(
@@ -754,6 +790,10 @@ async def _chat(request: Request, upstream_path: str):
 
     if mapped:
         body['model'] = mapped
+
+    # 越界的 max_tokens 会被上游包装成 503（见 clamp_max_tokens 的说明），
+    # 鉴权后、转发前压回上限。
+    clamp_max_tokens(body)
 
     stream = bool(isinstance(body, dict) and body.get('stream'))
     if stream:

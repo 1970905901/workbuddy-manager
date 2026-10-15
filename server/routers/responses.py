@@ -1385,6 +1385,10 @@ async def _handle(request: Request) -> JSONResponse | StreamingResponse:
     if auth_err:
         return auth_err
 
+    # 越界的 max_output_tokens 会被上游包装成 503（见 gateway.clamp_max_tokens
+    # 的说明）；转换前压回上限，to_chat_request 拿到的就是已收敛的值。
+    gateway.clamp_max_tokens(body)
+
     ua = request.headers.get('user-agent')
     stream = bool(body.get('stream'))
     bridge = _ToolBridge(body.get('tools'))

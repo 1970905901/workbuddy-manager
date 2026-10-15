@@ -1474,6 +1474,12 @@
     "proxyGlobalSourceOff": "Global upstream proxy is off (no fallback proxy)"
   },
   "phrases": {
+    "账号最短间隔": "Minimum account gap",
+    "自动任务逐个处理账号，完成一个后再随机等待；建议最短 30 秒、最长 120 秒": "Automatic tasks process accounts one at a time, then wait a random interval. Recommended range: 30–120 seconds.",
+    "账号最长间隔": "Maximum account gap",
+    "自动任务的账号随机间隔上限；两项填 0 保持原有间隔。开启后同一时刻的不同任务也依次运行，手动执行不受影响": "Upper limit for random gaps between scheduled accounts. Set both limits to 0 to keep existing pacing. When enabled, coincident task types also run in order; manual runs are unchanged.",
+    "每日任务随机延迟": "Daily task random delay",
+    "每天各类任务在原定整点后随机延迟 0～N 分钟；0 表示整点执行。同一天重启沿用原时刻，手动执行不受影响": "Each task runs 0–N minutes after its scheduled hour, with a new daily offset. 0 keeps exact hours. Restarting on the same day keeps the planned time; manual runs are unchanged.",
     "请求失败": "Request failed",
     "成功": "Success",
     "签到成功": "Check-in succeeded",
@@ -1680,7 +1686,9 @@
     "刷新积分需要管理员权限": "Refreshing credits requires an administrator account",
     "本机导入未启用。它会把密钥直接写进本机的 cc-switch / ZCode 配置，故默认关闭：请在面板的 .env 里设 WB_LOCAL_IMPORT=1 后重启面板。": "Local import is disabled. It writes the key straight into this machine's cc-switch / ZCode config, so it is off by default: set WB_LOCAL_IMPORT=1 in the panel's .env and restart the panel.",
     "本机导入只允许从面板所在的机器访问（请用 http://127.0.0.1:<面板端口> 打开面板）。远程部署请改用「导出配置」手动导入——在服务器上写 cc-switch / ZCode 的配置不会影响你本机的客户端。": "Local import is only allowed from the machine running the panel (open the panel at http://127.0.0.1:<panel port>). For remote deployments, use “Export config” and import manually — writing cc-switch / ZCode config on the server has no effect on your own machine.",
-    "该接口不接受 API Token，请用会话登录后操作": "This endpoint does not accept API Tokens — sign in with a browser session to use it"
+    "该接口不接受 API Token，请用会话登录后操作": "This endpoint does not accept API Tokens — sign in with a browser session to use it",
+    "任务随机延迟须为 0～60 的整数，账号间隔须为 0～600 的整数": "Task delay must be an integer from 0 to 60; account gaps must be integers from 0 to 600",
+    "账号最短间隔不能大于最长间隔": "Minimum account gap cannot exceed maximum account gap"
   },
   "redPacket": {
     "title": "Red packets",

@@ -32,6 +32,7 @@ import {settingsApi, upstreamApi, errText} from '@/lib/api';
 import {useAsyncAll} from '@/lib/use-async-data';
 import {UpstreamEndpoints} from '@/components/settings/UpstreamEndpoints';
 import {BASE_PATH} from '@/lib/base-path';
+import {scheduleDelayError} from '@/lib/schedule-validation';
 import {
   DEFAULT_SETTINGS_TAB,
   SETTINGS_TABS,
@@ -208,6 +209,36 @@ function parseHours(text: string): {ok: boolean; hours: number[]; error?: string
 }
 
 const SCHEDULE_FIELDS: Field[] = [
+  {
+    key: 'account_delay_min_seconds',
+    kind: 'num',
+    label: '账号最短间隔',
+    desc: '自动任务逐个处理账号，完成一个后再随机等待；建议最短 30 秒、最长 120 秒',
+    unit: '秒',
+    min: 0,
+    max: 600,
+    def: 0,
+  },
+  {
+    key: 'account_delay_max_seconds',
+    kind: 'num',
+    label: '账号最长间隔',
+    desc: '自动任务的账号随机间隔上限；两项填 0 保持原有间隔。开启后同一时刻的不同任务也依次运行，手动执行不受影响',
+    unit: '秒',
+    min: 0,
+    max: 600,
+    def: 0,
+  },
+  {
+    key: 'random_delay_minutes',
+    kind: 'num',
+    label: '每日任务随机延迟',
+    desc: '每天各类任务在原定整点后随机延迟 0～N 分钟；0 表示整点执行。同一天重启沿用原时刻，手动执行不受影响',
+    unit: '分钟',
+    min: 0,
+    max: 60,
+    def: 0,
+  },
   {
     key: 'checkin_enabled',
     kind: 'bool',
@@ -1092,6 +1123,13 @@ export default function SettingsLayout({children}: {children: React.ReactNode}) 
   /** 只提交改动过的字段，避免覆盖其他未展示的配置项 */
   async function saveGroup(group: Group) {
     const cur = form[group];
+    if (group === 'schedule') {
+      const error = scheduleDelayError(cur);
+      if (error) {
+        notify.err(tp(error));
+        return;
+      }
+    }
     const org = original.current[group];
     const patch: Record<string, boolean | number | number[] | string> = {};
     for (const k of Object.keys(cur)) {

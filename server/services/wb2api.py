@@ -1241,6 +1241,9 @@ _UPSTREAM_TEXT_MAX = 512
 # activity_report_count 决定每号每天发多少条对话）。前端的 max 只是
 # 输入框属性，拦不住直接调接口，必须服务端兜底。
 _INT_RANGES: dict[str, tuple[int, int, str]] = {
+    'random_delay_minutes': (0, 60, '分钟'),
+    'account_delay_min_seconds': (0, 600, '秒'),
+    'account_delay_max_seconds': (0, 600, '秒'),
     'activity_report_count': (1, 50, '条'),
     'max_in_flight': (0, 64, '个'),
     # 国际版在途上限分档（上游 2680f4c）。**语义与 max_in_flight 不同**：那边
@@ -1480,6 +1483,15 @@ def save_upstream_config(patch: dict) -> dict:
             if clean.pop('__delete__', False):
                 cfg[field].pop('device_token', None)
             cfg[field].update(clean)
+
+    if isinstance(patch.get('schedule'), dict) and any(
+        key in patch['schedule'] for key in ('account_delay_min_seconds', 'account_delay_max_seconds')
+    ):
+        schedule = cfg['schedule']
+        minimum = _check_int('account_delay_min_seconds', schedule.get('account_delay_min_seconds', 0))
+        maximum = _check_int('account_delay_max_seconds', schedule.get('account_delay_max_seconds', 0))
+        if minimum > maximum:
+            raise ValueError('账号最短间隔不能大于最长间隔')
 
     if 'upstash' in patch and isinstance(patch['upstash'], dict):
         incoming = patch['upstash']

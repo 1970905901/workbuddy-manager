@@ -42,6 +42,42 @@ class UpstreamConfigRoundTrip(unittest.TestCase):
         self._tmp.cleanup()
 
     # ── 时刻数组 ─────────────────────────────────────────
+    def test_random_delay_roundtrip_preserves_existing_schedule_and_secrets(self) -> None:
+        write_cfg(self.cfg_path, {'api_key': 'synthetic', 'schedule': {
+            'checkin_hours': [9, 21], 'cat_enabled': False}})
+        wb2api.save_upstream_config({'schedule': {'random_delay_minutes': 60}})
+        got = read_cfg(self.cfg_path)
+        self.assertEqual(got['schedule'], {'checkin_hours': [9, 21],
+                                         'cat_enabled': False, 'random_delay_minutes': 60})
+        self.assertEqual(got['api_key'], 'synthetic')
+        wb2api.save_upstream_config({'schedule': {'random_delay_minutes': 0}})
+        self.assertEqual(read_cfg(self.cfg_path)['schedule']['random_delay_minutes'], 0)
+
+    def test_random_delay_rejects_invalid_values_without_writing(self) -> None:
+        original = {'schedule': {'checkin_hours': [9, 21]}}
+        write_cfg(self.cfg_path, original)
+        for value in (-1, 61, True, False, 1.5, '60', None):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                wb2api.save_upstream_config({'schedule': {'random_delay_minutes': value}})
+            self.assertEqual(read_cfg(self.cfg_path), original)
+
+    def test_account_delays_validate_merged_range_and_preserve_configuration(self) -> None:
+        write_cfg(self.cfg_path, {'api_key': 'synthetic', 'schedule': {'checkin_hours': [9, 21]}})
+        wb2api.save_upstream_config({'schedule': {
+            'account_delay_min_seconds': 30, 'account_delay_max_seconds': 120}})
+        good = read_cfg(self.cfg_path)
+        self.assertEqual(good['schedule']['account_delay_min_seconds'], 30)
+        self.assertEqual(good['schedule']['account_delay_max_seconds'], 120)
+        for patch in ({'account_delay_min_seconds': 121}, {'account_delay_max_seconds': 29},
+                      {'account_delay_min_seconds': -1}, {'account_delay_max_seconds': 601},
+                      {'account_delay_min_seconds': True}, {'account_delay_max_seconds': 1.5}):
+            with self.subTest(patch=patch), self.assertRaises(ValueError):
+                wb2api.save_upstream_config({'schedule': patch})
+            self.assertEqual(read_cfg(self.cfg_path), good)
+        wb2api.save_upstream_config({'schedule': {
+            'account_delay_min_seconds': 0, 'account_delay_max_seconds': 0}})
+        self.assertEqual(read_cfg(self.cfg_path)['api_key'], 'synthetic')
+
     def test_hours_written_as_int_array(self) -> None:
         write_cfg(self.cfg_path, {'schedule': {'checkin_hours': [9, 21]}})
         wb2api.save_upstream_config({'schedule': {'travel_hours': [9, 21]}})

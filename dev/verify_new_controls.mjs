@@ -299,7 +299,7 @@ await page.screenshot({path: path.join(OUT, 'tasks-compensation.png'), fullPage:
     const sw = await row.$('[role=switch]');
     const on = sw && await sw.evaluate(
       (el) => el.getAttribute('aria-checked') === 'true' || el.getAttribute('data-state') === 'checked');
-    step(!!on, '它默认是开启的（补偿有时限，默认关着就等于白丢）');
+    step(!on, '它默认**不**自动跑（上游每日任务本来就会领；这一行主打手动「立即执行」）');
 
     // **不能**用 row.$('button')：行内第一个 button 就是那个开关（Radix Switch 也是
     // button 元素），点它会切开关而不是执行任务（第一次跑就点错了，还看不出异常）。

@@ -20,8 +20,9 @@ bundle 里调的接口是：
    而 404 的表现是「无可领补偿」，与「今天没得领」一模一样，属于静默失效。
 2. **业务错误不等于故障**：没有可领 / 已经领过都是业务错误，必须报成 `nothing`，
    不能报成「失败」——否则界面会显示「N 个账号失败」，用户反复重试一个永不成功的动作。
-3. **默认开启**：`dailyplan` 里只有它是默认开的，且理由（有时限 + 幂等 + 无伪造行为）
-   写在默认值旁边；改默认值的测试要一起改，别只改一处。
+3. **默认关闭、手动为主**：上游的活跃上报（默认开）每天已经在领同一笔补偿，面板这条
+   的价值是「**马上领**」——公告带截止日期，用户点一下就有结果，不用等到整点。
+   默认开会让每个账号每天多一次注定「无可领」的写请求，所以默认关。
 """
 from __future__ import annotations
 
@@ -216,7 +217,9 @@ class DailyPlanTest(unittest.TestCase):
     def test_task_order_and_defaults(self) -> None:
         self.assertEqual(dailyplan.TASKS, ('checkin', 'compensation', 'claim', 'full'))
         plan = dailyplan.get_plan()
-        self.assertTrue(plan['compensation']['enabled'], '补偿领取应当默认开启（有时限）')
+        self.assertFalse(plan['compensation']['enabled'],
+                         '默认关闭：**上游的活跃上报每天已经在领同一笔补偿**，'
+                         '面板这条是手动兜底（点「立即执行」），天天自动跑只是多一次空请求')
         self.assertEqual(plan['compensation']['hour'], 10)
         self.assertFalse(plan['full']['enabled'], '有风险的做任务必须默认关闭')
 

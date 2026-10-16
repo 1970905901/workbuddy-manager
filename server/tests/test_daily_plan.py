@@ -47,9 +47,9 @@ def _patch_db(initial: dict | None = None):
 
 
 def _body(checkin=(False, 9), claim=(False, 10), full=(False, 10),
-          compensation=(True, 10)) -> dict:
-    # compensation 的默认是**开**（见 dailyplan._DEFAULTS 的说明）：它只领平台已经
-    # 发给账号的补偿、幂等、无伪造行为，而这类补偿有时限。其余三个默认关。
+          compensation=(False, 10)) -> dict:
+    # 四个任务默认全关（compensation 也一样：日常自动由上游活跃上报负责，
+    # 面板这条主打「立即执行」手动补一次 —— 见 dailyplan._DEFAULTS 的注释）。
     return {
         'checkin': {'enabled': checkin[0], 'hour': checkin[1]},
         'claim': {'enabled': claim[0], 'hour': claim[1]},
@@ -60,18 +60,17 @@ def _body(checkin=(False, 9), claim=(False, 10), full=(False, 10),
 
 class PlanConfigTest(unittest.TestCase):
     def test_defaults(self) -> None:
-        """默认值：full（伪造活跃上报）绝不能默认开；compensation 是唯一默认开的。
+        """四个任务默认全关——尤其 full（伪造活跃上报）绝不能默认开。
 
-        **改默认值前先读这条测试的理由**：compensation 默认开是因为它幂等、不伪造
-        行为，而平台补偿带截止日期 —— 默认关着，用户没去点就真的丢了。它不适用
-        「写操作一律默认关」那条规矩（那条是为了防有风险的写）。
+        compensation（领取活动补偿）也默认关，尽管它本身很安全：**上游的活跃上报
+        每天已经在领同一笔**，面板这条是「马上领一次」的手动兜底（公告带截止日期），
+        默认开只会让每个账号每天多一次注定「无可领」的写请求。
         """
         patcher, _ = _patch_db()
         with patcher:
             plan = dailyplan.get_plan()
-        for task in ('checkin', 'claim', 'full'):
+        for task in dailyplan.TASKS:
             self.assertFalse(plan[task]['enabled'], f'{task} 不该默认开')
-        self.assertTrue(plan['compensation']['enabled'], '补偿领取应默认开启（有时限）')
         self.assertEqual(plan['claim']['hour'], 10)
         self.assertEqual(plan['compensation']['hour'], 10)
 
@@ -84,7 +83,7 @@ class PlanConfigTest(unittest.TestCase):
         }})
         with patcher:
             plan = dailyplan.get_plan()
-        self.assertTrue(plan['compensation']['enabled'], '非法值应回落到默认（开）')
+        self.assertFalse(plan['compensation']['enabled'], '非法值应回落到默认（关）')
         self.assertEqual(plan['compensation']['hour'], 10)
         self.assertFalse(plan['checkin']['enabled'])
         self.assertEqual(plan['checkin']['hour'], 9)

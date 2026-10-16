@@ -26,8 +26,8 @@ const HOURS = Array.from({length: 24}, (_, h) => h);
 const DAILY_TASKS: {key: DailyTask; labelKey: string; noteKey: string; warn?: boolean}[] = [
   {key: 'checkin', labelKey: 'accounts.dailyCheckin', noteKey: 'accounts.dailyCheckinNote'},
   // 顺序与后端 dailyplan.TASKS 一致（计划里的顺序即界面顺序）。
-  // compensation 是唯一**默认开启**的任务：它只领平台发给这个账号的补偿，幂等、
-  // 没得领就是空请求；而这类补偿有时限，默认关着等于让用户白丢积分。
+  // compensation 默认**关**：上游的活跃上报（默认开）每天已经在领同一笔补偿，
+  // 这一行的主要用法是点「立即执行」**马上领一次**（补偿公告带截止日期）。
   {key: 'compensation', labelKey: 'accounts.dailyCompensation',
    noteKey: 'accounts.dailyCompensationNote'},
   {key: 'claim', labelKey: 'accounts.dailyClaim', noteKey: 'accounts.dailyClaimNote'},

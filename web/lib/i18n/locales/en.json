@@ -471,7 +471,7 @@
     "dailyFull": "Daily task run",
     "dailyCheckinNote": "The upstream already checks in daily (change the hour in Settings → Upstream); no need to duplicate it here",
     "dailyCompensation": "Daily compensation claim",
-    "dailyCompensationNote": "Claims activity compensation the platform has granted to the account (e.g. outage compensation). Claims when there is something to claim and skips otherwise; running it again never double-claims. Upstream's activity report claims the same compensation too",
+    "dailyCompensationNote": "Claims activity compensation the platform has granted to the account (e.g. outage compensation). Upstream already claims it every day — this row is mainly for the **Run now** button to claim immediately; claims only when there is something to claim and never double-claims",
     "dailyClaimNote": "Claims rewards of completed tasks only — idempotent, no behaviour is faked",
     "dailyFullWarn": "Sends fabricated activity reports to Tencent — risk-control exposure. Try Run now first",
     "deleted": "Deleted",

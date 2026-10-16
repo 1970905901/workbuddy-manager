@@ -276,6 +276,60 @@ const realmOf = (name) => {
 step(realmOf('不限版本-验证') === '未限定', '勾了开关建出来的密钥是「未限定」', realmOf('不限版本-验证'));
 step(realmOf('跟随页面版本-验证') === '国内版', '没勾时仍跟随当前页面版本（国内版）', realmOf('跟随页面版本-验证'));
 
+// ═══ 任务页「每日领补偿」（活动补偿自动领取） ═══
+console.log('\n── 任务页 › 每日领补偿');
+await page.goto(`${BASE}/tasks`, {waitUntil: 'load'});
+await page.waitForTimeout(3000);
+await page.screenshot({path: path.join(OUT, 'tasks-compensation.png'), fullPage: true});
+
+{
+  // 按标签文字定位那一行（行内应有：开关 / 标签 / 整点下拉 / 立即执行）
+  const rowHandle = await page.evaluateHandle(() => {
+    const label = Array.from(document.querySelectorAll('*')).find(
+      (el) => el.children.length === 0 && (el.textContent || '').trim() === '每日领补偿');
+    let node = label;
+    while (node && !(node.querySelector?.('[role=switch]') && node.querySelector?.('button'))) {
+      node = node.parentElement;
+    }
+    return node || null;
+  });
+  const row = rowHandle.asElement();
+  step(!!row, '计划任务里有「每日领补偿」这一行');
+  if (row) {
+    const sw = await row.$('[role=switch]');
+    const on = sw && await sw.evaluate(
+      (el) => el.getAttribute('aria-checked') === 'true' || el.getAttribute('data-state') === 'checked');
+    step(!!on, '它默认是开启的（补偿有时限，默认关着就等于白丢）');
+
+    // **不能**用 row.$('button')：行内第一个 button 就是那个开关（Radix Switch 也是
+    // button 元素），点它会切开关而不是执行任务（第一次跑就点错了，还看不出异常）。
+    const btn = await row.$('button:has-text("立即执行")');
+    step(!!btn, '这一行有「立即执行」按钮');
+    if (btn) {
+      await btn.click();
+      // 轮询而不是「等 4 秒再看」：sonner 的 toast 默认约 4 秒就消失，
+      // 固定等待正好会错过它。
+      let toasts = '';
+      for (let i = 0; i < 30 && !toasts; i++) {
+        await page.waitForTimeout(250);
+        toasts = await page.evaluate(() =>
+          Array.from(document.querySelectorAll('[data-sonner-toast]'))
+            .map((el) => (el.textContent || '').trim()).filter(Boolean).join(' | '));
+      }
+      step(toasts.includes('1 个领到 +500 积分'),
+           '点「立即执行」后回报「1 个领到 +500 积分」（走的是 mock 的补偿接口）',
+           toasts.slice(0, 160));
+    }
+  }
+
+  // 再直接打一次接口：即使界面那条 toast 被改动，这条也能独立证明
+  // 「面板 → 腾讯补偿接口 → 汇总回执」这条链是通的。
+  const direct = await api('POST', '/api/accounts/daily-plan/run', {task: 'compensation'});
+  step(direct.status === 200 && String(direct.body?.message || '').includes('1 个领到 +500 积分'),
+       '直接调 /api/accounts/daily-plan/run 也回报领到 500',
+       JSON.stringify(direct.body).slice(0, 180));
+}
+
 // ═══ 控制台 ═══
 console.log('\n── 控制台');
 step(consoleErrors.length === 0, '浏览器控制台没有报错', consoleErrors.slice(0, 3).join(' | '));

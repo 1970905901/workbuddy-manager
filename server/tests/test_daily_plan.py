@@ -46,32 +46,46 @@ def _patch_db(initial: dict | None = None):
                                set_setting=store.set_setting), store
 
 
-def _body(checkin=(False, 9), claim=(False, 10), full=(False, 10)) -> dict:
+def _body(checkin=(False, 9), claim=(False, 10), full=(False, 10),
+          compensation=(True, 10)) -> dict:
+    # compensation 的默认是**开**（见 dailyplan._DEFAULTS 的说明）：它只领平台已经
+    # 发给账号的补偿、幂等、无伪造行为，而这类补偿有时限。其余三个默认关。
     return {
         'checkin': {'enabled': checkin[0], 'hour': checkin[1]},
         'claim': {'enabled': claim[0], 'hour': claim[1]},
         'full': {'enabled': full[0], 'hour': full[1]},
+        'compensation': {'enabled': compensation[0], 'hour': compensation[1]},
     }
 
 
 class PlanConfigTest(unittest.TestCase):
-    def test_defaults_all_disabled(self) -> None:
-        """三个任务默认全关——尤其 full（伪造活跃上报）绝不能默认开。"""
+    def test_defaults(self) -> None:
+        """默认值：full（伪造活跃上报）绝不能默认开；compensation 是唯一默认开的。
+
+        **改默认值前先读这条测试的理由**：compensation 默认开是因为它幂等、不伪造
+        行为，而平台补偿带截止日期 —— 默认关着，用户没去点就真的丢了。它不适用
+        「写操作一律默认关」那条规矩（那条是为了防有风险的写）。
+        """
         patcher, _ = _patch_db()
         with patcher:
             plan = dailyplan.get_plan()
         for task in ('checkin', 'claim', 'full'):
             self.assertFalse(plan[task]['enabled'], f'{task} 不该默认开')
+        self.assertTrue(plan['compensation']['enabled'], '补偿领取应默认开启（有时限）')
         self.assertEqual(plan['claim']['hour'], 10)
+        self.assertEqual(plan['compensation']['hour'], 10)
 
     def test_corrupt_values_are_normalised(self) -> None:
         patcher, _ = _patch_db({'daily_tasks_plan': {
             'checkin': {'enabled': 'yes', 'hour': 99},
             'claim': 'not-a-dict',
             'full': {'enabled': True, 'hour': 25},
+            'compensation': {'enabled': 'yes', 'hour': -1},
         }})
         with patcher:
             plan = dailyplan.get_plan()
+        self.assertTrue(plan['compensation']['enabled'], '非法值应回落到默认（开）')
+        self.assertEqual(plan['compensation']['hour'], 10)
         self.assertFalse(plan['checkin']['enabled'])
         self.assertEqual(plan['checkin']['hour'], 9)
         self.assertEqual(plan['claim']['hour'], 10)
@@ -83,7 +97,8 @@ class PlanConfigTest(unittest.TestCase):
         with patcher:
             for bad in ({'checkin': {'enabled': 1, 'hour': 9},
                          'claim': {'enabled': False, 'hour': 10},
-                         'full': {'enabled': False, 'hour': 10}},
+                         'full': {'enabled': False, 'hour': 10},
+                         'compensation': {'enabled': False, 'hour': 10}},
                         'nope'):
                 with self.subTest(bad=bad), self.assertRaises(TypeError):
                     dailyplan.set_plan(bad)

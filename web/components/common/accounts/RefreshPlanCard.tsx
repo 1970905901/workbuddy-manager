@@ -25,6 +25,11 @@ const HOURS = Array.from({length: 24}, (_, h) => h);
 /** 每日任务的展示顺序与文案键；`warn` 的带风险图标与红字提示 */
 const DAILY_TASKS: {key: DailyTask; labelKey: string; noteKey: string; warn?: boolean}[] = [
   {key: 'checkin', labelKey: 'accounts.dailyCheckin', noteKey: 'accounts.dailyCheckinNote'},
+  // 顺序与后端 dailyplan.TASKS 一致（计划里的顺序即界面顺序）。
+  // compensation 是唯一**默认开启**的任务：它只领平台发给这个账号的补偿，幂等、
+  // 没得领就是空请求；而这类补偿有时限，默认关着等于让用户白丢积分。
+  {key: 'compensation', labelKey: 'accounts.dailyCompensation',
+   noteKey: 'accounts.dailyCompensationNote'},
   {key: 'claim', labelKey: 'accounts.dailyClaim', noteKey: 'accounts.dailyClaimNote'},
   {key: 'full', labelKey: 'accounts.dailyFull', noteKey: 'accounts.dailyFullWarn', warn: true},
 ];
@@ -210,7 +215,14 @@ function TokenPlanSection({onRan}: {onRan?: () => void}) {
   );
 }
 
-/** 每日任务：签到 / 领奖 / 做任务，各自一个开关 + 整点。 */
+/** 次日任务草稿：从 DAILY_TASKS 派生，别手抄任务名（漏一个就是 tsc 报错）。 */
+function draftOf(p: DailyPlan): DailyPlan {
+  const out = {} as DailyPlan;
+  for (const {key} of DAILY_TASKS) out[key] = {...p[key]};
+  return out;
+}
+
+/** 每日任务：签到 / 领取补偿 / 领奖 / 做任务，各自一个开关 + 整点。 */
 function DailyTasksSection({onRan}: {onRan?: () => void}) {
   const t = useT();
   const [plan, setPlan] = useState<DailyPlan | null>(null);
@@ -224,7 +236,7 @@ function DailyTasksSection({onRan}: {onRan?: () => void}) {
     try {
       const p = await accountApi.dailyPlan();
       setPlan(p);
-      setDraft({checkin: {...p.checkin}, claim: {...p.claim}, full: {...p.full}});
+      setDraft(draftOf(p));
     } catch (e) {
       notify.err(errText(e));
     } finally {
@@ -251,7 +263,7 @@ function DailyTasksSection({onRan}: {onRan?: () => void}) {
     try {
       const p = await accountApi.saveDailyPlan(draft);
       setPlan(p);
-      setDraft({checkin: {...p.checkin}, claim: {...p.claim}, full: {...p.full}});
+      setDraft(draftOf(p));
       notify.ok(t('tasks.dailySaved'));
     } catch (e) {
       notify.err(errText(e));

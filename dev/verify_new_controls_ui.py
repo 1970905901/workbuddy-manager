@@ -67,9 +67,19 @@ class Upstream(BaseHTTPRequestHandler):
             self._json({'error': 'not found'}, 404)
 
     def do_POST(self):
+        path = self.path.split('?')[0]
         n = int(self.headers.get('content-length') or 0)
         if n:
             self.rfile.read(n)
+        # 活动补偿：网页「用量管理」那两个端点，信封 {code, msg, data}。
+        # 面板会把 billing 基址指到本 mock（见 launcher），所以走不到真实腾讯。
+        if path == '/billing/meter/compensation-status':
+            return self._json({'code': 0, 'msg': 'ok', 'data': {
+                'claimed': False, 'credit_num': 500, 'button_text': '领取 500 积分',
+                'title': '活动补偿',
+            }})
+        if path == '/billing/meter/claim-compensation':
+            return self._json({'code': 0, 'msg': 'ok', 'data': {'credit': 500}})
         self._json({'ok': True})
 
 
@@ -134,7 +144,12 @@ def main() -> int:
         'WB_ADMIN_PASSWORD': ADMIN_PW,
         'PYTHONUTF8': '1',
     }
-    launcher = ('import uvicorn, server.main;'
+    # 把 billing 基址指向 mock：补偿领取会打 {billing_base}/billing/meter/claim-compensation，
+    # 不重定向就会拿着假 token 打到真实腾讯（吃 401，验收变成在测网络）。
+    # 指向 mock 之后整条链路（面板 → 腾讯接口 → 落库/回执）都在本机闭环。
+    launcher = ('import server.config as _c;'
+                f'_c.TENCENT_BILLING_BASE = "http://127.0.0.1:{UPSTREAM_PORT}";'
+                'import uvicorn, server.main;'
                 f'uvicorn.run(server.main.app, host="127.0.0.1", '
                 f'port={MANAGER_PORT}, log_level="warning")')
     proc = subprocess.Popen([sys.executable, '-c', launcher], cwd=str(REPO), env=env)

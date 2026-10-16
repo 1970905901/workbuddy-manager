@@ -446,6 +446,8 @@
     "dailyClaim": "每日領獎",
     "dailyFull": "每日做任務",
     "dailyCheckinNote": "上游本來就會每天簽到（可在「設定 → 上游」改時刻）；如已開啟，這裡不必重複",
+    "dailyCompensation": "每日領補償",
+    "dailyCompensationNote": "領取平台發給帳號的活動補償（例如故障補償）。有則領、沒有就跳過，重複執行不會多領；上游的活躍回報也會領同一個補償",
     "dailyClaimNote": "只認領已完成任務的獎勵，冪等、不偽造任何行為",
     "dailyFullWarn": "會向騰訊發送偽造的活躍上報，有風控風險；建議先「立即執行」看看效果",
     "deleted": "已刪除",

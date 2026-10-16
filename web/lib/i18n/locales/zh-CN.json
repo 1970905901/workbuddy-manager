@@ -446,6 +446,8 @@
     "dailyClaim": "每日领奖",
     "dailyFull": "每日做任务",
     "dailyCheckinNote": "上游本来就会每天签到（可在「设置 → 上游」改时刻）；如已开启，这里不必重复",
+    "dailyCompensation": "每日领补偿",
+    "dailyCompensationNote": "领取平台发给账号的活动补偿（如故障补偿）。有则领、没有就跳过，重复执行不会多领；上游的活跃上报也会领同一个补偿",
     "dailyClaimNote": "只认领已完成任务的奖励，幂等、不伪造任何行为",
     "dailyFullWarn": "会向腾讯发送伪造的活跃上报，有风控风险；建议先「立即执行」看看效果",
     "deleted": "已删除",

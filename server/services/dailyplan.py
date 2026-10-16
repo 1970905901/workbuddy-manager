@@ -12,15 +12,19 @@ travel / activity / school / cat / keepalive），**每天已经在自动签到*
   · 领奖 / 做任务是管理端 `task_runner.py` 的能力，上游没有，所以它们**只能**
     靠这里定时。
 
-## 三个任务的安全等级（决定了默认值与界面措辞）
+## 四个任务的安全等级（决定了默认值与界面措辞）
 
 | 任务 | 安全性 | 说明 |
 |---|---|---|
 | `checkin` 签到 | 安全 | 幂等（腾讯对重复签到回 10001） |
+| `compensation` 领取补偿 | 安全 | 有则领、无则空请求（幂等）；只领平台已经发给这个账号的补偿 |
 | `claim` 领奖 | 安全 | 只认领**已完成**任务的奖励，不伪造任何行为 |
 | `full` 做任务 | **有风险** | 会伪造活跃上报（造画布 / 连续对话 / 批量用专家）——上游脚本自己都标「慎用」 |
 
-因此 `full` **默认关闭**，且在界面上带明确警告；三个任务默认都不开，由用户显式启用。
+因此 `full` **默认关闭**，且在界面上带明确警告；`checkin` / `claim` 默认也不开，由
+用户显式启用。**`compensation` 是唯一默认开启的**：它没有有风险的动作（不像 full）、
+也不会因为重复执行多领（幂等），而这类补偿往往**有时限**——默认关着，用户没去点就
+真的丢掉了。这条区分写在 `_DEFAULTS` 的注释里，改默认值前请先读它。
 
 `taskrun._claim_loop`（上游注释里说明「有意不做前端入口」的那套）只管 claim，
 且默认关闭、无界面；本模块是**唯一**做了界面的管理端调度器。两者若同时开，
@@ -39,15 +43,27 @@ logger = logging.getLogger(__name__)
 
 _KEY = 'daily_tasks_plan'
 # 顺序即界面顺序
-_TASKS = ('checkin', 'claim', 'full')
+_TASKS = ('checkin', 'compensation', 'claim', 'full')
 _DEFAULTS: dict[str, dict] = {
     'checkin': {'enabled': False, 'hour': 9, 'last_run': ''},
+    # compensation 是唯一**默认开启**的任务，与 checkin/claim/full 不同：
+    #   · 它只领「平台已经发给这个账号的补偿」，不伪造任何行为（不像 full）；
+    #   · 没得领时就是一次空请求（业务错误），没有副作用，重复跑也不会多领；
+    #   · 这类补偿有时限（公告只到某个日期），默认关着等于让用户白丢积分 ——
+    #     「默认关闭、用户显式启用」这条规矩是用来防有风险的写操作的，它不属于。
+    # 上游调度器的活跃上报里也在领同一个补偿，两边都开不会重复到账。
+    'compensation': {'enabled': True, 'hour': 10, 'last_run': ''},
     'claim': {'enabled': False, 'hour': 10, 'last_run': ''},
     'full': {'enabled': False, 'hour': 10, 'last_run': ''},
 }
 # 巡检间隔（秒）：与触发粒度（整点）配合，最多晚 1 分钟发现
 _TICK_SECONDS = 60
 _loop_task: asyncio.Task | None = None
+
+# 公开别名：路由层要用它校验「立即执行」的 task 参数与本文件保持一致。
+# 让路由自己再写一份清单，加任务时必然漏掉一处，而漏掉的症状是「计划里能开、
+# 手动执行报 400」——两边都不报错的静默不一致。
+TASKS = _TASKS
 
 
 def _normalise(raw: object) -> dict:
@@ -147,6 +163,22 @@ async def run_task(task: str) -> tuple[bool, str]:
         ok_n = out.get('succeeded', 0)
         already = out.get('already', 0)
         return True, f'签到 {ok_n}/{total} 成功' + (f'（{already} 个今日已签）' if already else '')
+    if task == 'compensation':
+        from ..routers import accounts as accounts_router  # noqa: PLC0415
+        out = await accounts_router.claim_compensation_all(upstream_id=None,
+                                                           user={'role': 'admin'})
+        parts = []
+        if out.get('claimed'):
+            parts.append(f"{out['claimed']} 个领到 +{out.get('credit', 0)} 积分")
+        if out.get('already'):
+            parts.append(f"{out['already']} 个已领过")
+        if out.get('nothing'):
+            parts.append(f"{out['nothing']} 个无可领")
+        if out.get('failed'):
+            parts.append(f"{out['failed']} 个失败")
+        message = '；'.join(parts) or '没有可执行的账号'
+        # 全都「无可领」是正常态（补偿是一次性的），不算失败
+        return not out.get('failed'), message
     mode = 'claim' if task == 'claim' else 'full'
     return await taskrun.start_async(mode, 'ALL')
 

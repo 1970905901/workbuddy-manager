@@ -156,7 +156,7 @@ export interface RefreshPlan {
   next_run: number | null;
 }
 
-/** 每日任务计划里的单个任务（签到 / 领奖 / 做任务） */
+/** 每日任务计划里的单个任务（签到 / 领取补偿 / 领奖 / 做任务） */
 export interface DailyTaskConfig {
   enabled: boolean;
   /** 0-23 整点 */
@@ -165,17 +165,19 @@ export interface DailyTaskConfig {
   last_run: string;
 }
 
-export type DailyTask = 'checkin' | 'claim' | 'full';
+export type DailyTask = 'checkin' | 'compensation' | 'claim' | 'full';
 
 /**
  * 每日任务计划（`/api/accounts/daily-plan`）。
  *
  * 与「令牌刷新计划」并列，跑的是管理端的「一键」动作。三者安全等级不同：`claim`
- * 只认领已完成任务的奖励（幂等）、`checkin` 幂等，而 `full` 会**伪造活跃上报**
- * （上游脚本自己都标「慎用」）——所以默认全关，界面对 full 必须带警告。
+ * 只认领已完成任务的奖励（幂等）、`checkin` 与 `compensation` 幂等，而 `full` 会
+ * **伪造活跃上报**（上游脚本自己都标「慎用」）——所以有写风险的那个默认关，界面对
+ * full 必须带警告。`compensation` 是唯一默认开的：见 dailyplan._DEFAULTS 的说明。
  */
 export interface DailyPlan {
   checkin: DailyTaskConfig;
+  compensation: DailyTaskConfig;
   claim: DailyTaskConfig;
   full: DailyTaskConfig;
 }

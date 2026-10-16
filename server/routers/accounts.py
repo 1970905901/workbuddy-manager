@@ -1813,9 +1813,80 @@ async def run_refresh_plan_now(user: dict = Depends(security.require_admin)) -> 
             'next_run': renew.plan_next_run(plan)}
 
 
-# ── 每日任务计划（签到 / 领奖 / 做任务）──────────────────────
-# 与上面「令牌刷新计划」并列的第二类计划任务：到点自动跑管理端的三个「一键」
-# 动作。三者安全等级不同（full 会伪造活跃上报），所以默认全部关闭、由用户显式开。
+# ── 每日任务计划（签到 / 领取补偿 / 领奖 / 做任务）──────────────
+# 与上面「令牌刷新计划」并列的第二类计划任务：到点自动跑管理端的几个「一键」
+# 动作。安全等级不同（full 会伪造活跃上报），所以有写风险的那个默认关闭、由用户
+# 显式开；领取补偿是幂等的「有则领」（见该任务的说明），默认开启。
+
+
+@router.post('/accounts/claim-compensation')
+async def claim_compensation_all(upstream_id: int | None = Query(None),
+                                 user: dict = Depends(security.require_admin)) -> dict:
+    """对所有账号领一次「活动补偿」（有则领，没有就跳过）。
+
+    **为什么管理端要自己再做一遍**：上游调度器的活跃上报里本来就会调同一个接口
+    （`ClaimCompensation`），但它挂在「活跃上报」这个开关下 —— 关掉活跃上报、或
+    上游版本较旧，就领不到了。而这类补偿是**有时限**的（公告写着截止日期），
+    漏了就真的没了，所以管理端自己也要有一条不依赖上游开关的路。
+
+    每号先查一次状态（`compensation-status`）再决定要不要领：状态里能看出「已经
+    领过」时直接跳过，省掉一次注定失败的写请求；状态接口认不出来（结构变了）时
+    照常尝试领取 —— 认不出不等于领过了。
+    """
+    base_dir = _require_dir(_group(upstream_id))
+    accounts = wb2api.list_auth_accounts(base_dir)
+    sem = _checkin_semaphore()
+
+    async def one(acc: dict) -> dict:
+        filename = acc['file']
+        uid = acc.get('uid', '')
+        nickname = acc.get('nickname', '')
+        try:
+            raw = wb2api.read_account_file(filename, base_dir)
+            auth = raw.get('auth') or {}
+            token = auth.get('accessToken', '')
+        except Exception as exc:  # noqa: BLE001
+            return {'nickname': nickname, 'status': 'failed', 'credit': 0,
+                    'message': f'读取失败: {exc}'}
+        if not token:
+            return {'nickname': nickname, 'status': 'failed', 'credit': 0,
+                    'message': '无有效 accessToken'}
+        # 传完整 auth dict：billing 域要带 X-User-Id 等身份头（与签到同口径）
+        self_auth = {
+            'access_token': token,
+            'uid': str((raw.get('account') or {}).get('uid') or uid),
+            'enterprise_id': str((raw.get('account') or {}).get('enterpriseId') or ''),
+            'domain': str(auth.get('domain') or ''),
+            'realm': auth.get('realm'),
+            'device_token': str(raw.get('device_token') or ''),
+            'proxy': str(raw.get('proxy') or ''),
+        }
+        realm = realm_of(auth)
+        async with sem:
+            ok, data, _msg = await tencent.compensation_status(self_auth, realm)
+            if ok and tencent.compensation_already_claimed(data):
+                return {'nickname': nickname, 'status': 'already', 'credit': 0,
+                        'message': '这个补偿已经领过了'}
+            status, credit, message = await tencent.claim_compensation(self_auth, realm)
+        return {'nickname': nickname, 'status': status, 'credit': credit, 'message': message}
+
+    results = await asyncio.gather(*(one(a) for a in accounts)) if accounts else []
+    # 分母只算**真的发了请求**的账号：already / skipped 既不是成功也不是失败，
+    # 算进 total 会让界面显示成「5/6 成功」，用户以为有个号没领到（与签到同口径）。
+    tried = [r for r in results if r['status'] in ('claimed', 'nothing', 'failed')]
+    claimed = [r for r in results if r['status'] == 'claimed']
+    failed = [r for r in results if r['status'] == 'failed']
+    return {
+        'ok': not failed,
+        'total': len(tried),
+        'claimed': len(claimed),
+        'credit': sum(r.get('credit') or 0 for r in claimed),
+        'already': len([r for r in results if r['status'] == 'already']),
+        'skipped': len([r for r in results if r['status'] == 'skipped']),
+        'nothing': len([r for r in results if r['status'] == 'nothing']),
+        'failed': len(failed),
+        'results': results,
+    }
 
 
 @router.get('/accounts/daily-plan')
@@ -1837,7 +1908,7 @@ def save_daily_plan(body: dict,
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     security.audit(user, 'update_daily_plan', '',
                    '; '.join(f"{t}={plan[t]['enabled']}@{plan[t]['hour']}h"
-                             for t in ('checkin', 'claim', 'full')))
+                             for t in ('checkin', 'compensation', 'claim', 'full')))
     return plan
 
 
@@ -1846,7 +1917,7 @@ async def run_daily_task_now(body: dict = Body(...),
                              user: dict = Depends(security.require_admin)) -> dict:
     """立即执行一次某个每日任务（不等定时）。
 
-    body 形如 `{"task": "checkin" | "claim" | "full"}`。用 **body 而不是 query**
+    body 形如 `{"task": "checkin" | "compensation" | "claim" | "full"}`。用 **body 而不是 query**
     传参：写端点的 query 参数要登记进 `test_request_binding.ALLOWED_QUERY_POSTS`，
     body 不需要。
 
@@ -1854,8 +1925,11 @@ async def run_daily_task_now(body: dict = Body(...),
     口径，避免刚手动跑完到点又跑一次。
     """
     task = str((body or {}).get('task') or '').strip()
-    if task not in ('checkin', 'claim', 'full'):
-        raise HTTPException(status_code=400, detail='task 只能是 checkin / claim / full')
+    if task not in dailyplan.TASKS:
+        # 允许清单只此一份（dailyplan.TASKS）：这里再抄一遍就会在加任务时漏掉，
+        # 而漏掉的症状是「计划里能开、手动执行按钮报 400」。
+        raise HTTPException(status_code=400,
+                            detail='task 只能是 ' + ' / '.join(dailyplan.TASKS))
     ok, message = await dailyplan.run_task(task)
     plan = dailyplan.mark_ran(task)
     return {'ok': ok, 'message': message, 'task': task, 'plan': plan}

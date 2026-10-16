@@ -417,7 +417,12 @@ def write_auth_file(account: dict, auth_dir: Path | None = None,
     if old_device_token:
         payload['device_token'] = old_device_token
 
-    proxy_name = str(account.get('proxy', old_proxy) or '').strip()
+    # 空串同样回退到旧值（`or old_proxy`，而不是只对「键缺失」生效的默认值）：
+    # 登录流（account 里通常没有这个键）与**导入流**（`_uploaded_account` 恒带上
+    # `'proxy': ''`）两条路都要「文件没提就不动」。否则覆盖导入一份没写 proxy 的
+    # 文件会把已绑定的线路**静默清掉**——出口无声改变正是这个功能最忌讳的事
+    # （与上面 device_token「读旧文件保留」的语义对齐）。
+    proxy_name = str(account.get('proxy') or old_proxy or '').strip()
     if proxy_name:
         payload['proxy'] = proxy_name
 

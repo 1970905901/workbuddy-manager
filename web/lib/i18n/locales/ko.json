@@ -303,7 +303,7 @@
     "importExport": "계정 가져오기/내보내기",
     "importExportDesc": "계정 JSON을 가져오거나 그룹을 ZIP으로 내보냅니다.",
     "importAccount": "계정 가져오기",
-    "importAccountDesc": "여러 JSON 파일을 지원하며 같은 UID는 기본적으로 덮어쓰지 않습니다.",
+    "importAccountDesc": "여러 JSON 파일을 지원합니다(내보내기는 ZIP이므로 먼저 압축을 풀고 그 안의 .json을 선택하세요). 같은 UID는 기본적으로 덮어쓰지 않습니다.",
     "exportAccount": "계정 내보내기",
     "exportAccountDesc": "각 계정을 JSON 파일로 만들어 ZIP으로 묶습니다.",
     "exportGroup": "내보낼 그룹",

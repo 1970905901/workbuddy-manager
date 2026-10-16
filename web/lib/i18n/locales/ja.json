@@ -303,7 +303,7 @@
     "importExport": "アカウントをインポート/エクスポート",
     "importExportDesc": "アカウント JSON をインポート、またはグループを ZIP でエクスポートします。",
     "importAccount": "アカウントをインポート",
-    "importAccountDesc": "複数の JSON に対応。同じ UID は既定で上書きしません。",
+    "importAccountDesc": "複数の JSON に対応（エクスポートは ZIP です。先に解凍し、中の .json を選択してください）。同じ UID は既定で上書きしません。",
     "exportAccount": "アカウントをエクスポート",
     "exportAccountDesc": "各アカウントを JSON として ZIP にまとめます。",
     "exportGroup": "エクスポートするグループ",

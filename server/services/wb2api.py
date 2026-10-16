@@ -706,6 +706,15 @@ def clear_account_cooling_state(uid: str) -> dict:
         'degrade_until': account.get('degrade_until'),
     }
     account['until'] = '0001-01-01T00:00:00Z'
+    # `cool_kind` 要**删掉**而不是写 0（评审修正）：它在 state.json 里是 int 枚举
+    # （0 = hard_credit），而「没有冷却」的规范表示是**不写这个键** —— 上游自己的
+    # 落盘逻辑就这么做，其注释写明是为了避免「until 零值 + cool_kind」的不一致快照。
+    # 写 0 不会立刻出问题（until 是零值，上游下次 Flush 也会按规范抹掉），但没必要
+    # 在别人的文件里留一个自己造的非规范形态。
+    #
+    # 与 set_account_cooling_state 的取舍**不对称，这是刻意的**：那边是「要有一段
+    # 冷却」，必须写出 cool_kind=0（否则 until 有值却没有类型，上游按未知形态处理）；
+    # 这边是「不要冷却」，就按上游自己的规范删键。两条路都对，别"统一"成一个写法。
     account.pop('cool_kind', None)
     account['soft_streak'] = 0
     account.pop('model_cooldowns', None)

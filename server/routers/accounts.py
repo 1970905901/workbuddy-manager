@@ -1958,7 +1958,11 @@ async def account_force_cooling(
     if target_dt <= now:
         raise HTTPException(status_code=400, detail='冷却截止时间必须在未来')
 
-    until_formatted = target_dt.astimezone().isoformat()
+    # 回写与回显统一按 **UTC** 格式化（`astimezone()` 跟随面板所在时区）：
+    # 「永久」用的 2099-12-31T23:59:59Z 在东八区会被写成 2100-01-01T07:59:59+08:00 ——
+    # 同一瞬间，但年份跳到 2100 会让人以为"永久"被算错了，接口返回值也随部署时区变。
+    # （贡献者的环境是 UTC，所以在 +08 才暴露；那条断言 '2099' 也只在 UTC 下绿。）
+    until_formatted = target_dt.astimezone(datetime.timezone.utc).isoformat()
     ok, message, detail = await wb2api.force_set_account_cooling(uid, until_formatted, reason)
     if not ok:
         raise HTTPException(status_code=400, detail=message)

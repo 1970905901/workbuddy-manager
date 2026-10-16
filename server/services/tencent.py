@@ -12,6 +12,7 @@ import os
 import re
 import tempfile
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -1083,6 +1084,17 @@ async def probe_account(auth: dict, model: str = 'glm-5.2') -> tuple[bool, str]:
     _dt = device_token_for(auth)
     if _dt:
         headers['X-Device-Token'] = _dt
+    # 会话头族（issue #193）：上游 2026-10-16 起对**部分账号**灰度启用渠道校验，
+    # 缺 X-Conversation-ID 即判 11-128「conversation id missing」—— 被灰度到的账号在
+    # 探测里必红（真实对话走网关，同一族头由上游补）。这里补齐官方客户端那几支；
+    # 四个 ID 各有语义（会话 / 轮 / 消息 / 根），不要图省事复用成同一个值。
+    headers.update({
+        'X-Conversation-ID': uuid.uuid4().hex,
+        'X-Conversation-Request-ID': uuid.uuid4().hex,
+        'X-Conversation-Message-ID': uuid.uuid4().hex,
+        'X-Root-Request-ID': uuid.uuid4().hex,
+        'X-Trace-ID': uuid.uuid4().hex,
+    })
 
     payload = {
         'model': model,

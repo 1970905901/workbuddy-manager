@@ -138,15 +138,41 @@ def _account_http_client(auth: dict):
     return config.http_client(config.TENCENT_TIMEOUT, connect=5, proxy=proxy)
 
 
-async def start_login(realm: Realm = CN, proxy_name: str = '') -> dict:
-    """发起扫码登录。realm 决定用哪套端点与 Origin（默认国内版）。"""
-    async with _account_http_client({'proxy': proxy_name}) as client:
-        resp = await client.post(
-            f'{chat_base(realm)}/v2/plugin/auth/state',
-            params={'platform': 'CLI'},
-            json={},
-            headers=_hdr(realm),
+def _login_net_hint(proxy_name: str, exc: Exception) -> str:
+    """把「扫码登录」出站的网络错误翻成可执行的中文提示（issue #194）。
+
+    为什么这条要专门翻译：登录是唯一「用户正站在弹窗前、失败就卡死」的出站调用。
+    此前 httpx 的异常直接抛到路由层，没被 `except RuntimeError` 接住 → FastAPI 兜成
+    500 + 英文 `Internal Server Error`，界面上就是一句看不懂的英文，用户既不知道是
+    线路问题也不知道该改哪里。报告人正是这么被卡住的：换了一条解析不了 .cn 的国家
+    线路，二维码一直出不来，关掉代理才好 —— 修复前他从错误里看不出这层关系。
+    """
+    detail = err_text(exc)
+    if proxy_name:
+        return (
+            f'线路「{proxy_name}」连不上腾讯登录接口：{detail}。'
+            '常见原因：这条线路访问不了国内域名、需要额外认证、或已经失效 —— '
+            '换一条线路，或先在弹窗里关掉它再试'
         )
+    return f'连不上腾讯登录接口：{detail}。请检查这台机器的网络出口（DNS 与外网连通性）'
+
+
+async def start_login(realm: Realm = CN, proxy_name: str = '') -> dict:
+    """发起扫码登录。realm 决定用哪套端点与 Origin（默认国内版）。
+
+    网络层失败统一转成 `RuntimeError`（带可执行的中文原因，见 `_login_net_hint`）：
+    路由层把它转 502，界面就能显示「哪条线路连不上、该怎么办」，而不是英文 500。
+    """
+    try:
+        async with _account_http_client({'proxy': proxy_name}) as client:
+            resp = await client.post(
+                f'{chat_base(realm)}/v2/plugin/auth/state',
+                params={'platform': 'CLI'},
+                json={},
+                headers=_hdr(realm),
+            )
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(_login_net_hint(proxy_name, exc)) from exc
     code, data = _envelope(resp)
     if code != 0 or not data:
         raise RuntimeError(f'获取授权链接失败 code={code}')
@@ -190,26 +216,31 @@ async def poll_login(state: str, realm: Realm | None = None) -> dict:
         return {'status': 'realm_mismatch', 'expected': reg_realm, 'got': realm}
     realm = reg_realm
 
-    async with _account_http_client({'proxy': proxy_name}) as client:
-        resp = await client.get(
-            f'{chat_base(realm)}/v2/plugin/auth/token',
-            params={'state': state},
-            headers=_hdr(realm),
-        )
-        code, data = _envelope(resp)
-        if code != 0 or not data or not data.get('accessToken'):
-            return {'status': 'waiting'}
+    # 出站失败同样翻成可执行的中文（与 start_login 同一口径）：中途线路挂掉时，
+    # 前端轮询此前会拿到英文 500，用户看不出是线路的问题。
+    try:
+        async with _account_http_client({'proxy': proxy_name}) as client:
+            resp = await client.get(
+                f'{chat_base(realm)}/v2/plugin/auth/token',
+                params={'state': state},
+                headers=_hdr(realm),
+            )
+            code, data = _envelope(resp)
+            if code != 0 or not data or not data.get('accessToken'):
+                return {'status': 'waiting'}
 
-        access_token = data['accessToken']
-        refresh_token = data.get('refreshToken', '')
-        expires_in = int(data.get('expiresIn', 3600) or 3600)
-        domain = data.get('domain', '')
+            access_token = data['accessToken']
+            refresh_token = data.get('refreshToken', '')
+            expires_in = int(data.get('expiresIn', 3600) or 3600)
+            domain = data.get('domain', '')
 
-        acct_resp = await client.get(
-            f'{chat_base(realm)}/v2/plugin/login/account',
-            params={'state': state},
-            headers=_hdr(realm, access_token),
-        )
+            acct_resp = await client.get(
+                f'{chat_base(realm)}/v2/plugin/login/account',
+                params={'state': state},
+                headers=_hdr(realm, access_token),
+            )
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(_login_net_hint(proxy_name, exc)) from exc
     _, acct = _envelope(acct_resp)
     acct = acct or {}
     uid = acct.get('uid')

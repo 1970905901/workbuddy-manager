@@ -606,6 +606,8 @@ async def auth_poll(
     """
     if not state:
         return {'status': 'invalid'}
+    # 出站网络失败（线路连不上等）→ 502 + 中文原因：与 /auth/start 同一口径。
+    # 不转的话前端拿到的是英文 500，用户看不出「是线路的问题、该换线路」。
 
     # 后台已经跑出终态：直接返回那一份，**不再问腾讯**。
     # 只对终态短路：失败态（落盘失败等）要继续走下面的原路径，那里有
@@ -637,7 +639,12 @@ async def auth_poll(
         memo_result, memo_realm, memo_msg = ready[0], ready[1], ready[2]
         return _save_and_finish(memo_result, memo_realm, memo_msg, state, group=group)
 
-    result = await tencent.poll_login(state, r)
+    try:
+        result = await tencent.poll_login(state, r)
+    except RuntimeError as exc:
+        # 线路/网络层失败：转 502 + 中文原因（与 /auth/start 同一口径）。
+        # 不转的话界面上只有一句英文 500，用户看不出「是线路的问题、该换线路」。
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     if result.get('status') != 'ready':
         return result
 

@@ -330,6 +330,40 @@ await page.screenshot({path: path.join(OUT, 'tasks-compensation.png'), fullPage:
        JSON.stringify(direct.body).slice(0, 180));
 }
 
+// ═══ 账号页「强制冷却」对话框 ═══
+// 只验界面：点了会真的去停/起上游（harness 里没有 docker），所以**不提交**，
+// 只确认按钮在、弹窗能开、档位与「永久」都在。
+console.log('\n── 账号页 › 强制冷却');
+await page.goto(`${BASE}/accounts`, {waitUntil: 'load'});
+await page.waitForTimeout(2500);
+await page.screenshot({path: path.join(OUT, 'accounts-cooling.png'), fullPage: true});
+
+{
+  // 先确认账号行真的渲染了 —— 否则「按钮找不到」会被误读成功能没接上
+  const pageText = await page.evaluate(() => document.body.innerText);
+  step(pageText.includes('演示号'), '账号列表里有那个演示账号');
+
+  // 标题按 zh-CN 文案精确匹配（「强制进入冷却」/「调整冷却时间」）。
+  // 不能只用 [title*=冷却]：行内还有「清除冷却」，会命中错的那个按钮。
+  // 也必须加 `:visible` —— 账号页同时渲染**移动卡片**（md:hidden）与**桌面表**
+  // （hidden md:block），不加就会点到 1600px 下被 display:none 的那一份，
+  // 表现为「元素不可见」的点击超时（第一次跑就是这样）。
+  const snowflake = page.locator(
+    'button[title="强制进入冷却"]:visible, button[title="调整冷却时间"]:visible').first();
+  step(await snowflake.count() > 0, '账号行上有「强制进入冷却」按钮（雪花）');
+  if (await snowflake.count() > 0) {
+    await snowflake.click();
+    await page.waitForTimeout(700);
+    const dialog = page.locator('[role=dialog]').last();
+    const text = await dialog.textContent().catch(() => '');
+    step(!!text && text.includes('永久'), '弹窗里有「永久」档', (text || '').slice(0, 80));
+    step(!!text && /(小时|分钟|天)/.test(text), '弹窗里有自定义时长输入');
+    await page.screenshot({path: path.join(OUT, 'accounts-cooling-dialog.png')});
+    await page.keyboard.press('Escape');   // 不提交：真实停/起上游不在这里做
+    await page.waitForTimeout(400);
+  }
+}
+
 // ═══ 控制台 ═══
 console.log('\n── 控制台');
 step(consoleErrors.length === 0, '浏览器控制台没有报错', consoleErrors.slice(0, 3).join(' | '));

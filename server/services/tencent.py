@@ -82,6 +82,13 @@ V3_CONFIG_PATH = '/v3/config'
 # 所以**不能**走 `billing_paths()`（它给国内版拼的正是 `/v2`）：那样每次都会 404，
 # 而 404 的表现是「无可领补偿」，看起来跟「今天没得领」一模一样 —— 静默失效。
 # 端点名与网页 bundle（assets.workbuddy.cn/web/usercenter）里的调用逐字一致。
+#
+# **基址用 codebuddy.cn（= desktop 客户端的 billing 基址），不是公告链接里的
+# workbuddy.cn**：两条都实测存在（都是 401），但我们的账号是客户端账号，出生入死的
+# 是客户端那套 Origin/UA/身份头；而该域上的领取历史有效（升级日志里出现过
+# 「compensation ok (+100 credit)」）。公告页与客户端应是同一后端的不同品牌前端。
+# 将来若要改基址，先确认身份头（Origin/Referer）一起改 —— 不匹配的 Origin 正是
+# 风控最容易挑出来的形态。
 COMPENSATION_STATUS_PATH = '/billing/meter/compensation-status'
 COMPENSATION_CLAIM_PATH = '/billing/meter/claim-compensation'
 

@@ -327,7 +327,7 @@
     "importExport": "Import/export accounts",
     "importExportDesc": "Import account JSON files or export a group as a ZIP archive.",
     "importAccount": "Import accounts",
-    "importAccountDesc": "Multiple JSON files are supported; same UIDs are not overwritten by default.",
+    "importAccountDesc": "Multiple JSON files are supported (the export is a ZIP — unzip it and pick the .json files); same UIDs are not overwritten by default.",
     "exportAccount": "Export accounts",
     "exportAccountDesc": "Each account is exported as one JSON file inside a ZIP archive.",
     "exportGroup": "Export group",

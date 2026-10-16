@@ -303,7 +303,7 @@
     "importExport": "导入/导出账号",
     "importExportDesc": "导入账号 JSON 文件，或按分组导出账号 ZIP 文件。",
     "importAccount": "导入账号",
-    "importAccountDesc": "支持批量 JSON 文件；同 UID 默认拒绝覆盖。",
+    "importAccountDesc": "支持批量 JSON 文件（导出包是 ZIP，请先解压后选择其中的 .json）；同 UID 默认拒绝覆盖。",
     "exportAccount": "导出账号",
     "exportAccountDesc": "每个账号导出为一个 JSON 文件并打包为 ZIP。",
     "exportGroup": "选择导出分组",

@@ -117,6 +117,8 @@ def export_accounts(
     files += sorted(auth_dir.glob('workbuddy*.json.disabled'))
 
     payload = io.BytesIO()
+    written = 0
+    seen: set[str] = set()
     with zipfile.ZipFile(payload, mode='w', compression=zipfile.ZIP_DEFLATED) as archive:
         for path in files:
             try:
@@ -127,11 +129,22 @@ def export_accounts(
             except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                 logger.warning('跳过无法导出的账号文件 file=%s', path.name)
                 continue
-            archive.writestr(_export_account_name(path), raw)
+            out_name = _export_account_name(path)
+            if out_name in seen:
+                # `.json` 与 `.json.disabled` 同时存在（手工拷贝或异常状态）时，
+                # 两者会折成同一个导出名（`.disabled` 被剥掉才能重新导入）——
+                # zip 里出现**重复条目**，解压方行为依工具而异（Python 打包时
+                # 自己都会告警）。保留先扫到的 enabled 那一份（上游实际加载的
+                # 就是它），后续同名跳过。
+                logger.warning('同名账号文件重复，跳过 file=%s', path.name)
+                continue
+            seen.add(out_name)
+            archive.writestr(out_name, raw)
+            written += 1
 
     payload.seek(0)
     security.audit(user, 'accounts.export', group['name'],
-                   f'导出 {len(files)} 个账号文件（含凭据）')
+                   f'导出 {written} 个账号文件（含凭据）')
     return StreamingResponse(
         payload,
         media_type='application/zip',
@@ -162,9 +175,20 @@ async def upload_accounts(
 
     for upload in files:
         name = upload.filename or '未命名文件'
+        # 名字不是 .json 的，**在进 try 之前**直接给出可操作的原因。
+        #
+        # 以前这条检查抛的 ValueError 会落进下面 `except ValueError` 的兜底分支，
+        # 被统一换成「文件内容无效」——用户传 PDF / CSV / 或**直接传导出得到的
+        # ZIP 包**，看到那句话完全不知道下一步干什么（现场：连传两个非 JSON
+        # 文件都被这句打回；导出侧文案还写着「可直接用于另一台面板导入」，进一步
+        # 坐实了「ZIP 可以直接传」的误判）。这里把「支持什么、ZIP 该怎么办」一次说清。
+        if not name.lower().endswith('.json'):
+            failed.append({
+                'file': name,
+                'message': '只支持 .json 文件：请上传面板导出的账号 JSON（ZIP 导出包请先解压）',
+            })
+            continue
         try:
-            if not name.lower().endswith('.json'):
-                raise ValueError('只支持 .json 文件')
             content = await upload.read(_ACCOUNT_UPLOAD_MAX_BYTES + 1)
             if len(content) > _ACCOUNT_UPLOAD_MAX_BYTES:
                 raise ValueError('文件不能超过 2 MB')

@@ -330,6 +330,16 @@ export const accountApi = {
     post<{ok: boolean; message: string; uid?: string; backup?: string}>(
       `/api/accounts/${encodeURIComponent(file)}/clear-cooling${groupQs(upstreamId)}`,
     ),
+  /** 强制设定账号级冷却（会重启一次上游）。 */
+  forceCooling: (
+    file: string,
+    body: {duration_seconds?: number; until?: string; permanent?: boolean; reason?: string},
+    upstreamId?: number | null,
+  ) =>
+    post<{ok: boolean; message: string; uid?: string; until?: string; backup?: string}>(
+      `/api/accounts/${encodeURIComponent(file)}/force-cooling${groupQs(upstreamId)}`,
+      body,
+    ),
   /**
    * 给账号写备注（issue #67）。传空串 = 清除备注。
    * 存的是本端库、按 uid 关联——临时停用（改文件名）不会丢。

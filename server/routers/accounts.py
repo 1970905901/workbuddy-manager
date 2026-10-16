@@ -1895,6 +1895,76 @@ async def account_clear_cooling(
     return {'ok': ok, 'message': message, **(detail or {})}
 
 
+@router.post('/accounts/{filename}/force-cooling')
+async def account_force_cooling(
+    filename: str,
+    body: dict = Body(...),
+    upstream_id: int | None = Query(None),
+    user: dict = Depends(security.require_admin),
+) -> dict:
+    """强制设定账号级冷却时间（保留排程任务执行）。
+
+    参数：
+      duration_seconds: int，正整数，冷却时长（秒）
+      until: str 可选，ISO 8601 / RFC 3339 字符串（若提供则优先于 duration_seconds）
+      reason: str 可选，冷却原因（缺省为「手动设置冷却」）
+    """
+    group = _group(upstream_id)
+    if not group['is_default']:
+        raise HTTPException(
+            status_code=409,
+            detail=('该分组暂不支持从面板设置冷却（需要该实例的 state.json 路径）；'
+                    '可等它自然冷却，或在宿主机上维护该分组的实例'),
+        )
+    try:
+        raw = wb2api.read_account_file_any(filename)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail='账号文件不存在') from exc
+    uid = str((raw.get('account') or {}).get('uid') or '').strip()
+    if not uid:
+        raise HTTPException(status_code=400, detail='该账号文件缺少 uid，无法定位上游状态')
+
+    duration_seconds = body.get('duration_seconds') if isinstance(body, dict) else None
+    until_str = str(body.get('until') or '').strip() if isinstance(body, dict) else ''
+    is_permanent = bool(body.get('permanent')) or until_str.lower() in ('permanent', 'forever')
+    reason = (str(body.get('reason') or '').strip() if isinstance(body, dict) else '')
+
+    target_dt: datetime.datetime | None = None
+    if is_permanent:
+        target_dt = datetime.datetime(2099, 12, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
+        reason = reason or '手动永久冷却'
+    elif until_str:
+        try:
+            parsed = datetime.datetime.fromisoformat(until_str.replace('Z', '+00:00'))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+            target_dt = parsed
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f'无效的截止时间格式（需要 ISO 8601 / RFC 3339）：{exc}') from exc
+        reason = reason or '手动设置冷却'
+    elif duration_seconds is not None:
+        try:
+            sec = int(duration_seconds)
+            if sec <= 0:
+                raise ValueError()
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=400, detail='冷却时长必须为正整数（秒）') from exc
+        target_dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=sec)
+        reason = reason or '手动设置冷却'
+    else:
+        raise HTTPException(status_code=400, detail='请提供 duration_seconds、until 或 permanent 参数')
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if target_dt <= now:
+        raise HTTPException(status_code=400, detail='冷却截止时间必须在未来')
+
+    until_formatted = target_dt.astimezone().isoformat()
+    ok, message, detail = await wb2api.force_set_account_cooling(uid, until_formatted, reason)
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+    return {'ok': ok, 'message': message, 'until': until_formatted, **(detail or {})}
+
+
 @router.put('/accounts/{filename}/note')
 async def account_set_note(
     filename: str,

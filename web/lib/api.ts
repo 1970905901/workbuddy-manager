@@ -691,6 +691,11 @@ export const systemApi = {
   /** 检测新版本；force=true 绕过 6 小时缓存 */
   checkUpdate: (force = false) => get<UpdateCheck>('/api/system/check-update', {force}),
   versions: () => get<Versions>('/api/system/versions'),
+  /** GitHub Token（版本检测 / 一键更新的认证）：读回掩码，写只传明文 */
+  githubToken: () => get<{configured: boolean; masked: string; source: 'env' | 'panel' | ''}>(
+    '/api/settings/github-token'),
+  saveGithubToken: (token: string) =>
+    put<{configured: boolean; masked: string}>('/api/settings/github-token', {token}),
   /**
    * 启动一键更新；target: manager | upstream | both。
    * source='uploaded' 用面板里已上传的离线升级包（issue #153）。

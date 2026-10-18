@@ -299,7 +299,7 @@ export function AddAccountDialog({
             <div className="w-full space-y-1.5">
               <div className="text-[11px] font-medium">{t('addAccount.regionLabel')}</div>
               <Select value={region} onValueChange={setRegion}>
-                <SelectTrigger className="h-9 w-full rounded-full text-xs">
+                <SelectTrigger className="h-9 w-full rounded-full text-xs" aria-label={t('addAccount.regionLabel')}>
                   <SelectValue placeholder={t('addAccount.regionPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -311,7 +311,7 @@ export function AddAccountDialog({
                 </SelectContent>
               </Select>
               {!region && (
-                <p className="text-[10px] leading-4 text-muted-foreground">
+                <p className="text-[11px] leading-4 text-muted-foreground">
                   {t('addAccount.regionHint')}
                 </p>
               )}

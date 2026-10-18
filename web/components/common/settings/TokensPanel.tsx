@@ -99,7 +99,7 @@ export function TokensPanel() {
               value={form.scope}
               onValueChange={(v) => setForm({...form, scope: v as 'readonly' | 'admin'})}
             >
-              <SelectTrigger className="bg-background">
+              <SelectTrigger className="bg-background" aria-label={t('settings.tokensScope')}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -114,7 +114,7 @@ export function TokensPanel() {
               value={form.expires}
               onValueChange={(v) => setForm({...form, expires: v as 'never' | '30' | '90' | '365'})}
             >
-              <SelectTrigger className="bg-background">
+              <SelectTrigger className="bg-background" aria-label={t('settings.tokensExpires')}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

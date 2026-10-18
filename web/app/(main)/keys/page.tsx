@@ -813,7 +813,7 @@ export default function KeysPage() {
                       value={form.expiryMode}
                       onValueChange={(v) => setForm({...form, expiryMode: v as FormState['expiryMode']})}
                     >
-                      <SelectTrigger className="flex-1">
+                      <SelectTrigger className="flex-1" aria-label={t('keys.expiry')}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -866,7 +866,7 @@ export default function KeysPage() {
                     value={form.quotaCredit}
                     onChange={(e) => setForm({...form, quotaCredit: e.target.value})}
                   />
-                  <p className="text-[10px] leading-4 text-muted-foreground">
+                  <p className="text-[11px] leading-4 text-muted-foreground">
                     {t('keys.quotaCreditHint')}
                   </p>
                 </div>
@@ -893,7 +893,7 @@ export default function KeysPage() {
                       value={form.realm || '__all__'}
                       onValueChange={(v) => setForm({...form, realm: (v === '__all__' ? '' : v) as FormState['realm']})}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger aria-label={t('keys.realm')}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -903,7 +903,7 @@ export default function KeysPage() {
                         <SelectItem value="__all__">{t('keys.realmAll')}</SelectItem>
                       </SelectContent>
                     </Select>
-                    <p className="text-[10px] leading-4 text-muted-foreground">
+                    <p className="text-[11px] leading-4 text-muted-foreground">
                       {form.realm === ''
                         ? t('keys.realmHintUnlimited')
                         : form.realm === 'global'
@@ -931,7 +931,7 @@ export default function KeysPage() {
                             ? t('realm.global')
                             : t('realm.cn')}
                       </Badge>
-                      <span className="text-[10px] leading-4 text-muted-foreground">
+                      <span className="text-[11px] leading-4 text-muted-foreground">
                         {form.realm === '' ? t('keys.realmUnlimitedOn') : t('keys.realmFollowsPage')}
                       </span>
                     </div>
@@ -963,7 +963,7 @@ export default function KeysPage() {
                     setForm({...form, upstream_id: v === '__default__' ? null : Number(v)})
                   }
                 >
-                  <SelectTrigger>
+                  <SelectTrigger aria-label={t('keys.upstreamLabel')}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -977,7 +977,7 @@ export default function KeysPage() {
                       ))}
                   </SelectContent>
                 </Select>
-                <p className="text-[10px] leading-4 text-muted-foreground">
+                <p className="text-[11px] leading-4 text-muted-foreground">
                   {t('keys.upstreamHint')}
                 </p>
               </div>
@@ -1024,7 +1024,7 @@ export default function KeysPage() {
                     版本归属由上面的选项控制（粗粒度，拦跨版本调用），
                     白名单在版本之内再收窄到具体几个模型（细粒度）。
                     写模型名时注意与所选版本一致——带 global: 前缀的是国际版模型。 */}
-                <p className="text-[10px] leading-4 text-muted-foreground">
+                <p className="text-[11px] leading-4 text-muted-foreground">
                   {/* 反引号包住的模型名由 RichText 渲染成等宽字体 */}
                   <RichText text={t('keys.modelPrefixNote')} />
                 </p>
@@ -1091,7 +1091,7 @@ export default function KeysPage() {
                             setExported(null);
                             setImported(null);
                           }}>
-                    <SelectTrigger className="h-7 w-[168px] rounded-full text-xs">
+                    <SelectTrigger className="h-7 w-[168px] rounded-full text-xs" aria-label={t('keys.exportTitle')}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

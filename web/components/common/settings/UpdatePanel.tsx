@@ -433,14 +433,14 @@ export function UpdatePanel() {
                         <ul className="mt-1 max-h-[220px] space-y-0.5 overflow-auto rounded-xl bg-background/60 p-2">
                           {check.upstream.changes.map((c) => (
                             <li key={c.sha} className="flex gap-2">
-                              <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">
+                              <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
                                 {c.sha}
                               </span>
                               <span className="min-w-0 flex-1 break-all">{c.subject}</span>
                             </li>
                           ))}
                           {check.upstream.truncated && (
-                            <li className="pt-0.5 text-[10px] text-muted-foreground/70">
+                            <li className="pt-0.5 text-[11px] text-muted-foreground">
                               {t('updatePanel.changesTruncated', {n: check.upstream.changes.length})}
                             </li>
                           )}

@@ -129,7 +129,7 @@ export function UpstreamEndpoints() {
                       {t('upstreams.disabledTag')}
                     </Badge>
                   )}
-                  <span className="text-[10px] text-muted-foreground">
+                  <span className="text-[11px] text-muted-foreground">
                     {t('upstreams.boundKeys', {n: item.bound_keys ?? 0})}
                   </span>
                 </div>
@@ -138,13 +138,13 @@ export function UpstreamEndpoints() {
                 </div>
                 {item.auth_dir ? (
                   <div
-                    className="truncate font-mono text-[11px] text-muted-foreground/80"
+                    className="truncate font-mono text-[11px] text-muted-foreground"
                     title={t('upstreams.dirLine', {dir: item.auth_dir})}
                   >
                     {t('upstreams.dirLine', {dir: item.auth_dir})}
                   </div>
                 ) : (
-                  <div className="truncate text-[11px] text-muted-foreground/70">
+                  <div className="truncate text-[11px] text-muted-foreground">
                     {t('upstreams.noDirLine')}
                   </div>
                 )}

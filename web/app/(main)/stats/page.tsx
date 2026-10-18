@@ -222,7 +222,7 @@ export default function StatsPage() {
       actions={
         <>
           <Select value={days} onValueChange={setDays}>
-            <SelectTrigger className="h-8 w-[130px] rounded-full"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-8 w-[130px] rounded-full" aria-label={t('logs.filterRange')}><SelectValue /></SelectTrigger>
             <SelectContent>
               {/* 「今日」排在第一位并作为默认：与上方卡片的「今日」口径对齐 */}
               <SelectItem value="1">{t('stats.today')}</SelectItem>

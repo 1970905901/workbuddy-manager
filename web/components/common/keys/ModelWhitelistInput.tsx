@@ -214,7 +214,7 @@ export function ModelWhitelistInput({
               )}
               {filtered.map((group) => (
                 <div key={group.key} className="mb-1">
-                  <div className="px-2 py-1 text-[10px] text-muted-foreground">{group.label}</div>
+                  <div className="px-2 py-1 text-[11px] text-muted-foreground">{group.label}</div>
                   {group.models.map((m) => {
                     const picked = names.includes(m.id);
                     return (
@@ -240,7 +240,7 @@ export function ModelWhitelistInput({
                         </span>
                         <span className="min-w-0 flex-1 truncate font-mono">{m.id}</span>
                         {typeof m.context_length === 'number' && (
-                          <span className="shrink-0 text-[10px] text-muted-foreground">
+                          <span className="shrink-0 text-[11px] text-muted-foreground">
                             {Math.round(m.context_length / 1000)}k
                           </span>
                         )}

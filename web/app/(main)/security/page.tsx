@@ -288,6 +288,7 @@ export default function SecurityPage() {
                     <div className="text-[11px] text-muted-foreground">{t('security.enableControlHint')}</div>
                   </div>
                   <Switch
+                    aria-label={t('security.enableControl')}
                     checked={shownConfig.enabled}
                     disabled={!isAdmin}
                     onCheckedChange={(v) => saveConfig({...shownConfig, enabled: v})}
@@ -300,7 +301,7 @@ export default function SecurityPage() {
                     disabled={!isAdmin}
                     onValueChange={(v) => saveConfig({...shownConfig, mode: v as SecurityConfig['mode']})}
                   >
-                    <SelectTrigger className="bg-background"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="bg-background" aria-label={t('security.mode')}><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="blacklist">{t('security.modeBlacklist')}</SelectItem>
                       <SelectItem value="whitelist">{t('security.modeWhitelist')}</SelectItem>
@@ -321,7 +322,7 @@ export default function SecurityPage() {
             <div className="space-y-1.5">
               <Label className="text-[11px] text-muted-foreground">{t('security.type')}</Label>
               <Select value={newKind} onValueChange={(v) => setNewKind(v as 'allow' | 'deny')} disabled={!isAdmin}>
-                <SelectTrigger className="bg-background"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="bg-background" aria-label={t('security.type')}><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="deny">{t('security.deny')}</SelectItem>
                   <SelectItem value="allow">{t('security.allow')}</SelectItem>

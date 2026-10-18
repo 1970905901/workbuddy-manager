@@ -314,9 +314,10 @@ export function ProxyPanel() {
           {pool && (
             <>
               <Switch checked={pool.enabled}
+                      aria-label={t('settings.proxyRoutesTitle')}
                       onCheckedChange={(v) => void savePool({enabled: v})} />
               <Select value={pool.strategy} onValueChange={(v) => void savePool({strategy: v as ProxyPool['strategy']})}>
-                <SelectTrigger className="h-8 w-32 rounded-full bg-background text-xs">
+                <SelectTrigger className="h-8 w-32 rounded-full bg-background text-xs" aria-label={t('settings.proxyStrategyLabel')}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -480,7 +481,7 @@ export function ProxyPanel() {
                             </Badge>
                           )}
                           {!route.bound && (
-                            <span className="text-[10px] text-muted-foreground">
+                            <span className="text-[11px] text-muted-foreground">
                               {t('settings.proxyNoBindings')}
                             </span>
                           )}
@@ -546,6 +547,7 @@ export function ProxyPanel() {
         <div className="mb-1 flex items-center gap-2">
           <span className="text-sm font-medium">{t('settings.proxyGlobalTitle')}</span>
           <Switch checked={globalForm.enabled}
+                  aria-label={t('settings.proxyGlobalTitle')}
                   onCheckedChange={(v) => setGlobalForm({...globalForm, enabled: v})} />
         </div>
         <div className="mb-3 text-[11px] leading-4 text-muted-foreground">
@@ -639,7 +641,7 @@ export function ProxyPanel() {
               <Input className="mt-1 h-8 bg-background font-mono text-xs" value={form.url}
                      placeholder="socks5://user:pass@host:10000"
                      onChange={(e) => setForm({...form, url: e.target.value})} />
-              <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+              <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
                 {t('settings.proxyUrlHint')}
               </p>
             </div>
@@ -652,13 +654,14 @@ export function ProxyPanel() {
               </div>
               <div className="flex items-center gap-2 pt-4">
                 <Switch checked={form.enabled}
+                        aria-label={t('settings.proxyInPool')}
                         onCheckedChange={(v) => setForm({...form, enabled: v})} />
                 <span className="text-xs text-muted-foreground">
                   {t('settings.proxyInPool')}
                 </span>
               </div>
             </div>
-            <p className="text-[10px] leading-4 text-muted-foreground">
+            <p className="text-[11px] leading-4 text-muted-foreground">
               {t('settings.proxyWeightHint')}
             </p>
           </DialogBody>
@@ -721,7 +724,7 @@ export function ProxyPanel() {
                 {t('settings.proxyAutoAssignUnit')}
               </span>
             </div>
-            <p className="text-[10px] leading-4 text-muted-foreground">
+            <p className="text-[11px] leading-4 text-muted-foreground">
               {bindLoading
                 ? t('settings.proxyBindingsLoading')
                 : t('settings.proxyAutoAssignHint', {count: String(
@@ -764,7 +767,7 @@ export function ProxyPanel() {
                 </span>
                 <Select value={row.proxy || '__pool__'}
                         onValueChange={(v) => void assign(row, v)}>
-                  <SelectTrigger className="h-8 w-56 rounded-full bg-background text-xs">
+                  <SelectTrigger className="h-8 w-56 rounded-full bg-background text-xs" aria-label={t('settings.proxyBindingFor', {name: row.nickname || row.uid})}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

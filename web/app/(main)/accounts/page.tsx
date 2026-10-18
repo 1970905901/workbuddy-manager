@@ -804,7 +804,7 @@ export default function AccountsPage() {
         </span>
         {fromSnapshot ? (
           <span
-            className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] leading-3 text-muted-foreground"
+            className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] leading-3 text-muted-foreground"
             title={t('accounts.snapshotTitle')}
           >
             {t('accounts.snapshot')}
@@ -897,7 +897,7 @@ export default function AccountsPage() {
         </div>
         {issued != null && (
           <div
-            className="mt-1 text-[10px] text-muted-foreground/70"
+            className="mt-1 text-[11px] text-muted-foreground"
             title={t('accounts.issuedAt', {at: fmtDateTime(issued)})}
           >
             {t('accounts.lastRenewed', {ago: fmtAgo(issued)})}
@@ -1395,7 +1395,7 @@ export default function AccountsPage() {
             <div className="flex shrink-0 items-center gap-1.5">
               <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
               <Select value={sort} onValueChange={(v) => { setSort(v as SortKey); setPage(1); }}>
-                <SelectTrigger className="h-9 w-[150px] bg-background"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-9 w-[150px] bg-background" aria-label={t('accounts.sortLabel')}><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="default">{t('accounts.sortDefault')}</SelectItem>
                   <SelectItem value="remain">{t('accounts.sortRemain')}</SelectItem>
@@ -1425,9 +1425,9 @@ export default function AccountsPage() {
                     >
                       {a.nickname || t('accounts.unnamed')}
                     </div>
-                    <div className="truncate font-mono text-[10px] text-muted-foreground">{a.uid}</div>
+                    <div className="truncate font-mono text-[11px] text-muted-foreground">{a.uid}</div>
                     {a.note ? (
-                      <div className="truncate text-[10px] text-muted-foreground" title={a.note}>
+                      <div className="truncate text-[11px] text-muted-foreground" title={a.note}>
                         {t('accounts.noteLabel')}{a.note}
                       </div>
                     ) : null}
@@ -1480,7 +1480,7 @@ export default function AccountsPage() {
                         {a.nickname || t('accounts.unnamed')}
                       </div>
                       {a.note ? (
-                        <div className="truncate text-[10px] text-muted-foreground" title={a.note}>
+                        <div className="truncate text-[11px] text-muted-foreground" title={a.note}>
                           {t('accounts.noteLabel')}{a.note}
                         </div>
                       ) : null}

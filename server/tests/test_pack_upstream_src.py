@@ -46,6 +46,39 @@ class LfTextTest(unittest.TestCase):
         self.assertEqual(self.mod._lf_text(blob), blob)
 
 
+class SecretExclusionTest(unittest.TestCase):
+    """部署树里的凭据/运行时数据绝不进公开资产（2026-10-18 审计）。"""
+
+    def setUp(self) -> None:
+        self.mod = _load_packer()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _write(self, rel: str, data: bytes = b'x') -> None:
+        p = self.root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+
+    def test_runtime_files_are_excluded(self) -> None:
+        keep = ['server/main.py', 'scripts/task_runner.py', 'config.example.json',
+                'README.md']
+        drop = ['.env', '.env.local', 'users.json', 'manager.db', 'manager.db-wal',
+                'update.log', 'logs/today.log', 'data/state.json',
+                'auths/workbuddy-u.json', 'config.json', '.venv/lib/x.py',
+                'server/__pycache__/main.pyc']
+        for rel in keep + drop:
+            self._write(rel)
+
+        got = {p.relative_to(self.root).as_posix() for p in self.mod._iter_files(self.root)}
+        for rel in keep:
+            self.assertIn(rel, got, f'{rel} 是源码，不该被排除')
+        for rel in drop:
+            self.assertNotIn(rel, got, f'{rel} 是运行时数据/凭据，不能进公开资产')
+
+
 class PackRoundTripTest(unittest.TestCase):
     """真打一次包：脚本落地必须是 LF，二进制原样，可执行位保留。"""
 

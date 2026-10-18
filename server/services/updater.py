@@ -164,6 +164,20 @@ def can_control_docker() -> bool:
     return ok
 
 
+# 代理地址里的 userinfo（`http://user:pass@host`）。日志与状态文件会经
+# /api/system/update-status 返回给登录用户，凭据不能就这么露出去。
+_PROXY_CRED_RE = re.compile(r'(?i)(https?|socks5h?|socks4)://[^/@\s]+@')
+
+
+def redact_credentials(text: str) -> str:
+    """把文本里的 `scheme://user:pass@host` 脱敏成 `scheme://***@host`。
+
+    用于更新日志的出口（读状态、tail 日志）。写入口也在脱敏（update.py 的
+    redact_proxy），这里是**存量文件**的兜底 —— 旧版本已经写进去的日志同样会被洗。
+    """
+    return _PROXY_CRED_RE.sub(lambda m: f'{m.group(1)}://***@', str(text))
+
+
 def read_status() -> dict:
     """读取进度；附上当前版本与是否正在运行。"""
     container = in_container()
@@ -215,6 +229,10 @@ def read_status() -> dict:
 
     if _lock_active():
         status['running'] = True
+    # 出口兜底：旧版本写在 update-status.json 里的日志可能带过凭据，读取时统一洗一遍。
+    logs = status.get('logs')
+    if isinstance(logs, list):
+        status['logs'] = [redact_credentials(x) for x in logs]
     return status
 
 
@@ -592,7 +610,8 @@ def tail_log(lines: int = 80) -> str:
         return ''
     try:
         content = LOG_FILE.read_text(encoding='utf-8', errors='replace').splitlines()
-        return '\n'.join(content[-lines:])
+        tail = '\n'.join(content[-lines:])
+        return redact_credentials(tail)
     except Exception:  # noqa: BLE001
         return ''
 

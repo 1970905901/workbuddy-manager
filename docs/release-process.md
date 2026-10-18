@@ -39,7 +39,9 @@
    存成 `dev/upstream-patches/000N-<名字>.patch`（**含测试文件**，0001/0003 都是这个
    体例；后续补丁只描述自己的增量，不要重述前面几个补丁）；
 3. 验补丁：在一份**未被该补丁改动过**的资产基线上 `git apply --check` 通过、
-   `apply_upstream_patches.py` 报 `applied:`、再跑一次报 `already applied:`；
+   `apply_upstream_patches.py` 报 `applied:`、再跑一次报 `already applied:`。
+   源码树里会生成 `.wb2a-patches.json`（补丁名 → 字节哈希）：后续补丁改写前面补丁的
+   新增行时（0009 → 0010 就是），按内容判定会误报「没打」，清单记录的是事实；
 4. 重打包：`dev/pack_fixed_upstream_src.py <那份树> -o <输出> --stamp '<一句话>'`
    —— 它会按序号依次应用全部补丁（已应用的会跳过），再打成 `workbuddy2api-src.tar.gz`；
 5. 验收：解开新包 `go build ./...` + `go test ./...`（必要时加 `-race`）、
@@ -51,6 +53,12 @@
 **顺序要求**：重打包必须在**当次面板发版之前**完成 —— CI 是从载体 Release 取
 `upstream/` 塞进发布包的，晚一步设备装到的就还是旧上游。面板侧只加字段不算完成：
 旧上游会忽略未知字段，用户会看到「保存成功但没生效」。
+
+**CI 的发布门禁**（2.2.1 起）：发布作业会把随包上游当成一次真实构建来验 ——
+`apply_upstream_patches.py` 必须报「补丁数 = 文件数，且没有现场新应用的」，
+然后 `go build ./...`、`go test ./...`、对**补丁动过的文件**跑 `gofmt -l`，
+并校验 `server/main.py` 的 `version=` 与 tag 一致。以前只跑 Python 测试，
+上游补丁的缺陷可以一路进 Release。
 
 - **`adapt(upstream)` 提交**：有可访问的上游代码要跟时照旧写——把核对过的上游
   提交号写进提交信息，供下次对照。

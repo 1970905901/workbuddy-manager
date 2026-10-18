@@ -142,6 +142,29 @@ def _opener() -> urllib.request.OpenerDirector:
     return urllib.request.build_opener(*handlers)
 
 
+def redact_proxy(url: str) -> str:
+    """把代理地址里的用户名/密码换成 ***。
+
+    为什么必须做：下载失败时的提示会原样拼进 `UPDATE_PROXY`，而它是
+    `http://user:password@host` 形态 —— 这条提示会写进 update-status.json，管理端
+    任何登录用户都能读（状态接口不是管理员专用）。凭据只在部署者的 .env 里，
+    不该因为一次下载失败就泄露给只读账号。
+    """
+    if not url:
+        return ''
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return url
+    if not (parts.username or parts.password):
+        return url
+    host = parts.hostname or ''
+    if parts.port:
+        host = f'{host}:{parts.port}'
+    return urllib.parse.urlunsplit(
+        (parts.scheme, f'***@{host}', parts.path, parts.query, parts.fragment))
+
+
 def _download_hint(exc: BaseException) -> str:
     """下载失败的**可操作**提示：区分「网络到不了 GitHub」与其它原因。"""
     text = str(exc)
@@ -153,8 +176,8 @@ def _download_hint(exc: BaseException) -> str:
     if not looks_like_network:
         return ''
     if UPDATE_PROXY:
-        return (f'（已配置代理 {UPDATE_PROXY}，仍连不上 —— 检查代理地址是否可从本机访问、'
-                f'以及它是否放行 github.com）')
+        return (f'（已配置代理 {redact_proxy(UPDATE_PROXY)}，仍连不上 —— 检查代理地址是否'
+                f'可从本机访问、以及它是否放行 github.com）')
     if urllib.request.getproxies():
         return '（当前使用的是环境变量里的代理；若代理不可用，可用 WB_UPDATE_PROXY 指定一个）'
     return ('（当前网络似乎无法直连 GitHub。容器/内网环境请在 .env 里设置 '
@@ -1452,6 +1475,36 @@ def _cleanup_release_cache() -> None:
         _release_tmp = None
 
 
+def swap_dir(incoming: Path, target: Path) -> None:
+    """用 incoming 目录**原子替换** target（同目录 staging + os.replace）。
+
+    为什么不能 rmtree + copytree：复制中途失败（磁盘满、权限、被杀）会留下不完整的
+    server/，服务再也起不来，而备份不会自动恢复。这里先把新内容完整复制到
+    `target.new`，成功后再交换；交换失败会把旧目录换回去。
+
+    注意：覆盖粒度是**整个目录**，所以调用方给的 incoming 必须是完整的一份
+    （发布包解压出来的那份），不能是增量。
+    """
+    target = Path(target)
+    old = target.with_name(target.name + '.old')
+    staging = target.with_name(target.name + '.new')
+    # 清理上次中断留下的残留（它们已不可信）
+    for stale in (old, staging):
+        shutil.rmtree(stale, ignore_errors=True)
+    shutil.copytree(incoming, staging)
+    had_old = target.exists()
+    if had_old:
+        os.replace(target, old)
+    try:
+        os.replace(staging, target)
+    except Exception:
+        if had_old and old.exists():
+            os.replace(old, target)
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    shutil.rmtree(old, ignore_errors=True)
+
+
 def update_manager(rep: Reporter) -> None:
     rep.step('更新管理端')
 
@@ -1502,17 +1555,15 @@ def update_manager(rep: Reporter) -> None:
         shutil.copytree(INSTALL_DIR / 'web' / 'out', backup / 'web-out', dirs_exist_ok=True)
 
     rep.log('替换 server/')
-    shutil.rmtree(INSTALL_DIR / 'server', ignore_errors=True)
-    shutil.copytree(new_server, INSTALL_DIR / 'server')
+    swap_dir(new_server, INSTALL_DIR / 'server')
     # 清掉旧字节码，避免加载到过期模块
     for pc in (INSTALL_DIR / 'server').rglob('__pycache__'):
         shutil.rmtree(pc, ignore_errors=True)
 
     rep.log('替换 web/out/')
     target_web = INSTALL_DIR / 'web' / 'out'
-    if target_web.is_dir():
-        shutil.rmtree(target_web, ignore_errors=True)
-    shutil.copytree(new_web_out, target_web)
+    target_web.parent.mkdir(parents=True, exist_ok=True)
+    swap_dir(new_web_out, target_web)
 
     # deploy/ 里的脚本**默认随包更新**（`WB_SYNC_DEPLOY=0` 可关掉）。
     #

@@ -20,6 +20,7 @@ class ReleaseNotesTest(unittest.TestCase):
             out = updater._fetch_remote_versions()
         mgr = out['manager']
         self.assertIn('需要配套上游', mgr['release_notes'])
+        self.assertNotIn('upstream-id', mgr['release_notes'], '隐藏标记不该显示给用户')
         self.assertEqual(mgr['upstream_id'], uid)
         self.assertEqual(mgr['published_at'], '2026-10-18T00:00:00Z')
 

@@ -973,7 +973,8 @@ def _fetch_remote_versions() -> dict:
             body = str(rel.get('body') or '')
             # Release 正文：更新前就能看到「本版本需要什么」，不必等装完再翻
             # 本地 CHANGELOG（issue #217）。只回传纯文本，界面不渲染 Markdown。
-            result['manager']['release_notes'] = body[:_RELEASE_NOTES_LIMIT]
+            # 隐藏的 upstream-id 标记不能出现在界面（它是给程序读的）。
+            result['manager']['release_notes'] = _UPSTREAM_ID_RE.sub('', body)[:_RELEASE_NOTES_LIMIT]
             result['manager']['published_at'] = str(rel.get('published_at') or '')
             m_id = _UPSTREAM_ID_RE.search(body)
             result['manager']['upstream_id'] = m_id.group(1) if m_id else ''

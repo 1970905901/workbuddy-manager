@@ -213,12 +213,29 @@ jobs:
 
           ( cd "$TMP" && go build ./... )
           ( cd "$TMP" && go test ./... )
-          # 只检查**补丁动过的文件**：上游自身有历史格式问题，整树 gofmt 会误报
-          FILES=$(grep -h '^+++ b/' dev/upstream-patches/*.patch | sed 's|^+++ b/||' | sort -u)
-          FMT=$(cd "$TMP" && gofmt -l $FILES || true)
-          if [ -n "$FMT" ]; then
-            echo "::error::补丁改动的文件未通过 gofmt：$FMT"
-            exit 1
+          # 只检查**补丁新增的 Go 文件**（整份都是我们写的，格式该由我们负责）。
+          # 改动过的既有文件里夹着上游自己的历史格式问题，整文件 gofmt 会误报；
+          # 而补丁里的 Python 脚本也不能喂给 gofmt。
+          NEWFILES=$(python3 - <<'PY'
+          import glob
+          out = set()
+          for path in glob.glob('dev/upstream-patches/*.patch'):
+              lines = open(path, encoding='utf-8').read().splitlines()
+              for i, line in enumerate(lines):
+                  if (line.startswith('--- /dev/null') and i + 1 < len(lines)
+                          and lines[i + 1].startswith('+++ b/')):
+                      name = lines[i + 1][6:].strip()
+                      if name.endswith('.go'):
+                          out.add(name)
+          print('\n'.join(sorted(out)))
+          PY
+          )
+          if [ -n "$NEWFILES" ]; then
+            FMT=$(cd "$TMP" && gofmt -l $NEWFILES || true)
+            if [ -n "$FMT" ]; then
+              echo "::error::补丁新增的 Go 文件未通过 gofmt：$FMT"
+              exit 1
+            fi
           fi
           rm -rf "$TMP"
           echo "随包上游校验通过（$N 条补丁、build/test/gofmt）"

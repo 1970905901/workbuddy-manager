@@ -593,6 +593,7 @@ export function UpdatePanel() {
                 value={mirrorInput}
                 onChange={(e) => setMirrorInput(e.target.value)}
                 placeholder="https://gh-proxy.com/"
+                aria-label={t('updatePanel.mirrorTitle')}
                 className="h-8 bg-background font-mono text-xs"
                 autoComplete="off"
               />
@@ -617,7 +618,7 @@ export function UpdatePanel() {
                 <button
                   key={p}
                   type="button"
-                  className="rounded-full bg-background px-2 py-0.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
+                  className="rounded-full bg-background px-2 py-0.5 font-mono text-[11px] text-muted-foreground hover:text-foreground"
                   onClick={() => setMirrorInput(p)}
                 >
                   {p}

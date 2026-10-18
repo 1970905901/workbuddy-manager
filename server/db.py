@@ -485,6 +485,8 @@ def connect() -> sqlite3.Connection:
         # 「今日」趋势图会是一片空白，而卡片数字明明有值。用请求日志补一次今天
         # （幂等、只补今天、失败不影响启动）。
         ensure_hourly_today()
+        # 启动时也清一次侧表：低流量部署可能很久攒不够触发周期清理的写入量。
+        _prune_side_tables()
     return _conn
 
 
@@ -1014,8 +1016,38 @@ _REQUEST_LOG_CHECK_EVERY = 2000
 _request_log_writes = 0
 
 
+# 侧表保留策略（审计 2026-10-18）：这几张表以前只增不减。
+#   · usage_hourly：每天 × 每密钥 × 每模型 × 24 行，长期跑会拖慢查询与备份；
+#   · task_logs：采集器持续写入；
+#   · audit_logs：**未认证路径也能写**（失败令牌会留痕），没有上限等于给了一个
+#     填磁盘的入口（请求日志有 90 天保留，审计反而没有）。
+_HOURLY_RETAIN_DAYS = 90
+_TASK_LOG_RETAIN_DAYS = 90
+_AUDIT_LOG_MAX_ROWS = 20000
+
+
+def _prune_side_tables() -> None:
+    """给只增不减的侧表加保留期 / 条数上限。旁路操作，失败绝不影响主流程。"""
+    now = int(time.time())
+    hourly_cutoff = time.strftime('%Y-%m-%d',
+                                  time.localtime(now - _HOURLY_RETAIN_DAYS * 86400))
+    task_cutoff = now - _TASK_LOG_RETAIN_DAYS * 86400
+    for sql, args in (
+        ('DELETE FROM usage_hourly WHERE day < ?', (hourly_cutoff,)),
+        ('DELETE FROM task_logs WHERE ts < ?', (task_cutoff,)),
+        # 保留最新 N 行：删除 id <= 第 N+1 新那行的 id；不足 N 行时子查询为 NULL，
+        # `id <= NULL` 不成立，什么都不会删。
+        ('DELETE FROM audit_logs WHERE id <= (SELECT id FROM audit_logs '
+         'ORDER BY id DESC LIMIT 1 OFFSET ?)', (_AUDIT_LOG_MAX_ROWS,)),
+    ):
+        try:
+            execute(sql, args)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _prune_request_logs() -> None:
-    """按保留期清理请求日志（滚动删除最旧的）。
+    """按保留期清理请求日志（滚动删除最旧的），顺手清理侧表。
 
     旁路操作：任何失败都不能影响写入本身（更不能影响转发）。
     """
@@ -1024,6 +1056,7 @@ def _prune_request_logs() -> None:
         execute('DELETE FROM request_logs WHERE ts < ?', (cutoff,))
     except Exception:  # noqa: BLE001
         pass
+    _prune_side_tables()
 
 
 def add_request_log(**fields: object) -> None:

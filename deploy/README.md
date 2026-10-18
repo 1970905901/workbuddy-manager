@@ -374,13 +374,13 @@ docker compose up -d workbuddy-manager
 ## 五、目录与端口
 
 ```
-管理端   /opt/workbuddy-manager         :7864   仅本机（经反代对外）
+管理端   /opt/workbuddy-manager         :7864   监听 0.0.0.0（经反代对外；建议防火墙收紧）
   ├─ server/        后端代码
   ├─ web/out/       前端静态产物
   ├─ data/          SQLite、users.json（含会话密钥）
   └─ venv/          Python 虚拟环境
 
-上游     /opt/workbuddy2api             :7863   仅本机
+上游     /opt/workbuddy2api             :7863   仅本机（安装脚本把端口映射绑到 127.0.0.1）
   ├─ auths/         账号授权文件（每个账号一个 JSON）
   ├─ data/state.json 账号池状态
   └─ config.json    上游配置（含 api_key）

@@ -64,7 +64,8 @@ class UpstashTestIn(BaseModel):
 
 
 @router.post('/settings/upstash/test')
-async def test_upstash(body: UpstashTestIn, user: dict = Depends(security.require_admin)) -> dict:
+async def test_upstash(body: UpstashTestIn,
+                       user: dict = Depends(security.require_session_admin)) -> dict:
     """探测 Upstash 是否可用（走其 REST 接口 PING）。"""
     ok, message = await wb2api.test_upstash(body.url, body.token)
     return {'ok': ok, 'message': message}

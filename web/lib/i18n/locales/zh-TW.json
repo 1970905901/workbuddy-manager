@@ -286,7 +286,9 @@
     "usageHealthTitle": "用量統計可能沒有正常累計",
     "usageHealthDetail": "今天已有 {n} 次呼叫記錄，但用量統計為 0——統計可能沒有正常寫入。可嘗試「修復統計」；若仍為 0，請查看伺服器日誌。",
     "failedHint": "今日失敗 {n} 次（不計入上方請求數）",
-    "hourlyAgg": "按小時（當日彙總）"
+    "hourlyAgg": "按小時（當日彙總）",
+    "tokensPerSec": "輸出 tok/s",
+    "throughputHint": "依 {n} 筆成功請求的生成耗時估算（僅涵蓋日誌保留期間）"
   },
   "accounts": {
     "proxyLine": "出口線路",

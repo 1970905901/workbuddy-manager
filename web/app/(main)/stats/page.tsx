@@ -494,7 +494,7 @@ export default function StatsPage() {
       </section>
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <BreakdownPanel title={t('stats.byModel')} icon={Cpu} items={byModel} />
+        <BreakdownPanel title={t('stats.byModel')} icon={Cpu} items={byModel} throughput />
         <BreakdownPanel title={t('stats.byKey')} icon={KeyRound} items={byKey} />
       </section>
 
@@ -587,10 +587,13 @@ function BreakdownPanel({
   title,
   icon: Icon,
   items,
+  throughput = false,
 }: {
   title: string;
   icon: typeof Cpu;
   items: UsageBreakdown[];
+  /** 显示「输出 tok/s」列（只有按模型表需要，按密钥没有这项） */
+  throughput?: boolean;
 }) {
   const t = useT();
   const max = Math.max(1, ...items.map((i) => i.prompt_tokens + i.completion_tokens));
@@ -607,6 +610,11 @@ function BreakdownPanel({
               <TableHead className="pl-0 text-[11px] text-muted-foreground">{t('metric.name')}</TableHead>
               <TableHead className="text-[11px] text-muted-foreground">{t('metric.requestsShort')}</TableHead>
               <TableHead className="text-[11px] text-muted-foreground">Token</TableHead>
+              {throughput && (
+                <TableHead className="whitespace-nowrap text-[11px] text-muted-foreground">
+                  {t('stats.tokensPerSec')}
+                </TableHead>
+              )}
               <TableHead className="pr-0 text-[11px] text-muted-foreground">{t('metric.paid')}</TableHead>
             </TableRow>
           </TableHeader>
@@ -632,6 +640,17 @@ function BreakdownPanel({
                   </TableCell>
                   <TableCell className="text-xs tabular-nums">{fmtNumber(it.requests)}</TableCell>
                   <TableCell className="text-xs tabular-nums">{fmtCompact(tokens)}</TableCell>
+                  {throughput && (
+                    <TableCell className="whitespace-nowrap text-xs tabular-nums">
+                      {typeof it.tokens_per_sec === 'number' ? (
+                        <span title={t('stats.throughputHint', {n: it.throughput_samples ?? 0})}>
+                          {it.tokens_per_sec.toFixed(1)}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground/70">—</span>
+                      )}
+                    </TableCell>
+                  )}
                   <TableCell className="pr-0 text-xs tabular-nums">
                     {it.credit > 0 ? fmtCredit(it.credit) : <span className="text-muted-foreground/70">—</span>}
                   </TableCell>

@@ -733,6 +733,13 @@ export interface UsageBreakdown {
   completion_tokens: number;
   /** 该维度实际扣费合计 */
   credit: number;
+  /**
+   * 输出速率（tokens/秒，issue #214）：按「生成耗时 = 总耗时 − 首字耗时」估算。
+   * null / 缺省 = 没有可用样本（日志已清或该模型没成功请求），界面显示「—」。
+   */
+  tokens_per_sec?: number | null;
+  /** 参与速率计算的请求条数（只覆盖日志保留期内的成功请求） */
+  throughput_samples?: number;
 }
 
 export interface StatsSummary {

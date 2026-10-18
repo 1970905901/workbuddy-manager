@@ -310,7 +310,9 @@
     "usageHealthTitle": "Usage statistics may not be accumulating",
     "usageHealthDetail": "There are {n} requests logged today but usage statistics show 0 — the stats may not be written correctly. Try Repair stats; if it stays at 0, check the server logs.",
     "failedHint": "{n} failed today (not counted in the requests above)",
-    "hourlyAgg": "Hourly (today)"
+    "hourlyAgg": "Hourly (today)",
+    "tokensPerSec": "Output tok/s",
+    "throughputHint": "Estimated from {n} successful requests (request-log retention window only)"
   },
   "accounts": {
     "proxyLine": "Exit route",

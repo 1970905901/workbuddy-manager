@@ -204,7 +204,17 @@ bash deploy/verify-release.sh /tmp/vX.Y.Z/workbuddy-manager-vX.Y.Z.tar.gz
 tar tzf /tmp/vX.Y.Z/workbuddy-manager-vX.Y.Z.tar.gz | head -5      # 抽查包结构
 #    再解开看 .version 与 server/main.py 的版本号
 
-# 5) 核对无误后**发布**（草稿对用户不可见，这一步才让版本生效）
+# 5) 给旧版更新器补过渡签名（v1.0.85 及更早仍强制验签；私钥只在维护者本机）
+cd /tmp/vX.Y.Z
+ssh-keygen -Y sign -f ~/.ssh/workbuddy-release -n file workbuddy-manager-vX.Y.Z.tar.gz
+gh release upload vX.Y.Z workbuddy-manager-vX.Y.Z.tar.gz.sig \
+  --repo ithtelab/workbuddy-manager
+#    验一下再继续（用仓库里记录的公钥，或 update.py 里内嵌的那把）：
+#    printf 'release %s\n' "$(cat ~/.ssh/workbuddy-release.pub)" > allowed_signers
+#    ssh-keygen -Y verify -f allowed_signers -I release -n file \
+#      -s workbuddy-manager-vX.Y.Z.tar.gz.sig < workbuddy-manager-vX.Y.Z.tar.gz
+
+# 6) 核对无误后**发布**（草稿对用户不可见，这一步才让版本生效）
 gh release edit vX.Y.Z --repo ithtelab/workbuddy-manager --draft=false
 ```
 
@@ -213,9 +223,10 @@ gh release edit vX.Y.Z --repo ithtelab/workbuddy-manager --draft=false
 直接把 Release 公开发布，产物还在上传时点「一键更新」就会拿到半成品或 404。现在
 用户侧看到的一直是上一个**已发布且产物齐全**的版本。
 
-2026-10-14 起**不再有「维护者离线签名」这一步**：更新器只核对发布页给的 sha256 与
-文件大小（发布说明里就印着那个哈希，工作流自动附上）。为什么取消、还剩下哪些保证、
-老版本怎么过渡，见 [release-signing.md](release-signing.md)。
+2026-10-14 起**新版本更新器不再要求签名**：只核对发布页给的 sha256 与文件大小
+（发布说明里就印着那个哈希，工作流自动附上）。但 `.sig` 仍要按第 5 步手工补 ——
+停在 v1.0.85 及更早的更新器强制验签，漏掉就会让这批老部署无法升级。为什么这样
+过渡、私钥如何保管，见 [release-signing.md](release-signing.md)。
 
 ## 发布包字节的可复现性
 

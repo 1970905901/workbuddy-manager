@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import http.client
@@ -1630,7 +1631,16 @@ def swap_dir(incoming: Path, target: Path) -> None:
     shutil.copytree(incoming, staging)
     had_old = target.exists()
     if had_old:
-        os.replace(target, old)
+        try:
+            os.replace(target, old)
+        except OSError as exc:
+            # 容器重建后 /app/server 位于 overlayfs 的 lowerdir，对目录 rename(2)
+            # 会返回 EXDEV（issue #225）。退化为「复制成备份 + 删除原目录」：
+            # 备份完整，后续换入/回滚逻辑不变。
+            if exc.errno != errno.EXDEV:
+                raise
+            shutil.copytree(target, old)
+            shutil.rmtree(target)
     try:
         os.replace(staging, target)
     except Exception:

@@ -237,7 +237,18 @@ def read_status() -> dict:
     # 出口兜底：旧版本写在 update-status.json 里的日志可能带过凭据，读取时统一洗一遍。
     logs = status.get('logs')
     if isinstance(logs, list):
-        status['logs'] = [redact_credentials(x) for x in logs]
+        # 日志条目是 dict（ts/level/text），不能整体 str()：那会把结构变成
+        # Python repr 字符串，前端读 l.text 全部是 undefined，看起来就是
+        # 「有行数、正文空白」（issue #224）。只洗 text 字段，结构原样保留。
+        cleaned = []
+        for item in logs:
+            if isinstance(item, dict):
+                entry = dict(item)
+                entry['text'] = redact_credentials(str(entry.get('text') or ''))
+                cleaned.append(entry)
+            else:
+                cleaned.append(redact_credentials(str(item)))
+        status['logs'] = cleaned
     return status
 
 
@@ -769,6 +780,66 @@ def _mirror_url(url: str, mirror: str) -> str:
     return f'{mirror}{url}'
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """不让 urllib 自动跟随 302：我们要读 Location 里的 tag（issue #226）。"""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
+
+
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _release_latest_via_redirect(url: str) -> dict:
+    """API 不可用时的回退：读 github.com/.../releases/latest 的 302 Location。
+
+    很多企业网关会 TLS 拦截 api.github.com 并返回 HTML 提示页，但放行
+    github.com 的网页与资产下载。这条路径不消耗 API 配额，只需要一个 tag。
+    """
+    m = re.match(r'https://api\.github\.com/repos/([^/]+)/([^/]+)/releases/latest$', url)
+    if not m:
+        raise ValueError('not a releases/latest API URL')
+    repo = f'{m.group(1)}/{m.group(2)}'
+    page = f'https://github.com/{repo}/releases/latest'
+    req = urllib.request.Request(page, headers={'User-Agent': 'workbuddy-manager-updater'})
+    try:
+        with _NO_REDIRECT_OPENER.open(req, timeout=15):
+            raise RuntimeError('releases/latest 没有返回重定向')
+    except urllib.error.HTTPError as exc:
+        if exc.code not in (301, 302, 303, 307, 308):
+            raise
+        location = str(exc.headers.get('Location') or '')
+        tag = ''
+        marker = '/tag/'
+        if marker in location:
+            tag = location.split(marker, 1)[1].split('?', 1)[0].strip('/')
+        if not tag:
+            raise RuntimeError('releases/latest 的 Location 里没有 tag')
+        return {
+            'tag_name': tag,
+            'html_url': f'https://github.com/{repo}/releases/tag/{tag}',
+            'assets': [],
+            '_fallback': True,   # 没有 assets 信息：assets_ready 保持未知
+        }
+
+
+def _git_remote_head(slug: str) -> str:
+    """API 不可用时用本机 git 问远端 HEAD（自定义上游仓库场景）。"""
+    exe = shutil.which('git')
+    if not exe:
+        return ''
+    try:
+        proc = subprocess.run(
+            [exe, 'ls-remote', f'https://github.com/{slug}.git', 'HEAD'],
+            capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    if proc.returncode != 0:
+        return ''
+    line = (proc.stdout or '').strip().splitlines()
+    return line[0].split()[0] if line and line[0].split() else ''
+
+
 def _gh_get(url: str, timeout: int = 15) -> object:
     """取一个 GitHub JSON；配了镜像就先走镜像，失败再直连（issue #216）。
 
@@ -810,6 +881,12 @@ def _gh_get(url: str, timeout: int = 15) -> object:
             # ValueError 涵盖「镜像返回了非 JSON 错误页」；两类都该换下一条候选
             last = exc
     assert last is not None
+    # 最后一层：API 完全不可用时，用 github.com 的 302 回退拿 tag（issue #226）。
+    if '/releases/latest' in url:
+        try:
+            return _release_latest_via_redirect(url)
+        except Exception:  # noqa: BLE001 —— 回退也失败时保留原始错误
+            pass
     raise last
 
 
@@ -982,7 +1059,8 @@ def _fetch_remote_versions() -> dict:
             # 还没上传产物」也会被 releases/latest 看到（issue #127/#129 是同一类
             # 窗口期问题）—— 在版本检查里就说清，别让用户点下去才拿到 404。
             assets = rel.get('assets') or []
-            result['manager']['assets_ready'] = any(
+            # 302 回退拿不到资产清单：标成未知，不能误报「产物未就位」。
+            result['manager']['assets_ready'] = None if rel.get('_fallback') else any(
                 str((a or {}).get('name') or '').endswith('.tar.gz')
                 for a in assets if isinstance(a, dict))
     except urllib.error.HTTPError as exc:
@@ -1012,9 +1090,19 @@ def _fetch_remote_versions() -> dict:
             if local_full and not head_sha.startswith(local_full) and not local_full.startswith(head_sha):
                 result['upstream'].update(_fetch_upstream_changes(slug, local_full, head_sha))
     except urllib.error.HTTPError as exc:
-        result['upstream']['error'] = f'HTTP {exc.code}'
+        head = _git_remote_head(slug)
+        if head:
+            result['upstream']['latest'] = head[:8]
+            result['upstream']['subject'] = '（API 不可用，经本机 git ls-remote 获取）'
+        else:
+            result['upstream']['error'] = f'HTTP {exc.code}'
     except Exception as exc:  # noqa: BLE001
-        result['upstream']['error'] = str(exc)[:120]
+        head = _git_remote_head(slug)
+        if head:
+            result['upstream']['latest'] = head[:8]
+            result['upstream']['subject'] = '（API 不可用，经本机 git ls-remote 获取）'
+        else:
+            result['upstream']['error'] = str(exc)[:120]
 
     return result
 

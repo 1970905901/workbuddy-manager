@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+from collections import Counter
 from pathlib import Path
 import re
 import subprocess
@@ -42,6 +43,11 @@ def _already_applied(patch: Path, source: Path) -> bool:
     判据只看新增行（上下文行不参与）：对「已经应用」这个判断足够，且不受其它补丁
     漂移影响。空行不判（到处都是）。新增行全为空的新文件补丁按「未应用」处理 ——
     那种情况下真正该走的是正常 apply。
+
+    **按整行、按出现次数比较**，不做子串匹配：补丁里常见的 `}`、`return nil`
+    在文件里到处都有，子串判定会让「只打了一半的补丁」被误认成已应用，随后
+    `git apply` 又被跳过，产物里就少了一段逻辑。次数比较还覆盖了同一个补丁在
+    不同 hunk 插入相同行的情况。
     """
     files = _added_lines(patch)
     if not files:
@@ -51,13 +57,14 @@ def _already_applied(patch: Path, source: Path) -> bool:
         target = source / rel
         if not target.is_file():
             return False
-        text = target.read_text(encoding='utf-8', errors='replace')
+        existing = Counter(target.read_text(encoding='utf-8', errors='replace').splitlines())
         for line in lines:
             if not line.strip():
                 continue
             checked += 1
-            if line not in text:
+            if existing[line] <= 0:
                 return False
+            existing[line] -= 1
     return checked > 0
 
 

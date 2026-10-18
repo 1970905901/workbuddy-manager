@@ -83,6 +83,26 @@ class AlreadyAppliedTest(unittest.TestCase):
         patch = self._patch(_hunk('never-inserted'), '0001-x.patch')
         self.assertFalse(self.mod._already_applied(patch, self.src))
 
+    def test_common_lines_elsewhere_do_not_mask_a_missing_hunk(self) -> None:
+        """`}` 之类的常见行不能算「已应用」的证据。
+
+        旧实现用子串匹配：补丁新增 `}` 与 `inserted`，文件里本来就有 `}`
+        和 `prefix-inserted-suffix`（子串包含 inserted），于是被误判成已应用，
+        `git apply` 被跳过 —— 产物里少了整段逻辑，而且没有任何报错。
+        """
+        self.target.write_bytes(
+            b'line1\n}\nprefix-inserted-suffix\nline2\nline3\nline4\nline5\n')
+        body = ('--- a/pkg/a.go\n'
+                '+++ b/pkg/a.go\n'
+                '@@ -1,5 +1,7 @@\n'
+                ' line1\n'
+                '+}\n'
+                '+inserted\n'
+                ' line2\n line3\n line4\n line5\n')
+        patch = self._patch(body, '0001-x.patch')
+        self.assertFalse(self.mod._already_applied(patch, self.src),
+                         '常见行/子串被当成了「补丁已应用」的证据')
+
     def test_real_patch_dir_parses_added_lines(self) -> None:
         """真补丁也要能被解析出「文件 → 新增行」（判定按这份数据走）。"""
         files = self.mod._added_lines(_ROOT / 'dev' / 'upstream-patches'

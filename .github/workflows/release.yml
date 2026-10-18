@@ -155,8 +155,19 @@ jobs:
           # 不含运行时数据与凭据
           find "$STAGE" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
           echo "stage=$STAGE" >> $GITHUB_OUTPUT
-          tar czf "${STAGE}.tar.gz" "$STAGE"
-          zip -qr "${STAGE}.zip" "$STAGE"
+          # ── 可复现打包 ─────────────────────────────────────────────
+          # 发布说明把 sha256 当作对用户的承诺。普通 `tar czf` 会把文件的
+          # mtime、属主与 gzip 自己的时间戳写进字节流 —— 同一份内容在不同
+          # 时刻/机器上重打会得到不同哈希，「基线摘要 → 产出摘要」的核对
+          # 就失去意义。这里固定排序、mtime、属主，并让 gzip 不写时间戳；
+          # 只要暂存内容一致，tar.gz 的 sha256 就一致。
+          find "$STAGE" -exec touch -h -d @0 {} + 2>/dev/null || true
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+              --format=gnu -cf - "$STAGE" | gzip -n -9 > "${STAGE}.tar.gz"
+          # zip 不是一键更新的载体（updater 只取 tar.gz），但同样去掉
+          # 平台扩展属性，避免无意义的字节差异。
+          rm -f "${STAGE}.zip"
+          zip -qrX "${STAGE}.zip" "$STAGE"
           ls -lh "${STAGE}.tar.gz" "${STAGE}.zip"
           echo "打包完成"
 

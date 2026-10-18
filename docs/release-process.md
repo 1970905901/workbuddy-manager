@@ -217,6 +217,12 @@ gh release edit vX.Y.Z --repo ithtelab/workbuddy-manager --draft=false
 文件大小（发布说明里就印着那个哈希，工作流自动附上）。为什么取消、还剩下哪些保证、
 老版本怎么过渡，见 [release-signing.md](release-signing.md)。
 
+## 发布包字节的可复现性
+
+CI 打包时固定了文件排序、mtime 与属主，并让 gzip 不写时间戳（`gzip -n`）。同一份
+暂存内容重复打包会得到同一个 sha256 —— 这是发布说明里的哈希能作为承诺的前提。
+改打包命令时不要退回普通的 `tar czf`（它会把构建时刻与属主写进字节流）。
+
 ## 发布包里放哪些文档
 
 发布包只装**用户文档**（`docs/` 下的 9 篇：使用指南、功能一览、界面预览、开发与架构、

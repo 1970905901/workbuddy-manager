@@ -139,7 +139,12 @@ export function AddAccountDialog({
       setProxy(data.default || '');
       setRoutesReady(true);
     }).catch((error) => {
-      if (active) setRouteError(errText(error));
+      if (!active) return;
+      setRouteError(errText(error));
+      // 线路表只是一个可选出口：拉取失败不该把「加账号」卡死，否则二维码
+      // 永远不出现、弹窗看起来像在无限加载。退回直连继续扫码，错误仍留在上方。
+      setProxy('');
+      setRoutesReady(true);
     });
     return () => { active = false; };
   }, [open]);

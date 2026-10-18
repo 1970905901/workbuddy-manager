@@ -179,7 +179,7 @@ export default function AccountsPage() {
    * 留着上一组的账号渲染，分组按钮已经写着新分组了、列表却还是旧分组的人——那正是
    * 这个 hook 要消灭的谎话（同 `tasks` 的 `realm`）。
    */
-  const {values, isInitialLoading, isInitialFailed, isRefreshing, reload} =
+  const {values, errors, isInitialLoading, isInitialFailed, isRefreshing, reload} =
     useAsyncAll({pool: () => accountApi.list(groupId)}, [groupId]);
 
   /**
@@ -269,7 +269,13 @@ export default function AccountsPage() {
   //
   // 走 reload（刷新模式）：只把新数据换上去，**不**重走首屏流程——否则骨架会每
   // 30 秒闪一次。分组清单不随心跳刷新（它变的是「有哪些分组」，不是运行时状态）。
-  useHeartbeat(reload, 30000);
+  //
+  // 心跳同时刷**上游状态**（poolStatus）：只刷账号池的话，页头那组「可用 / 冷却」
+  // 会停在进页面那一刻；账号行内的冷却来自 pool 的合并结果，本来就会刷。
+  const heartbeatReload = useCallback(
+    () => { void reload(); void poolStatus.reload(); },
+    [reload, poolStatus.reload]);
+  useHeartbeat(heartbeatReload, 30000);
 
   /** 刷新所有账号的实时积分（直接向腾讯查询，非上游缓存值） */
   const [creditsBusy, setCreditsBusy] = useState(false);
@@ -723,7 +729,9 @@ export default function AccountsPage() {
     const sep = t('common.listSeparator');
     const lines = limited.map((m) => {
       const until = a.rate_limited_models?.find((x) => x.model === m.model)?.until;
-      const at = until ? new Date(until).toLocaleTimeString() : '';
+      // 用统一格式化（跟随界面语言，并带日期）：只给时分秒时跨天就分不清
+      // 「今晚恢复」还是「明晚恢复」。
+      const at = until ? fmtDateTime(Date.parse(until) / 1000) : '';
       // 11102（该账号没有这个模型）与 6004（限流）含义不同：前者等多久都不会好，
       // 该换模型；后者等一会儿就恢复。上游的 reason 前缀就是判据。
       const why = m.reason.startsWith('11102')
@@ -930,8 +938,11 @@ export default function AccountsPage() {
     // manual_disabled（越弄越糟），而真正需要的「启用」根本没有入口。
     const stopped = paused || viaBit || autoDisabled;
     const hasClearableState = a.cooling === true || rateLimitedModels(a).length > 0;
+    // flex-wrap：管理员 + 国内版 + 多分组时这一行最多 10–11 个图标（≈320px），
+    // 手机卡片内容宽度只有 260–300px，不换行会把最右侧的「停用 / 删除」裁掉，
+    // 而且外层 overflow-hidden 让它无法横向滚动。
     return (
-      <div className="flex justify-end gap-1">
+      <div className="flex flex-wrap justify-end gap-1">
         {/* 备注（issue #67）：只动本端库里的一行文本，不碰上游、不重启容器，
             所以放在最前——它是最轻的动作。任何状态下的账号都能写备注：
             停用的号恰恰更容易忘了它是谁。 */}
@@ -1320,6 +1331,11 @@ export default function AccountsPage() {
       {/* 部分取数失败：**不能**升级成整页错误——账号列表本身可能是好的，
           把它顶掉等于因为一个配件坏掉就说「什么都看不到」。逐条说清是哪一份、
           以及它会让界面上的哪个地方失真。 */}
+      {/* 首屏成功之后**刷新失败**：以前完全无声，界面继续显示旧列表，用户以为
+          看到的是最新的。首屏失败另有整页/骨架分支，这里只报「刷新没成功」。 */}
+      {!isInitialLoading && !isInitialFailed && 'pool' in errors && (
+        <LoadError message={t('accounts.refreshFailed')} onRetry={reload} />
+      )}
       {upstreamFailed && (
         <LoadError message={t('accounts.upstreamStatusFailed')} onRetry={reload} />
       )}
@@ -1553,6 +1569,7 @@ export default function AccountsPage() {
                 variant="outline"
                 size="icon"
                 className="h-7 w-7 rounded-md"
+                aria-label={t('common.previousPage')}
                 disabled={paged.page <= 1}
                 onClick={() => setPage(paged.page - 1)}
               >
@@ -1562,6 +1579,7 @@ export default function AccountsPage() {
                 variant="outline"
                 size="icon"
                 className="h-7 w-7 rounded-md"
+                aria-label={t('common.nextPage')}
                 disabled={paged.page >= paged.pages}
                 onClick={() => setPage(paged.page + 1)}
               >

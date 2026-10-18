@@ -1323,7 +1323,13 @@ export default function SettingsLayout({children}: {children: React.ReactNode}) 
               <div className="mb-2 text-sm font-medium">{t('settings.serviceInfo')}</div>
               <div className="space-y-1.5 text-xs">
                 {([
-                  ['listen', t('settings.infoListen'), cfg?.listen ? `127.0.0.1${cfg.listen}` : '—'],
+                  // listen 可能是 ":7863"，也可能是 "127.0.0.1:9000" / "0.0.0.0:8080"：
+                  // 只有以冒号开头时才需要补主机名，否则会出现
+                  // "127.0.0.1127.0.0.1:9000" 这种拼接。
+                  ['listen', t('settings.infoListen'),
+                   cfg?.listen
+                     ? (cfg.listen.startsWith(':') ? `127.0.0.1${cfg.listen}` : cfg.listen)
+                     : '—'],
                   ['apiKey', t('settings.infoApiKey'), cfg?.api_key_masked ? t('settings.infoApiKeySet') : '—'],
                   ['authDir', t('settings.infoAuthDir'), cfg?.auth_dir || '—'],
                 ] as [string, string, string][]).map(([id, k, v]) => (

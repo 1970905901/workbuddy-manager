@@ -143,12 +143,14 @@ export default function SecurityPage() {
    * 顶部一条常驻提示说明有几项没刷上；`config` 单独没取到时，那张卡片如实说
    * 「未取到」而不是显示一个关闭状态的开关。
    */
+  // 审计日志接口要求管理员：只读账号不请求它，否则每次进页面都会多一条
+  // 「部分数据加载失败」——而它本来就不该给 viewer 看。
   const {values, errors, isInitialLoading, isInitialFailed, isRefreshing, reload} = useAsyncAll({
     config: () => securityApi.config(),
     rules: () => securityApi.rules(),
     logs: () => securityApi.logs(200),
-    audit: () => settingsApi.auditLogs(200),
-  }, []);
+    ...(isAdmin ? {audit: () => settingsApi.auditLogs(200)} : {}),
+  }, [isAdmin]);
 
   /** null = 这份数据还没取到（首屏加载中，或它自己失败了）。**不要**用假默认值兜底 */
   const config: SecurityConfig | null = values.config ?? null;

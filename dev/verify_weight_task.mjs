@@ -239,6 +239,23 @@ async function main() {
       step(overflow <= 0, `${width}px 下用量页无横向溢出`, `overflow=${overflow}`);
     }
     await page.screenshot({path: path.join(OUT, 'stats-throughput.png'), fullPage: false});
+
+    // ── 移动端：账号卡片操作区不再溢出（2.4.0 布局守卫）───────────
+    await page.setViewportSize({width: 390, height: 844});
+    await page.goto(`${BASE}/accounts`, {waitUntil: 'domcontentloaded'});
+    await waitForText(page, /演示号/);
+    const mobileOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    step(mobileOverflow <= 0, '390px 下账号页无横向溢出', `overflow=${mobileOverflow}`);
+    // 操作区的最后一个按钮（删除）必须在卡片可视宽度内：换行生效的直接证据
+    const lastActionInCard = await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('button[title]')].pop();
+      if (!btn) return null;
+      const rect = btn.getBoundingClientRect();
+      return rect.right <= window.innerWidth + 1 && rect.left >= -1;
+    });
+    step(lastActionInCard === true, '390px 下最后一个操作按钮可见（操作区已换行）');
+    await page.setViewportSize({width: 1440, height: 900});
   } catch (e) {
     step(false, '脚本异常', String(e && e.message ? e.message : e));
   } finally {

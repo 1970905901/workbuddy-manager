@@ -28,6 +28,7 @@ import {Badge} from '@/components/ui/badge';
 import {Input} from '@/components/ui/input';
 import {Label} from '@/components/ui/label';
 import {ConfirmDialog} from '@/components/common/layout/ConfirmDialog';
+import {LoadError} from '@/components/common/states/LoadError';
 import {RichText} from '@/lib/i18n/rich-text';
 import {useT} from '@/lib/i18n/provider';
 
@@ -83,6 +84,8 @@ export function UpdatePanel() {
   const [clearBusy, setClearBusy] = useState(false);
   const [refInput, setRefInput] = useState('');
   const [refBusy, setRefBusy] = useState(false);
+  /** 四份数据**全部**没取到：版本与「有没有新版本」都不能下结论（服务可能正在重启） */
+  const [loadFailed, setLoadFailed] = useState(false);
   const refInited = useRef(false);
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -104,6 +107,9 @@ export function UpdatePanel() {
       }
       if (vs.status === 'fulfilled') setVersions(vs.value);
       if (ck.status === 'fulfilled') setCheck(ck.value);
+      // 全失败才报错：更新期间服务重启，单份失败是瞬时的；但四份都没到，
+      // 页面上「版本 — / 无更新」就是在编造结论。
+      setLoadFailed([st, vs, ck, pk].every((x) => x.status === 'rejected'));
     } catch {
       /* 更新期间服务重启，忽略瞬时失败 */
     }
@@ -297,6 +303,10 @@ export function UpdatePanel() {
 
   return (
     <div className="space-y-4">
+      {/* 四份数据全没取到：下面的版本号 / 「已是最新」都不可信，先阻断结论。 */}
+      {loadFailed && !running && (
+        <LoadError message={t('updatePanel.loadFailed')} onRetry={load} />
+      )}
       {/* 当前版本 */}
       <div className="rounded-[20px] bg-muted p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

@@ -849,7 +849,9 @@ export default function DashboardPage() {
                       title={t('metric.credits')}
                     >
                       {typeof credOf(a) === 'number'
-                        ? t('metric.creditAmount', {n: fmtNumber(credOf(a))})
+                        ? t('metric.creditAmount',
+                            {n: fmtNumber(credOf(a)),
+                             count: Math.round(credOf(a) as number)})
                         : ''}
                     </span>
                   </div>

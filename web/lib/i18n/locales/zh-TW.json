@@ -24,7 +24,9 @@
     "optional": "選填",
     "refresh": "重新整理",
     "edit": "編輯",
-    "delete": "刪除"
+    "delete": "刪除",
+    "previousPage": "上一頁",
+    "nextPage": "下一頁"
   },
   "state": {
     "loadFailed": "資料載入失敗",
@@ -158,7 +160,8 @@
     "hours": "{n} 小時",
     "days": "{n} 天",
     "permanent": "永久",
-    "yesterday": "昨天"
+    "yesterday": "昨天",
+    "seconds": "{n} 秒"
   },
   "expiry": {
     "expired": "已過期",
@@ -507,7 +510,8 @@
     "groupDeleted": "已刪除分組",
     "sharedInstanceTitle": "這一組和預設分組共用同一套上游實例",
     "sharedInstanceHint": "這一組的帳號檔案由面板單獨管理，而上游只讀預設分組的帳號目錄——所以放進這一組的帳號（包括在這裡新掃碼加的）都會一直顯示「未載入」，轉發與簽到也不會用到它們。要真正把帳號池分開，請在伺服器上再部署一套 workbuddy2api，再把這一組的「上游位址」改成那套實例。",
-    "sharedInstanceAction": "去「設定 → 上游」改位址"
+    "sharedInstanceAction": "去「設定 → 上游」改位址",
+    "refreshFailed": "帳號列表這次重新整理沒成功 —— 下面可能是舊資料，點重試再取一次。"
   },
   "keys": {
     "title": "API 金鑰",
@@ -631,7 +635,8 @@
     "upstreamDefault": "預設上游（不綁定）",
     "upstreamHint": "綁定後，這把密鑰的請求只走該上游的帳號池；未綁定 = 預設上游",
     "upstreamTag": "上游：{name}",
-    "upstreamDisabledSuffix": "（已停用）"
+    "upstreamDisabledSuffix": "（已停用）",
+    "upstreamsFailed": "上游清單沒取到 —— 新建金鑰的「綁定上游」只會顯示預設項，先重試再建立。"
   },
   "upstreams": {
     "title": "多上游（帳號池分組）",
@@ -1166,7 +1171,7 @@
     "ghPlaceholder": "github_pat_... 或 ghp_...",
     "ghDesc": "未認證存取 GitHub 每小時只有 60 次，共用出口（容器/系統代理）很容易被同出口的人打滿，表現就是「偵測更新」失敗。填一個 Token 後配額是 5000 次/小時；只要能讀公共倉庫的 Releases 就好。留空 = 不認證（與現在一致）。",
     "ghTitle": "GitHub Token（版本偵測與一鍵更新）",
-    "staleNote": "下面顯示的是 {at} 的舊結果 —— **不能據此判斷有沒有新版本**。",
+    "staleNote": "下面顯示的是 {at} 的舊結果 —— 不能據此判斷有沒有新版本。",
     "checkFailedHint": "按「重新偵測」再試一次。未認證存取 GitHub 有每小時次數限制，被限流時就會這樣。",
     "checkFailed": "本次偵測沒有取得遠端資料",
     "allUpToDate": "管理端與上游均為最新版本",
@@ -1248,7 +1253,8 @@
     "clearResult": "清除記錄",
     "clearResultTitle": "清除上次更新的結果與日誌？",
     "clearResultDesc": "只會刪掉上次更新的結果與日誌（update.log）。已安裝版本、帳號與設定不受影響；更新進行中無法清除。",
-    "cleared": "已清除上次更新的記錄"
+    "cleared": "已清除上次更新的記錄",
+    "loadFailed": "暫時取不到更新資訊（服務可能正在重新啟動）—— 「目前版本 / 是否有新版本」現在不可信。"
   },
   "pgSync": {
     "loading": "正在讀取備份設定…",
@@ -1452,6 +1458,9 @@
     "proxyRoutesDesc": "代理池：帳號可以各自綁定一條線路，也可以跟隨池策略自動分配（依權重／策略挑，間隔內固定）。面板自己發往騰訊的請求依此出網。",
     "proxyEmpty": "還沒有線路",
     "proxyEmptyDesc": "點右上角「新增線路」建立一條，或在帳號頁給帳號綁定出口。",
+    "proxyNoMatch": "沒有符合的線路",
+    "proxyNoMatchDesc": "沒有名稱、位址或綁定帳號包含「{query}」的線路。",
+    "proxyClearSearch": "清除搜尋",
     "proxyAdd": "新增線路",
     "proxyEdit": "編輯線路",
     "proxyDialogDesc": "名稱供帳號下拉選擇；位址支援 http / https / socks5 / socks5h。",
@@ -1507,6 +1516,7 @@
     "proxyWeightHint": "池內依權重分攤、挑選時權重越大越常被選中（預設 100）。只有一條線路時不必改。",
     "proxyBindingsTitle": "綁定帳號：{name}",
     "proxyBindingsEmpty": "還沒有帳號（先去「帳號」頁新增）",
+    "proxyBindingsLoading": "正在讀取帳號…",
     "proxyAutoAssign": "自動分配",
     "proxyAutoAssignHint": "目前未綁定 {count} 台；先挑沒綁線路的，其次依暱稱穩定排序",
     "proxyAutoAssignRun": "開始分配",
@@ -1745,7 +1755,10 @@
     "本机导入只允许从面板所在的机器访问（请用 http://127.0.0.1:<面板端口> 打开面板）。远程部署请改用「导出配置」手动导入——在服务器上写 cc-switch / ZCode 的配置不会影响你本机的客户端。": "本機匯入只允許從面板所在的機器存取（請用 http://127.0.0.1:<面板連接埠> 開啟面板）。遠端部署請改用「匯出設定」手動匯入——在伺服器上寫 cc-switch / ZCode 的設定不會影響你本機的用戶端。",
     "该接口不接受 API Token，请用会话登录后操作": "該介面不接受 API Token，請以工作階段登入後再操作",
     "任务随机延迟须为 0～60 的整数，账号间隔须为 0～600 的整数": "任務隨機延遲須為 0～60 的整數，帳號間隔須為 0～600 的整數",
-    "账号最短间隔不能大于最长间隔": "帳號最短間隔不能大於最長間隔"
+    "账号最短间隔不能大于最长间隔": "帳號最短間隔不能大於最長間隔",
+    "秒": "秒",
+    "分钟": "分鐘",
+    "请求上限（旧版上游）": "請求上限（舊版上游）"
   },
   "redPacket": {
     "title": "紅包",
@@ -1793,7 +1806,7 @@
     "revokedTag": "已收回",
     "revoke": "收回",
     "confirmRevoke": "收回這個紅包？",
-    "confirmRevokeDesc": "會**刪除**這 {n} 個金鑰 —— 它們會立刻從金鑰列表消失，也不能再用。已經用掉的額度不會退回。",
+    "confirmRevokeDesc": "會刪除這 {n} 個金鑰 —— 它們會立刻從金鑰列表消失，也不能再用。已經用掉的額度不會退回。",
     "revoked": "已收回",
     "revokedDetail": "停用了 {n} 個金鑰",
     "detailTitle": "紅包詳情",

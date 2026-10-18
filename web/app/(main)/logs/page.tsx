@@ -506,6 +506,7 @@ export default function LogsPage() {
               variant="outline"
               size="icon"
               className="h-7 w-7 rounded-md"
+              aria-label={t('common.previousPage')}
               disabled={page <= 1}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
             >
@@ -515,6 +516,7 @@ export default function LogsPage() {
               variant="outline"
               size="icon"
               className="h-7 w-7 rounded-md"
+              aria-label={t('common.nextPage')}
               disabled={page >= pages}
               onClick={() => setPage((p) => Math.min(pages, p + 1))}
             >
@@ -531,7 +533,7 @@ export default function LogsPage() {
             <DrawerDescription>{detail ? fmtDateTime(detail.ts) : ''}</DrawerDescription>
           </DrawerHeader>
           {detail && (
-            <div className="space-y-3 px-4 pb-8 text-xs">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-8 text-xs">
               {([
                 ['ip', t('logs.rowIp'), detail.ip],
                 ['key', t('logs.rowKey'), detail.key_name || '—'],

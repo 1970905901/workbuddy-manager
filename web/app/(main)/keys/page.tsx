@@ -298,7 +298,12 @@ export default function KeysPage() {
       } else {
         const created = await keyApi.create(payload as Partial<ApiKey>);
         notify.ok(t('keys.keyCreated'));
-        if (created.key) setIssued(created.key);
+        if (created.key) {
+          setIssued(created.key);
+          // 上一把密钥的「一键导入」结果不能留到这一把：否则用户会以为新密钥
+          // 已经写入目标、或对着旧备份路径去核对。
+          setImported(null);
+        }
       }
       setFormOpen(false);
       // 刷新失败**不能**把这次创建判成失败：密钥已经建好了。
@@ -541,6 +546,11 @@ export default function KeysPage() {
 
       {/* 刷新时有请求失败：常驻提示，**不**顶掉已经显示出来的内容——那些数据仍然
           是对的，只是可能不是最新的。 */}
+      {/* 上游清单没取到：新建密钥的「绑定上游」只剩默认项，静默建出来会绑错池。
+          单独说清（比笼统的「部分失败」更能指导下一步）。 */}
+      {'upstreams' in errors && (
+        <LoadError message={t('keys.upstreamsFailed')} onRetry={reload} />
+      )}
       {partialFailed && (
         <LoadError message={t('state.partialFailed')} onRetry={reload} />
       )}
@@ -748,7 +758,7 @@ export default function KeysPage() {
         {/* 「暂无密钥」是**一条都没有**的断言，取不到时不能说这句（见上面首屏守卫的
             说明）。`keysFailed` 覆盖「另一份取到了、这一份没有」的部分失败：那时首屏
             守卫不会拦（values 里还有 upstreams），但列表这一块同样不知道有没有。 */}
-        {!keys.length && !keysFailed && (
+        {!shownKeys.length && !keysFailed && (
           <EmptyState
             icon={KeyRound}
             title={t('keys.emptyTitle')}
@@ -1033,7 +1043,8 @@ export default function KeysPage() {
       </Dialog>
 
       {/* 一次性展示新密钥 */}
-      <Dialog open={!!issued} onOpenChange={(v) => !v && (setIssued(null), setExported(null))}>
+      <Dialog open={!!issued}
+              onOpenChange={(v) => { if (!v) { setIssued(null); setExported(null); setImported(null); } }}>
         {/* 尺寸必须**跟着视口走**：这个弹窗里有密钥、有一整段 JSON、还有导入区，
             内容比一般弹窗高得多。之前只写了个 max-w，高度没上限，于是窗口一矮
             （或系统缩放一大）底部就被 `overflow-hidden` 直接裁掉，连「我已保存」

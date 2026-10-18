@@ -299,6 +299,12 @@ jobs:
             echo "::error::发布说明里的产物 sha256 为空，检查 STAGE 变量与打包步骤"
             exit 1
           fi
+          # 包内上游的稳定标识：面板据此判断「这次更新是否需要同步上游」。
+          # 用 HTML 注释写在正文末尾，用户看不到，但 check-update 能读到。
+          if [ -f "$STAGE/upstream/.upstream-id" ]; then
+            echo "" >> RELEASE_NOTES.md
+            echo "<!-- upstream-id: $(cat "$STAGE/upstream/.upstream-id") -->" >> RELEASE_NOTES.md
+          fi
           echo "--- 发布说明预览 ---"
           head -26 RELEASE_NOTES.md
 

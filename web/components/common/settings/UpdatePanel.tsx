@@ -423,6 +423,25 @@ export function UpdatePanel() {
                     <span className="font-medium text-foreground">{check.manager.latest}</span>
                   </div>
                 )}
+                {/* 更新前就能看到 Release 正文：像「需要配套上游」这种要求，
+                    等装完再翻本地 CHANGELOG 已经晚了（issue #217）。 */}
+                {check.manager.has_update && !!check.manager.release_notes && (
+                  <details className="group text-[11px]">
+                    <summary className="cursor-pointer list-none text-foreground/80">
+                      <span className="group-open:hidden">{t('updatePanel.releaseNotes')}</span>
+                      <span className="hidden group-open:inline">{t('updatePanel.hideReleaseNotes')}</span>
+                    </summary>
+                    <pre className="mt-1 max-h-[220px] overflow-auto whitespace-pre-wrap break-all rounded-xl bg-background/60 p-2 font-sans leading-relaxed text-muted-foreground">
+                      {check.manager.release_notes}
+                    </pre>
+                  </details>
+                )}
+                {check.manager.has_update && check.manager.upstream_changed && (
+                  <div className="flex items-start gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>{t('updatePanel.upstreamChanged')}</span>
+                  </div>
+                )}
                 {/* 产物未就位：版本可见但没有 .tar.gz 时点更新只会拿到 404。先说清楚、
                     并把按钮收起来（issue #127/#129 是同一类窗口期问题）。产物上传后
                     最迟五分钟、或点一次刷新就会恢复。 */}
@@ -515,12 +534,20 @@ export function UpdatePanel() {
                   className="rounded-full"
                   // 产物未就位时不放行：这条路必然以 404 收场，让用户点了再失败只是把
                   // 同一条信息换个地方说（见上方提示）。
-                  disabled={!isAdmin || busy || running || check.manager.assets_ready === false}
-                  title={check.manager.assets_ready === false ? t('updatePanel.assetsPending') : undefined}
+                  disabled={!isAdmin || busy || running || check.manager.assets_ready === false
+                    || (!!check.manager.upstream_changed && status?.can_update_upstream === false)}
+                  title={check.manager.assets_ready === false
+                    ? t('updatePanel.assetsPending')
+                    : check.manager.upstream_changed && status?.can_update_upstream === false
+                      ? t('updatePanel.dockerNote')
+                      : undefined}
                   onClick={async () => {
                     setBusy(true);
                     try {
-                      const r = await systemApi.startUpdate('manager');
+                      // 本次发布带了不同的上游：一起更新，避免「面板升了、上游没升」
+                      // 的版本错配（issue #217）。否则维持原来的只换面板。
+                      const r = await systemApi.startUpdate(
+                        check.manager.upstream_changed ? 'both' : 'manager');
                       notify.ok(t('updatePanel.updateStarted'), r.message);
                       await load();
                     } catch (e) {
@@ -531,7 +558,8 @@ export function UpdatePanel() {
                   }}
                 >
                   <DownloadCloud />
-                  {t('updatePanel.updateManager')}
+                  {check.manager.upstream_changed
+                    ? t('updatePanel.updateBoth') : t('updatePanel.updateManager')}
                 </Button>
               )}
             </div>

@@ -1060,6 +1060,12 @@ export interface ManagerVersion extends VersionSide {
    * 只会拿到 404，界面要**先说清楚**。`null` = 未知（旧缓存）。
    */
   assets_ready: boolean | null;
+  /** Release 正文（纯文本，截断）；更新前展示，避免装完才知道配套要求 */
+  release_notes?: string;
+  /** Release 发布时间（ISO 字符串） */
+  published_at?: string;
+  /** 本次发布包内的上游与本机不一致（由 Release 正文里的 upstream-id 判断） */
+  upstream_changed?: boolean;
   repo: string;
 }
 

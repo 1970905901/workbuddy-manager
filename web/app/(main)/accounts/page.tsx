@@ -852,13 +852,19 @@ export default function AccountsPage() {
     || (accounts ?? []).some((a) => a.proxy);   // accounts 可能还没取到
 
   function renderProxy(a: Account) {
-    if (!isAdmin) return <span className="text-xs">{a.proxy || t('accounts.proxyDirect')}</span>;
+    const direct = a.proxy === '__direct__';
+    if (!isAdmin) {
+      return <span className="text-xs">{direct ? t('accounts.proxyDirectOnly') : (a.proxy || t('accounts.proxyDirect'))}</span>;
+    }
     return (
-      <Select value={a.proxy ? `route:${a.proxy}` : 'default'} disabled={proxyRoutes === null || busyFile === a.file}
+      <Select value={direct ? '__direct__' : (a.proxy ? `route:${a.proxy}` : 'default')}
+              disabled={proxyRoutes === null || busyFile === a.file}
               onValueChange={async (value) => {
                 setBusyFile(a.file);
                 try {
-                  await accountApi.setProxy(a.file, value === 'default' ? '' : value.slice(6), groupId);
+                  const next = value === 'default' ? ''
+                    : value === '__direct__' ? '__direct__' : value.slice(6);
+                  await accountApi.setProxy(a.file, next, groupId);
                   notify.ok(t('accounts.proxySaved'));
                   await reloadAll();
                 } catch (error) { notify.err(errText(error)); }
@@ -869,6 +875,7 @@ export default function AccountsPage() {
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="default">{t('accounts.proxyDirect')}</SelectItem>
+          <SelectItem value="__direct__">{t('accounts.proxyDirectOnly')}</SelectItem>
           {a.proxy && !(proxyRoutes ?? []).includes(a.proxy) &&
             <SelectItem value={`route:${a.proxy}`}>{a.proxy} ({t('accounts.proxyMissing')})</SelectItem>}
           {(proxyRoutes ?? []).map((route) => <SelectItem key={route} value={`route:${route}`}>{route}</SelectItem>)}

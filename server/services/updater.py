@@ -846,6 +846,10 @@ def _local_upstream_head(full: bool = False) -> str:
 # 变更列表最多带回多少条提交说明（界面上展示最近若干条即可）
 _CHANGES_LIMIT = 20
 
+# Release 正文最多回传多少字符（界面折叠展示，不做 Markdown 渲染）
+_RELEASE_NOTES_LIMIT = 4000
+_UPSTREAM_ID_RE = re.compile(r'<!--\s*upstream-id:\s*([0-9a-f]{64})\s*-->')
+
 
 def _fetch_upstream_changes(slug: str, base_sha: str, head_sha: str) -> dict:
     """用 compare API 取两者之间的提交数与说明。
@@ -939,11 +943,24 @@ def _write_cache(data: dict) -> None:
         pass
 
 
+def _local_upstream_id() -> str:
+    """本机随包上游的稳定标识（打包时写入 upstream/.upstream-id）。
+
+    老部署没有这个文件时返回空串 = 未知，不能据此判断「上游有变化」。
+    """
+    try:
+        path = _upstream_dir() / '.upstream-id'
+        return path.read_text(encoding='utf-8').strip() if path.is_file() else ''
+    except Exception:  # noqa: BLE001
+        return ''
+
+
 def _fetch_remote_versions() -> dict:
     """向 GitHub 查询管理端与上游的最新版本（不做缓存判断）。"""
     result: dict = {
         'checked_at': int(time.time()),
-        'manager': {'latest': '', 'url': '', 'assets_ready': None, 'error': ''},
+        'manager': {'latest': '', 'url': '', 'assets_ready': None, 'error': '',
+                    'release_notes': '', 'published_at': '', 'upstream_id': ''},
         'upstream': {'latest': '', 'date': '', 'subject': '', 'error': ''},
     }
 
@@ -953,6 +970,13 @@ def _fetch_remote_versions() -> dict:
         if isinstance(rel, dict):
             result['manager']['latest'] = str(rel.get('tag_name') or '')
             result['manager']['url'] = str(rel.get('html_url') or '')
+            body = str(rel.get('body') or '')
+            # Release 正文：更新前就能看到「本版本需要什么」，不必等装完再翻
+            # 本地 CHANGELOG（issue #217）。只回传纯文本，界面不渲染 Markdown。
+            result['manager']['release_notes'] = body[:_RELEASE_NOTES_LIMIT]
+            result['manager']['published_at'] = str(rel.get('published_at') or '')
+            m_id = _UPSTREAM_ID_RE.search(body)
+            result['manager']['upstream_id'] = m_id.group(1) if m_id else ''
             # 产物是否就位：Release 一般由 CI 连产物一起创建，但「手工建了 Release
             # 还没上传产物」也会被 releases/latest 看到（issue #127/#129 是同一类
             # 窗口期问题）—— 在版本检查里就说清，别让用户点下去才拿到 404。
@@ -1025,6 +1049,7 @@ def check_updates(force: bool = False) -> dict:
     # 只有远端确实更新才提示；不能只判「不相等」，否则当前版本领先于缓存里的
     # 旧 latest 时会冒出降级提示（如 v1.0.5 → v1.0.4）
     manager_has = bool(m_latest) and _version_newer(m_latest, current_manager)
+    local_upstream_id = _local_upstream_id()
 
     u_latest = str(cache.get('upstream', {}).get('latest') or '')
     # 有本地 HEAD 时按 commit 比较；否则仅展示远端最新
@@ -1040,6 +1065,13 @@ def check_updates(force: bool = False) -> dict:
             'has_update': manager_has,
             'url': str(cache.get('manager', {}).get('url') or ''),
             'assets_ready': cache.get('manager', {}).get('assets_ready'),
+            'release_notes': str(cache.get('manager', {}).get('release_notes') or ''),
+            'published_at': str(cache.get('manager', {}).get('published_at') or ''),
+            # 远端包内上游 id 与本机不一致：界面把主按钮改成「全部更新」
+            'upstream_changed': bool(
+                cache.get('manager', {}).get('upstream_id')
+                and local_upstream_id
+                and cache['manager']['upstream_id'] != local_upstream_id),
             'error': str(cache.get('manager', {}).get('error') or ''),
             # stale=True：这一节的值来自**上一次**成功检测（本次失败了），
             # 界面不能据此下「已是最新」的结论（issue #204）。

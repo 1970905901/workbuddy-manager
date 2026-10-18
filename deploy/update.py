@@ -1667,6 +1667,28 @@ def update_manager(rep: Reporter) -> None:
     #    `--target both` 时只下一次、只解压一次（上游源码也在包里）。
     new_root, info = _release_root(rep, info)
 
+    # 本次发布带了不同的上游：manager 也不能只换面板，否则「面板升级、上游
+    # 还是旧代码」会静默错配（issue #217）。旧部署没有 .upstream-id，按
+    # 「未知 = 需要同步」处理；想保留自定义上游可设 WB_SYNC_UPSTREAM=0。
+    new_up_id = ''
+    try:
+        new_up_id = (new_root / 'upstream' / '.upstream-id').read_text(
+            encoding='utf-8').strip()
+    except OSError:
+        pass
+    local_up_id = ''
+    try:
+        local_up_id = (UPSTREAM_DIR / '.upstream-id').read_text(encoding='utf-8').strip()
+    except OSError:
+        pass
+    if new_up_id and new_up_id != local_up_id:
+        if os.environ.get('WB_SYNC_UPSTREAM', '').strip() == '0':
+            rep.log('本次发布包含上游更新，但 WB_SYNC_UPSTREAM=0：只更新面板，'
+                    '上游保持现状。', 'warn')
+        else:
+            rep.log(f'本次发布包含上游更新（{new_up_id[:12]}），先同步上游并重建容器…', 'warn')
+            update_upstream(rep)
+
     new_server = new_root / 'server'
     new_web_out = new_root / 'web' / 'out'
     if not (new_server / 'main.py').is_file():

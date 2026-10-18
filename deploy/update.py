@@ -180,8 +180,71 @@ def _download_hint(exc: BaseException) -> str:
                 f'可从本机访问、以及它是否放行 github.com）')
     if urllib.request.getproxies():
         return '（当前使用的是环境变量里的代理；若代理不可用，可用 WB_UPDATE_PROXY 指定一个）'
-    return ('（当前网络似乎无法直连 GitHub。容器/内网环境请在 .env 里设置 '
-            'WB_UPDATE_PROXY=http://<宿主IP>:<端口> 后重试，例如 http://172.17.0.1:7890）')
+    return ('（当前网络似乎无法直连 GitHub。容器/内网环境可在 .env 里设置 '
+            'WB_UPDATE_PROXY=http://<宿主IP>:<端口>，或设置镜像 WB_GITHUB_MIRROR='
+            'https://gh-proxy.com/ 后重试）')
+
+
+# ── GitHub 镜像（issue #216）──────────────────────────────────
+# 国内机器直连 github.com / api.github.com 经常超时。gh-proxy 这类加速服务的
+# 用法是「镜像基址 + 完整原始地址」：
+#   https://gh-proxy.com/https://github.com/<owner>/<repo>/releases/download/...
+# 只在**用户显式配置**时启用：镜像会把请求转给第三方，这是部署者才能决定的事。
+# 同理，GitHub Token 绝不能发给镜像（见 _github_headers）—— 镜像本身也不需要它，
+# 它按自己的出口访问 GitHub。
+_GITHUB_PREFIXES = (
+    'https://github.com/',
+    'https://api.github.com/',
+    'https://codeload.github.com/',
+    'https://raw.githubusercontent.com/',
+    'https://objects.githubusercontent.com/',
+)
+
+
+def normalize_mirror(value: str) -> str:
+    """把镜像基址规范成 `https://host/`（或带子路径的 `https://host/prefix/`）。
+
+    非法值返回空串 = 不启用。带查询串 / 片段的地址直接拒绝：拼出来的地址必须是
+    「基址 + 完整原始地址」，多一个 `?` 或 `#` 都会让后半截被当成镜像自己的参数，
+    结果下载到一个错误页（而错误页的大小检查只在极端情况下才拦得住）。
+    """
+    raw = (value or '').strip()
+    if not raw or any(c.isspace() for c in raw):
+        return ''
+    if '://' not in raw:
+        raw = 'https://' + raw
+    try:
+        parts = urllib.parse.urlsplit(raw)
+    except ValueError:
+        return ''
+    if parts.scheme not in ('http', 'https') or not parts.hostname:
+        return ''
+    # 主机段只允许主机名/IP 字面量会出现的字符：`https://not a url` 这类
+    # 输入会被 urlsplit 当成合法 hostname，拼出来的地址必然连不上。
+    if not re.fullmatch(r'[A-Za-z0-9._\-:\[\]]+', parts.netloc):
+        return ''
+    if parts.query or parts.fragment:
+        return ''
+    return f'{parts.scheme}://{parts.netloc}{parts.path.rstrip("/")}/'
+
+
+GITHUB_MIRROR = normalize_mirror(os.environ.get('WB_GITHUB_MIRROR') or '')
+
+
+def mirror_url(url: str) -> str:
+    """给 GitHub 地址套上镜像前缀；未配置镜像或非 GitHub 地址原样返回。"""
+    if not GITHUB_MIRROR or not url:
+        return url
+    if not url.startswith(_GITHUB_PREFIXES):
+        return url
+    return f'{GITHUB_MIRROR}{url}'
+
+
+def is_mirrored(url: str) -> bool:
+    """这个地址是不是我们拼出来的镜像地址（用来决定「能不能带凭据」）。"""
+    return bool(GITHUB_MIRROR) and bool(url) and url.startswith(GITHUB_MIRROR)
+
+
 UPSTREAM_REPO = os.environ.get('WB_UPSTREAM_REPO') or 'https://github.com/Sliverkiss/workbuddy2api.git'
 SERVICE_NAME = os.environ.get('WB_SERVICE_NAME') or 'workbuddy-web'
 DATA_DIR = Path(os.environ.get('WB_DATA_DIR') or INSTALL_DIR / 'data')
@@ -316,16 +379,22 @@ def run(cmd: list[str], cwd: Path | None = None, rep: Reporter | None = None,
     return proc.returncode, out
 
 
-def _github_headers() -> dict:
+def _github_headers(url: str = '') -> dict:
     """GitHub API 请求头；设了 WB_GITHUB_TOKEN / GITHUB_TOKEN 则认证。
 
     未认证限额只有 60 次/小时/IP，共享出口（TUN/系统代理）极易被同出口的
     其他用户打满，表现为偶发 HTTP 403；认证后为 5000 次/小时。
+
+    **走镜像时绝不带 Authorization**（issue #216）：镜像会把请求转给第三方，
+    凭据不该为了「下载快一点」而离开本机。镜像按自己的出口访问 GitHub，
+    也不需要我们的配额。
     """
     headers = {
         'Accept': 'application/vnd.github+json',
         'User-Agent': 'workbuddy-manager-updater',
     }
+    if is_mirrored(url):
+        return headers
     token = (os.environ.get('WB_GITHUB_TOKEN')
              or os.environ.get('GITHUB_TOKEN') or '').strip()
     if token:
@@ -333,21 +402,55 @@ def _github_headers() -> dict:
     return headers
 
 
-def http_json(url: str, timeout: int = 20) -> dict:
-    req = urllib.request.Request(url, headers=_github_headers())
-    try:
-        with _opener().open(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode('utf-8'))
-    except urllib.error.HTTPError as exc:
-        # 把 GitHub 的可读原因带出来（如 "API rate limit exceeded for x.x.x.x"），
-        # 否则调用方只能打出 "HTTP 403"，无从判断是该等配额重置还是换网络
-        detail = ''
-        try:
-            detail = exc.read().decode('utf-8', errors='replace').strip()[:200]
-        except Exception:  # noqa: BLE001
-            pass
-        raise RuntimeError(f'HTTP {exc.code} {exc.reason} {detail}'.strip()) from exc
+def _url_candidates(url: str, *, use_mirror: bool = True) -> list[str]:
+    """同一个资源的候选地址：镜像优先，直连兜底（未配镜像时只有直连）。"""
+    if not use_mirror:
+        return [url]
+    proxied = mirror_url(url)
+    return [proxied, url] if proxied != url else [url]
 
+
+# 最近一次「镜像失败、已回退直连」的原因。由 http_json 写入、_fetch_release_info
+# 读出并记进日志 —— 不记的话，用户明明配了镜像却看到直连被限流的 403，
+# 会以为镜像压根没生效。用模块级变量而不是给 http_json 加 rep 参数：
+# 测试里有 `http_json = lambda url, timeout=20: …` 这类替换，加参数会破坏它们。
+_mirror_fallback_error = ''
+
+
+def http_json(url: str, timeout: int = 20, *, use_mirror: bool = True) -> dict:
+    """取一个 JSON；配了镜像就先走镜像，失败再直连（issue #216）。
+
+    **404 不回退**：镜像明确回答「仓库/Release 不存在」时，直连只会给出同一个
+    结论（或更糟 —— 被限流的 403 把真实原因盖掉）。403/429 这类「换条路可能
+    就好」的才值得回退。
+    """
+    global _mirror_fallback_error
+    _mirror_fallback_error = ''
+    candidates = _url_candidates(url, use_mirror=use_mirror)
+    last: BaseException | None = None
+    for idx, candidate in enumerate(candidates):
+        req = urllib.request.Request(candidate, headers=_github_headers(candidate))
+        try:
+            with _opener().open(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode('utf-8'))
+        except urllib.error.HTTPError as exc:
+            # 把 GitHub 的可读原因带出来（如 "API rate limit exceeded for x.x.x.x"），
+            # 否则调用方只能打出 "HTTP 403"，无从判断是该等配额重置还是换网络
+            detail = ''
+            try:
+                detail = exc.read().decode('utf-8', errors='replace').strip()[:200]
+            except Exception:  # noqa: BLE001
+                pass
+            last = RuntimeError(f'HTTP {exc.code} {exc.reason} {detail}'.strip())
+            if exc.code == 404:
+                raise last from exc
+        except (OSError, http.client.HTTPException, ValueError) as exc:
+            # 网络不通、镜像返回的不是 JSON（错误页 / 维护公告）都算这条候选失败
+            last = exc
+        if idx + 1 < len(candidates):
+            _mirror_fallback_error = str(last)
+    assert last is not None
+    raise last
 
 
 def download(url: str, dest: Path, rep: Reporter) -> None:
@@ -358,8 +461,30 @@ def download(url: str, dest: Path, rep: Reporter) -> None:
     对偶发网络失败（连接重置、响应中断、5xx）自动重试一次：更新是低频操作，
     多花一次下载的代价远小于整次更新失败；4xx 是请求本身的问题（版本不存在、
     地址错），重试不会变好，直接抛出。
+
+    配了 GitHub 镜像（issue #216）时先走镜像，失败再直连 —— 镜像本身也会抖动，
+    不能因为它挂了就让整个更新不可用。
     """
-    rep.log(f'下载 {url}')
+    last: BaseException | None = None
+    for candidate in _url_candidates(url):
+        if candidate != url:
+            rep.log(f'经镜像下载 {candidate}')
+        else:
+            rep.log(f'下载 {candidate}')
+        last = _download_once(candidate, dest, rep)
+        if last is None:
+            return
+        if candidate != url:
+            rep.log(f'镜像下载失败（{last}），回退直连…', 'warn')
+    assert last is not None
+    # 只有「看着像网络到不了 GitHub」的失败才补一句可操作提示；其余照原样抛出，
+    # 保持调用方与既有测试看到的异常类型不变。
+    hint = _download_hint(last)
+    raise RuntimeError(f'{last} {hint}') if hint else last
+
+
+def _download_once(url: str, dest: Path, rep: Reporter) -> BaseException | None:
+    """下载到 dest；成功返回 None，失败返回最后一次异常（不抛出）。"""
     last: BaseException | None = None
     for attempt in (1, 2):
         try:
@@ -370,7 +495,7 @@ def download(url: str, dest: Path, rep: Reporter) -> None:
             break
         except urllib.error.HTTPError as exc:
             if exc.code < 500:
-                raise
+                return exc
             last = exc
         except (OSError, http.client.HTTPException) as exc:
             # URLError/socket.timeout/ConnectionReset 等都是 OSError 子类；
@@ -379,15 +504,14 @@ def download(url: str, dest: Path, rep: Reporter) -> None:
         if attempt == 1:
             rep.log(f'下载失败（{last}），自动重试一次…', 'warn')
     if last is not None:
-        # 只有「看着像网络到不了 GitHub」的失败才补一句可操作提示；其余照原样抛出，
-        # 保持调用方与既有测试看到的异常类型不变。
-        hint = _download_hint(last)
-        raise RuntimeError(f'{last} {hint}') if hint else last
+        return last
 
     size = dest.stat().st_size
     rep.log(f'  完成（{size / 1024 / 1024:.2f} MB）')
     if size < 100_000:
-        raise RuntimeError('下载内容异常偏小，可能是错误页面')
+        # 镜像有时会返回一张「仓库不存在 / 请稍后再试」的 HTML 错误页
+        return RuntimeError('下载内容异常偏小，可能是错误页面')
+    return None
 
 
 def _sha256_of(path: Path) -> str:
@@ -1233,6 +1357,11 @@ def fetch_release_via_redirect(latest_url: str | None = None,
     用户打满，表现为偶发 HTTP 403；而 github.com 的网页端与
     releases/download 资产下载不受该配额限制。资产名按发布惯例
     workbuddy-manager-<tag>.tar.gz 构造（历届 Release 均如此）。
+
+    **这条路径不走镜像**（issue #216）：gh-proxy 一类加速服务只放行资源下载，
+    对网页正文直接返回 403（「Web page content is not allowed」）。镜像模式下的
+    主路径是 API（镜像可代理 api.github.com），只有 API 完全不可用时才落到这里，
+    那时直连 github.com 本来就是唯一选择。
     """
     repo = repo or MANAGER_REPO
     req = urllib.request.Request(
@@ -1417,6 +1546,13 @@ def _fetch_release_info(rep: Reporter) -> dict:
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
                 f'获取 Release 失败：API {api_error}；回退路径也失败：{exc}') from exc
+    elif GITHUB_MIRROR:
+        # 经 API 拿到的是**原始** GitHub 地址；下载时由 download() 自己决定
+        # 先走镜像还是直连，这里不改写（保持 info 与发布页一致，便于人工核对）。
+        if _mirror_fallback_error:
+            rep.log(f'镜像不可用（{_mirror_fallback_error}），本次版本检测走的是直连', 'warn')
+        else:
+            rep.log(f'已配置 GitHub 镜像：{GITHUB_MIRROR}（下载失败会自动回退直连）')
 
     _release_info_cache = info
     return info
@@ -1805,6 +1941,9 @@ def main() -> int:
 
     rep = Reporter(args.target)
     rep.log(f'开始更新（target={args.target}，安装目录={INSTALL_DIR}）')
+    if GITHUB_MIRROR:
+        # 日志里出现它很重要：镜像不是「隐身加速」，用户得知道流量经过了第三方
+        rep.log(f'GitHub 镜像已启用：{GITHUB_MIRROR}（凭据不会发给镜像）')
     if PROXY_UNSUPPORTED:
         # 只报协议名，不回显地址（里面通常带用户名与密码）
         scheme = PROXY_UNSUPPORTED.split('://', 1)[0]

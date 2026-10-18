@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -568,6 +569,11 @@ def start_update(target: str, *, source: str = 'release') -> tuple[bool, str]:
     _token = github_token()
     if _token:
         env['WB_GITHUB_TOKEN'] = _token
+    # GitHub 镜像（issue #216）：面板设置里配了才传，空值不覆盖部署环境里的那份。
+    # 走镜像时更新器**不会**把 Token 发出去（见 deploy/update.py 的 _github_headers）。
+    _mirror = github_mirror()
+    if _mirror:
+        env['WB_GITHUB_MIRROR'] = _mirror
     env.update({
         'WB_INSTALL_DIR': str(config.ROOT),
         'WB_UPSTREAM_DIR': str(_upstream_dir()),
@@ -703,19 +709,108 @@ def mask_token(token: str) -> str:
     return ('*' * max(0, len(t) - 4)) + t[-4:]
 
 
+# ── GitHub 镜像（issue #216）──────────────────────────────────
+# 国内机器直连 github.com / api.github.com 常超时。gh-proxy 这类服务的用法是
+# 「镜像基址 + 完整原始地址」：
+#   https://gh-proxy.com/https://api.github.com/repos/<owner>/<repo>/releases/latest
+# 只在部署者显式配置时启用 —— 镜像会把请求转给第三方。
+GITHUB_PREFIXES = (
+    'https://github.com/',
+    'https://api.github.com/',
+    'https://codeload.github.com/',
+    'https://raw.githubusercontent.com/',
+    'https://objects.githubusercontent.com/',
+)
+
+
+def normalize_mirror(value: object) -> str:
+    """把镜像基址规范成 `https://host/`；非法值返回空串（= 不启用）。
+
+    带查询串 / 片段的地址直接拒绝：拼出来的必须是「基址 + 完整原始地址」，
+    多一个 `?` 或 `#` 会让后半截被当成镜像自己的参数。
+    """
+    raw = str(value or '').strip()
+    if not raw or any(c.isspace() for c in raw):
+        return ''
+    if '://' not in raw:
+        raw = 'https://' + raw
+    try:
+        parts = urllib.parse.urlsplit(raw)
+    except ValueError:
+        return ''
+    if parts.scheme not in ('http', 'https') or not parts.hostname:
+        return ''
+    # 主机段只允许主机名/IP 字面量会出现的字符：`https://not a url` 这类
+    # 输入会被 urlsplit 当成合法 hostname，拼出来的地址必然连不上。
+    if not re.fullmatch(r'[A-Za-z0-9._\-:\[\]]+', parts.netloc):
+        return ''
+    if parts.query or parts.fragment:
+        return ''
+    return f'{parts.scheme}://{parts.netloc}{parts.path.rstrip("/")}/'
+
+
+def stored_github_mirror() -> str:
+    """面板设置里存的镜像；空串 = 没设过。"""
+    try:
+        return str(db.get_setting('github_mirror', '') or '').strip()
+    except Exception:  # noqa: BLE001
+        return ''
+
+
+def github_mirror() -> str:
+    """生效的镜像基址：面板设置优先，其次环境变量 WB_GITHUB_MIRROR。"""
+    return normalize_mirror(stored_github_mirror()
+                            or os.environ.get('WB_GITHUB_MIRROR') or '')
+
+
+def _mirror_url(url: str, mirror: str) -> str:
+    if not mirror or not url.startswith(GITHUB_PREFIXES):
+        return url
+    return f'{mirror}{url}'
+
+
 def _gh_get(url: str, timeout: int = 15) -> object:
-    headers = {
-        'Accept': 'application/vnd.github+json',
-        'User-Agent': 'workbuddy-manager-updater',
-    }
-    # 认证后 5000 次/小时；未认证仅 60 次/小时/IP——共享出口（TUN/系统代理）
-    # 极易被同出口的其他用户打满，表现为设置页"检测更新"偶发 403
-    token = github_token()
-    if token:
-        headers['Authorization'] = f'Bearer {token}'
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode('utf-8'))
+    """取一个 GitHub JSON；配了镜像就先走镜像，失败再直连（issue #216）。
+
+    **走镜像时不带 Authorization**：镜像会把请求转给第三方，Token 不该为了
+    提速离开本机；镜像按自己的出口访问 GitHub，也不需要我们的配额。
+
+    **404 不回退**：镜像明确回答「仓库/Release 不存在」时，直连只会给出同一个
+    结论（或更糟 —— 被限流的 403 把真实原因盖掉）。实测踩到过：上游仓库已删除，
+    镜像返回 404，回退直连拿到 403，界面于是显示「HTTP 403」，看起来像限流，
+    与事实（仓库没了）完全无关。403/429 这类「可能换条路就好」的才值得回退。
+    """
+    mirror = github_mirror()
+    candidates = [url]
+    mirrored = _mirror_url(url, mirror)
+    if mirrored != url:
+        candidates.insert(0, mirrored)
+
+    last: BaseException | None = None
+    for candidate in candidates:
+        headers = {
+            'Accept': 'application/vnd.github+json',
+            'User-Agent': 'workbuddy-manager-updater',
+        }
+        # 认证后 5000 次/小时；未认证仅 60 次/小时/IP——共享出口（TUN/系统代理）
+        # 极易被同出口的其他用户打满，表现为设置页"检测更新"偶发 403
+        if candidate == url:
+            token = github_token()
+            if token:
+                headers['Authorization'] = f'Bearer {token}'
+        req = urllib.request.Request(candidate, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode('utf-8'))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise
+            last = exc
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            # ValueError 涵盖「镜像返回了非 JSON 错误页」；两类都该换下一条候选
+            last = exc
+    assert last is not None
+    raise last
 
 
 def _upstream_api_slug() -> str:
@@ -870,8 +965,13 @@ def _fetch_remote_versions() -> dict:
     except Exception as exc:  # noqa: BLE001
         result['manager']['error'] = str(exc)[:120]
 
-    # 上游：默认分支最新提交
+    # 上游源码随发布包分发后，默认公开仓库已下线；无需再请求它做版本检测。
+    # 用户若配置了自己的 WB_UPSTREAM_REPO / WB_UPSTREAM_API_REPO，仍照常检查。
     slug = _upstream_api_slug()
+    if slug == 'Sliverkiss/workbuddy2api':
+        return result
+
+    # 上游：默认分支最新提交
     try:
         repo = _gh_get(f'https://api.github.com/repos/{slug}')
         branch = (repo.get('default_branch') if isinstance(repo, dict) else '') or 'master'

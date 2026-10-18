@@ -1122,6 +1122,22 @@ export interface Versions {
   upstream_dir: string;
 }
 
+/**
+ * GitHub 镜像（issue #216）：国内机器直连 GitHub 超时时，用加速服务取
+ * Release 元信息与发布包。走镜像时**不会**发送 GitHub Token。
+ */
+export interface GithubMirror {
+  /** 生效的镜像基址（规范化后带尾斜杠）；空串 = 直连 */
+  mirror: string;
+  /** 面板里存的值（空 = 没设过） */
+  stored: string;
+  /** 部署时注入的环境变量 WB_GITHUB_MIRROR */
+  env_mirror: string;
+  source: 'panel' | 'env' | '';
+  /** 界面上的快捷选项 */
+  presets: string[];
+}
+
 /** 更新日志中的一条（level 1 = 二级缩进，作为子项展示） */
 export interface ChangelogItem {
   level: number;

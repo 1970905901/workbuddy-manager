@@ -26,6 +26,7 @@ import type {
   CreditExpiry,
   CreditsMeta,
   DrawResult,
+  GithubMirror,
   IpAccessLog,
   IpRule,
   KeyExportResult,
@@ -711,6 +712,10 @@ export const systemApi = {
     '/api/settings/github-token'),
   saveGithubToken: (token: string) =>
     put<{configured: boolean; masked: string}>('/api/settings/github-token', {token}),
+  /** GitHub 镜像（issue #216）：国内机器用它加速版本检测与发布包下载 */
+  githubMirror: () => get<GithubMirror>('/api/settings/github-mirror'),
+  saveGithubMirror: (mirror: string) =>
+    put<GithubMirror>('/api/settings/github-mirror', {mirror}),
   /**
    * 启动一键更新；target: manager | upstream | both。
    * source='uploaded' 用面板里已上传的离线升级包（issue #153）。

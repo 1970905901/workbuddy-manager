@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   DownloadCloud,
+  Globe,
   Loader2,
   Pin,
   RefreshCw,
@@ -19,7 +20,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import {errText, systemApi} from '@/lib/api';
-import type {UpdateCheck, UpdatePackageMeta, UpdateStatus} from '@/lib/types';
+import type {GithubMirror, UpdateCheck, UpdatePackageMeta, UpdateStatus} from '@/lib/types';
 import {notify} from '@/lib/toast';
 import {fmtAgo, fmtDateTime} from '@/lib/format';
 import {useAuth} from '@/lib/auth-context';
@@ -166,9 +167,17 @@ export function UpdatePanel() {
   const [gh, setGh] = useState<{configured: boolean; masked: string; source: 'env' | 'panel' | ''} | null>(null);
   const [ghInput, setGhInput] = useState('');
   const [ghBusy, setGhBusy] = useState(false);
+  /** GitHub 镜像（issue #216）：国内机器直连超时时用它加速 */
+  const [mirror, setMirror] = useState<GithubMirror | null>(null);
+  const [mirrorInput, setMirrorInput] = useState('');
+  const [mirrorBusy, setMirrorBusy] = useState(false);
 
   useEffect(() => {
     systemApi.githubToken().then(setGh).catch(() => setGh(null));
+    systemApi.githubMirror().then((m) => {
+      setMirror(m);
+      setMirrorInput(m.stored);
+    }).catch(() => setMirror(null));
   }, []);
 
   const saveGh = useCallback(async (token: string) => {
@@ -183,6 +192,22 @@ export function UpdatePanel() {
       notify.err(errText(e));
     } finally {
       setGhBusy(false);
+    }
+  }, [t]);
+
+  const saveMirror = useCallback(async (value: string) => {
+    setMirrorBusy(true);
+    try {
+      const r = await systemApi.saveGithubMirror(value);
+      setMirror(r);
+      setMirrorInput(r.stored);
+      notify.ok(value.trim() ? t('updatePanel.mirrorSaved') : t('updatePanel.mirrorCleared'));
+      // 换了取版本的路子，缓存里的结论就不作数了
+      await recheck();
+    } catch (e) {
+      notify.err(errText(e));
+    } finally {
+      setMirrorBusy(false);
     }
   }, [t]);
 
@@ -551,6 +576,61 @@ export function UpdatePanel() {
               : gh?.configured
                 ? t('updatePanel.ghConfigured', {masked: gh.masked})
                 : t('updatePanel.ghNotSet')}
+          </div>
+        </div>
+      )}
+
+      {/* GitHub 镜像（issue #216）：国内机器直连 GitHub 超时时用它加速 */}
+      {isAdmin && (
+        <div className="rounded-[20px] bg-muted p-4">
+          <div className="mb-1 text-xs font-medium">{t('updatePanel.mirrorTitle')}</div>
+          <div className="mb-2 text-[11px] leading-4 text-muted-foreground">
+            <RichText text={t('updatePanel.mirrorDesc')} />
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-[16rem] flex-1 space-y-1">
+              <Input
+                value={mirrorInput}
+                onChange={(e) => setMirrorInput(e.target.value)}
+                placeholder="https://gh-proxy.com/"
+                className="h-8 bg-background font-mono text-xs"
+                autoComplete="off"
+              />
+            </div>
+            <Button size="sm" className="rounded-full" disabled={mirrorBusy}
+                    onClick={() => void saveMirror(mirrorInput.trim())}>
+              <Globe className="h-3.5 w-3.5" />
+              {t('common.save')}
+            </Button>
+            {mirror?.stored && (
+              <Button size="sm" variant="outline" className="rounded-full" disabled={mirrorBusy}
+                      onClick={() => void saveMirror('')}>
+                <Trash2 className="h-3.5 w-3.5" />
+                {t('updatePanel.mirrorClear')}
+              </Button>
+            )}
+          </div>
+          {!!mirror?.presets?.length && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] text-muted-foreground">{t('updatePanel.mirrorPresets')}</span>
+              {mirror.presets.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  className="rounded-full bg-background px-2 py-0.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
+                  onClick={() => setMirrorInput(p)}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="mt-2 text-[11px] leading-4 text-muted-foreground">
+            {mirror?.source === 'env'
+              ? t('updatePanel.mirrorFromEnv', {value: mirror.env_mirror})
+              : mirror?.mirror
+                ? t('updatePanel.mirrorActive', {value: mirror.mirror})
+                : t('updatePanel.mirrorNone')}
           </div>
         </div>
       )}

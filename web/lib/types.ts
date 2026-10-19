@@ -847,6 +847,11 @@ export interface UpstreamConfig {
   listen?: string;
   api_key_masked?: string;
   auth_dir?: string;
+  /**
+   * 思考内容兜底（上游 config.json 的**顶层**键，不在 features 段里）：
+   * 正文为空时把推理原文当正文下发。缺省按上游默认 true 回显。
+   */
+  reasoning_as_content?: boolean;
   /** 上游 config.json 中声明的 auth_dir，与管理端不一致时出现 */
   upstream_auth_dir?: string;
   schedule?: Record<string, unknown>;

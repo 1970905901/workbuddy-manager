@@ -1341,6 +1341,10 @@ def load_upstream_config() -> dict:
         # 界面确实要用的非敏感顶层项
         k: cfg[k] for k in ('listen',) if k in cfg
     }
+    # 顶层布尔开关：思考通道兜底（上游 reasoning_as_content）。
+    # 缺省时按上游默认值 True 回显 —— 让界面显示「实际生效的状态」，
+    # 而不是「文件里有没有这个键」。
+    view['reasoning_as_content'] = cfg.get('reasoning_as_content', True) is not False
     # 只放界面能编辑的那些配置段（与 save_upstream_config 的允许集合一致）
     for section in _EDITABLE_SECTIONS:
         if section in cfg and isinstance(cfg[section], dict):
@@ -1687,6 +1691,17 @@ def save_upstream_config(patch: dict) -> dict:
             if clean.pop('__delete__', False):
                 cfg[field].pop('device_token', None)
             cfg[field].update(clean)
+
+    # 顶层布尔开关：思考通道兜底（reasoning_as_content）。
+    # 它不是任何配置段的成员，所以不能走上面的段循环 —— 塞进段里会写到
+    # config.json 的错误路径，上游读到的是未知键，改了等于没改。
+    if 'reasoning_as_content' in patch:
+        raw = patch['reasoning_as_content']
+        # 只接受真布尔：字符串 "false" 在 Go 侧解析 json 时是类型错误，
+        # 会让上游启动失败，这里必须拦住而不是"尽量转换"。
+        if not isinstance(raw, bool):
+            raise ValueError('reasoning_as_content 必须是 true 或 false')
+        cfg['reasoning_as_content'] = raw
 
     if isinstance(patch.get('schedule'), dict) and any(
         key in patch['schedule'] for key in ('account_delay_min_seconds', 'account_delay_max_seconds')

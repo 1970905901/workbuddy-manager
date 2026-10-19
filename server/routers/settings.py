@@ -31,10 +31,17 @@ async def save_upstream(body: dict, request: Request,
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    # 改上游配置会影响全部账号行为，且可能写入 device_token/base 等敏感项，必须留痕
+    # 改上游配置会影响全部账号行为，且可能写入 device_token/base 等敏感项，必须留痕。
+    # 顶层标量（如 reasoning_as_content）不属于任何段，单独列出——否则日志会显示
+    # 「段=」，看起来像什么都没改。
+    sections = ','.join(sorted(k for k in body if isinstance(body.get(k), dict)))
+    top_keys = ','.join(sorted(
+        f'{k}={body[k]}' for k in body
+        if not isinstance(body.get(k), dict) and k != 'listen'
+    ))
     security.audit(user, 'update_upstream', '',
-                   f"段={','.join(sorted(k for k in body if isinstance(body.get(k), dict)))}"
-                   f'；来源 {client_ip(request)}')
+                   f'段={sections}' + (f'；顶层={top_keys}' if top_keys else '')
+                   + f'；来源 {client_ip(request)}')
     # 上游只在启动时读 config.json，保存后自动重载使其生效
     result['reload_scheduled'] = reload.request_restart()
     # 无法自动重载上游时（没装 docker / 容器没挂 docker.sock），要如实告诉

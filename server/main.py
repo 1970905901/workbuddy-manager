@@ -34,6 +34,12 @@ async def lifespan(app: FastAPI):
     config.ensure_dirs()
     db.connect()
     security.load_users()  # 首次启动会自动生成管理员并打印一次密码
+    weak_admins = security.weak_admin_passwords()
+    if weak_admins:
+        # 不拒绝启动：用户需要先进面板改密码。日志必须足够醒目。
+        logger.error('管理员仍在使用常见弱口令：%s。请立即在「设置 → 管理用户」'
+                     '中修改；本次生产事故的入口就是 admin123。',
+                     '、'.join(weak_admins))
     _warn_if_exposed()
     # 给「抽奖码」这一列上线之前建的红包补码（幂等）：没有码就拼不出抽奖链接，
     # 等于那些红包只能自己发 key、没法让大家抽。
@@ -91,7 +97,7 @@ def _warn_if_exposed() -> None:
 
 app = FastAPI(
     title='WorkBuddy Manager',
-    version='2.7.0',
+    version='2.7.1',
     lifespan=lifespan,
     # 生产环境默认关闭交互式文档与 OpenAPI 描述：
     # 它们会把管理接口全貌（路径、参数、结构）暴露给任何未认证访问者，

@@ -201,6 +201,9 @@ export function UpdatePanel() {
       setCheck(r);
       if (r.has_any) {
         notify.warn(t('updatePanel.newVersion'), describeAvailable(r, t));
+      } else if (r.manager.upstream_changed) {
+        notify.warn(t('updatePanel.upstreamNoticeTitle'),
+          t('updatePanel.upstreamOnlyChanged'));
       } else if (r.manager.error || r.upstream.error) {
         // **失败不能说成结论**（issue #204）：403/网络失败时旧缓存会回退，
         // 以前这里照样弹「已是最新」，把一次失败说成了"没有新版本"。
@@ -456,6 +459,16 @@ export function UpdatePanel() {
         </div>
       )}
 
+      {check && !check.manager.has_update && check.manager.upstream_changed
+        && !status?.running && (
+        <div className="flex items-start gap-2 rounded-[20px] border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+          <span className="text-[11px] leading-4 text-muted-foreground">
+            {t('updatePanel.upstreamOnlyChanged')}
+          </span>
+        </div>
+      )}
+
       {/* GitHub Token（issue #205）：未认证 60 次/小时/IP，共享出口很容易被限流 */}
       {isAdmin && (
         <div className="rounded-[20px] bg-muted p-4">
@@ -573,7 +586,8 @@ export function UpdatePanel() {
         </div>
       )}
 
-      {check && !check.has_any && !check.manager.error && !status?.running && (
+      {check && !check.has_any && !check.manager.upstream_changed
+        && !check.manager.error && !status?.running && (
         <div className="flex items-center gap-2 rounded-[20px] border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
           <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
           <span className="text-xs">{t('updatePanel.allUpToDate')}</span>

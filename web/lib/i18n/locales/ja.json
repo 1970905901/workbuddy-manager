@@ -1202,6 +1202,8 @@
     "releaseNotes": "今回の更新内容",
     "hideReleaseNotes": "更新内容を閉じる",
     "upstreamChanged": "このリリースには上流の更新も含まれます。「すべて更新」で上流を同期し、コンテナを再構築します。",
+    "upstreamOnlyChanged": "同梱上流がこのマシンと一致しません。下の「すべて更新」で同期してコンテナを再ビルドしてください。",
+    "upstreamNoticeTitle": "同梱上流の同期が必要です",
     "updateBoth": "すべて更新（上流を含む）",
     "updateUpstream": "同梱上流を同期",
     "updateManager": "管理端を更新",

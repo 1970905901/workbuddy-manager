@@ -1229,6 +1229,8 @@
     "releaseNotes": "What's new",
     "hideReleaseNotes": "Hide release notes",
     "upstreamChanged": "This release also includes upstream changes; “Update everything” syncs them and rebuilds the upstream container.",
+    "upstreamOnlyChanged": "The bundled upstream differs from this machine; use “Update everything” below to sync it and rebuild the container.",
+    "upstreamNoticeTitle": "Bundled upstream needs syncing",
     "updateBoth": "Update everything (incl. upstream)",
     "updateUpstream": "Sync bundled upstream",
     "updateManager": "Update manager",

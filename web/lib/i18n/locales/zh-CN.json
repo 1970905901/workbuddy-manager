@@ -1202,6 +1202,8 @@
     "releaseNotes": "本次更新内容",
     "hideReleaseNotes": "收起更新内容",
     "upstreamChanged": "这个版本还包含上游更新，点「全部更新」会一起同步上游并重建容器。",
+    "upstreamOnlyChanged": "随包上游与本机不一致，点下方「全部更新」同步上游并重建容器。",
+    "upstreamNoticeTitle": "随包上游需要同步",
     "updateBoth": "全部更新（含上游）",
     "updateUpstream": "同步随包上游",
     "updateManager": "更新管理端",

@@ -1202,6 +1202,8 @@
     "releaseNotes": "이번 업데이트 내용",
     "hideReleaseNotes": "업데이트 내용 접기",
     "upstreamChanged": "이 릴리스에는 업스트림 변경도 포함되어 있습니다. “모두 업데이트”를 누르면 업스트림을 동기화하고 컨테이너를 재빌드합니다.",
+    "upstreamOnlyChanged": "동봉 업스트림이 이 장비와 다릅니다. 아래 “모두 업데이트”로 동기화하고 컨테이너를 다시 빌드하세요.",
+    "upstreamNoticeTitle": "동봉 업스트림 동기화 필요",
     "updateBoth": "모두 업데이트(업스트림 포함)",
     "updateUpstream": "동봉 업스트림 동기화",
     "updateManager": "관리 콘솔 업데이트",

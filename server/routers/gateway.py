@@ -270,6 +270,9 @@ def _rate_limited(key: dict) -> tuple[bool, int]:
 _AUTH_FAIL_REASONS = frozenset({'missing_key', 'invalid_key'})
 _AUTH_LOG_WINDOW = 60
 _AUTH_LOG_PER_WINDOW = max(1, _env_int('WB_AUTH_LOG_PER_MIN', 5))
+# 计数表的硬上限。大量不同来源 IP 在同一个窗口内各打一次时，过期清理
+# 永远不会被触发（每个 state 的计数都停在 1）；必须有一个不依赖计数的上限。
+_AUTH_LOG_MAX_ENTRIES = 8192
 # (ip, reason) -> [窗口起点, 本窗次数, 是否已写过汇总行]
 _auth_log_state: dict[tuple[str, str], list] = {}
 _auth_log_lock = threading.Lock()
@@ -285,12 +288,13 @@ def _auth_log_verdict(ip: str, reason: str) -> str:
             state = [now, 0, False]
             _auth_log_state[key] = state
         state[1] += 1
-        # 顺手清理过期项，避免被大量来源 IP 撑爆字典（键里含外部输入的 IP）。
-        # 只在真的很大、且不是每次请求都做时才扫（扫描本身是 O(n)）。
-        if len(_auth_log_state) > 4096 and state[1] % 64 == 0:
-            for k in [k for k, v in _auth_log_state.items()
-                      if now - v[0] >= _AUTH_LOG_WINDOW]:
-                _auth_log_state.pop(k, None)
+        # 硬上限：大量不同来源 IP 各打一次时，按 state 计数的过期清理永远
+        # 轮不到（每个计数都是 1），字典会无界增长。超过上限就清空重来——
+        # 宁可少采样一小段，也不让外部输入把进程内存撑爆。
+        if len(_auth_log_state) > _AUTH_LOG_MAX_ENTRIES:
+            _auth_log_state.clear()
+            state = [now, 1, False]
+            _auth_log_state[key] = state
         if state[1] <= _AUTH_LOG_PER_WINDOW:
             return 'log'
         if not state[2]:

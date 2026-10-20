@@ -108,6 +108,13 @@ class AuthLogSamplingTest(unittest.TestCase):
         (args, kwargs), = self.calls
         self.assertEqual(args[:4], ('8.8.4.4', '/v1/chat/completions', True, 'UA'))
 
+    def test_state_is_bounded_for_many_distinct_ips(self) -> None:
+        """大量 IP 各打一次时，按 state 计数的过期清理永远轮不到，必须有硬上限。"""
+        for i in range(gateway._AUTH_LOG_MAX_ENTRIES + 100):
+            self._log(ip=f'10.0.{i // 256}.{i % 256}')
+        self.assertLessEqual(len(gateway._auth_log_state),
+                             gateway._AUTH_LOG_MAX_ENTRIES)
+
 
 class AuthLogSamplingWindowTest(unittest.TestCase):
     """时间推进用假时钟，避免真的等一分钟。"""

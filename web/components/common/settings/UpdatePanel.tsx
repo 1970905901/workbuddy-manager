@@ -119,8 +119,9 @@ export function UpdatePanel() {
   /**
    * 上传离线升级包。
    *
-   * 前端只做「选文件 + 可选填发布页摘要」，核对与落盘都在服务端：填了摘要就当场
-   * 比对（不一致直接拒收），没填就只验证结构，界面把这一点写清楚。
+   * 前端只做「选文件 + 填发布页摘要」，核对与落盘都在服务端。摘要在服务端默认
+   * 必填：安装包会在本机执行包内代码，没有摘要就无法确认包没被替换；确实拿不到
+   * 摘要的离线环境由服务端显式设置 WB_ALLOW_UNVERIFIED_PACKAGE=1 放行。
    */
   const uploadPackage = useCallback(async (file: File) => {
     setPkgBusy(true);

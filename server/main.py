@@ -19,7 +19,7 @@ from .routers import (
     pgsync as pgsync_router, redpackets, responses, security as security_router,
     proxies, settings, stats, system, tokens, upstreams,
 )
-from .services import accountlog, dailyplan, pgsync, renew, tasklog, taskrun
+from .services import accountlog, cooling, dailyplan, pgsync, renew, tasklog, taskrun
 
 # 最早时刻把标准输出/错误钉成 UTF-8：Windows 中文区域默认按 cp936 编码，日志里
 # 一旦出现 emoji（账号昵称就可能带）就会抛 UnicodeEncodeError —— 与「成长任务」
@@ -55,6 +55,9 @@ async def lifespan(app: FastAPI):
     # token 自动续期（issue #40）：上游只在「保活时刻」与「有流量时」刷新，
     # 长期闲置的账号会一路走到过期。这里按剩余寿命巡检补齐那个空档。
     renew.start_scheduler()
+    # 强制冷却到期清理：manual_disabled 不会随 until 自动消失，不清理会让
+    # 定时冷却变成永久停用（见 services/cooling.py）。
+    cooling.start_scheduler()
     # 每日任务计划（签到 / 领奖 / 做任务）：管理端自己的调度器，把「一键」动作
     # 做成每天到点自动跑。默认全部关闭，由用户在账号页显式开启（full 有风控风险）。
     dailyplan.start_scheduler()
@@ -70,6 +73,7 @@ async def lifespan(app: FastAPI):
         tasklog.stop_collector()
         taskrun.stop_scheduler()
         renew.stop_scheduler()
+        cooling.stop_scheduler()
         dailyplan.stop_scheduler()
         accountlog.stop_collector()
         pgsync.stop_scheduler()

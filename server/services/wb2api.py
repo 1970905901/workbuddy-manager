@@ -746,7 +746,22 @@ def _atomic_write_json(path: Path, payload: dict) -> None:
 # 强制冷却写入 manual_reason 的固定前缀。上游签到只会重置 until，不会碰
 # manual_disabled；到期清理必须能区分「强制冷却留下的状态位」与用户主动
 # 摘流量的 manual_disabled，只清前者。
+#
+# **到期时间必须从 manual_reason 里读，不能读 until**：上游签到
+# `ReenableIfCredits` 会把 until 重置成零值（这正是 manual_disabled 要防的
+# 那条路径），拿 until 判断到期会在签到后立刻把冷却清掉，等于白做。
 _MANUAL_COOLING_PREFIX = '手动冷却'
+_MANUAL_COOLING_RE = re.compile(
+    r'^' + re.escape(_MANUAL_COOLING_PREFIX) + r'（到期 ([^）]+)）：'
+)
+
+
+def _manual_cooling_reason(until: str, reason: str) -> str:
+    return f'{_MANUAL_COOLING_PREFIX}（到期 {until}）：{reason}'
+
+
+def _is_manual_cooling_reason(value: object) -> bool:
+    return bool(_MANUAL_COOLING_RE.match(str(value or '')))
 
 
 def _cooling_until(value: object) -> datetime.datetime | None:
@@ -813,8 +828,10 @@ def clear_account_cooling_state(uid: str) -> dict:
     account['consecutive_fails'] = 0
     if not bool(account.get('disabled')):
         account.pop('reason', None)
-    # 若此前因手动冷却/冻结而置位了 manual_disabled，一并解除
-    if account.get('manual_disabled') and any(k in str(account.get('manual_reason') or '') for k in ('冷却', 'cooling', '冻结', 'freeze')):
+    # 只解除本模块写入的强制冷却标记；用户手动摘流量时的 reason 即使碰巧
+    # 含“冷却”也不该被一次“清除冷却”动作顺手解掉。
+    if account.get('manual_disabled') and _is_manual_cooling_reason(
+            account.get('manual_reason')):
         account['manual_disabled'] = False
         account.pop('manual_reason', None)
 
@@ -884,9 +901,8 @@ def set_account_cooling_state(
     # 前缀 + 到期时间：既让 clear/force_clear 能识别这是冷却留下的状态位，
     # 也让到期清理不必依赖 until 之外的隐含约定。永久冷却的 until 是 2099，
     # 清理任务不会碰它。
-    account['manual_reason'] = (
-        f"{_MANUAL_COOLING_PREFIX}（到期 {account['until']}）：{account['reason']}"
-    )
+    account['manual_reason'] = _manual_cooling_reason(
+        str(account['until']), account['reason'])
 
     _atomic_write_json(path, state)
     return {
@@ -971,9 +987,8 @@ async def force_clear_account_cooling(uid: str) -> tuple[bool, str, dict]:
         if account is None:
             return False, '该账号不在上游账号池里', {}
         has_freeze = bool(
-            account.get('manual_disabled') and any(
-                k in str(account.get('manual_reason') or '') for k in ('冷却', 'cooling', '冻结', 'freeze')
-            )
+            account.get('manual_disabled')
+            and _is_manual_cooling_reason(account.get('manual_reason'))
         )
         if not account.get('cooling') and not account.get('rate_limited_models') and not has_freeze:
             return True, '该账号当前没有冷却或模型级限流状态，无需清除', {}
@@ -1003,9 +1018,8 @@ async def force_clear_account_cooling(uid: str) -> tuple[bool, str, dict]:
     if account is None:
         return False, '状态已清除且上游已启动，但账号尚未进入账号池', changed
     has_freeze_after = bool(
-        account.get('manual_disabled') and any(
-            k in str(account.get('manual_reason') or '') for k in ('冷却', 'cooling', '冻结', 'freeze')
-        )
+        account.get('manual_disabled')
+        and _is_manual_cooling_reason(account.get('manual_reason'))
     )
     if account.get('cooling') or account.get('rate_limited_models') or has_freeze_after:
         return False, '上游已重启，但冷却或模型限流状态仍然存在', changed
@@ -1058,8 +1072,10 @@ def expired_manual_cooling_uids(
 ) -> list[str]:
     """列出「强制冷却已到期」的 uid。
 
-    只认 `manual_reason` 以 `_MANUAL_COOLING_PREFIX` 开头、且 `until` 已过的
-    条目；用户自己摘流量的 manual_disabled（reason 是别的文案）不在范围内。
+    只认 `manual_reason` 里带 `_MANUAL_COOLING_PREFIX` 标记、且**标记中的
+    到期时间**已过的条目；用户自己摘流量的 manual_disabled（reason 是别的
+    文案）不在范围内。到期时间必须取自 reason，不能取 `until` —— 上游签到
+    会把 until 重置成零值，拿它判断会在签到后立刻清掉冷却。
     读不到/解析不了 state.json 时返回空列表，让调用方下一轮再试。
     """
     try:
@@ -1078,9 +1094,10 @@ def expired_manual_cooling_uids(
         if not isinstance(account, dict) or not account.get('manual_disabled'):
             continue
         reason = str(account.get('manual_reason') or '')
-        if not reason.startswith(_MANUAL_COOLING_PREFIX):
+        match = _MANUAL_COOLING_RE.match(reason)
+        if not match:
             continue
-        until = _cooling_until(account.get('until'))
+        until = _cooling_until(match.group(1))
         if until is not None and until <= current:
             expired.append(str(uid))
     return sorted(expired)

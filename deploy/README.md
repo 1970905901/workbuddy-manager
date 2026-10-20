@@ -37,15 +37,12 @@ sudo bash deploy/install.sh          # 自动使用包内的 upstream/
 sudo UPSTREAM_SRC=/opt/workbuddy2api bash deploy/install.sh
 sudo UPSTREAM_SRC=/path/to/workbuddy2api-<版本>.tar.gz bash deploy/install.sh
 
-# 2) 从你自己的 git 副本拉
-sudo UPSTREAM_REPO=https://github.com/<你的账号>/workbuddy2api.git bash deploy/install.sh
-
-# 3) 上游已手工装好，只想装面板
+# 2) 上游已手工装好，只想装面板
 sudo bash deploy/install.sh --skip-upstream
 ```
 
-优先级：`UPSTREAM_SRC` → 发布包自带的 `upstream/` → 目标目录里已有的 git 仓库
-→ `UPSTREAM_REPO` 克隆。`UPSTREAM_DIR` 默认 `/opt/workbuddy2api`。
+优先级：`UPSTREAM_SRC` → 发布包自带的 `upstream/` → 目标目录里已有的完整源码。
+上游已由本项目维护，不再从外部 git 仓库克隆。`UPSTREAM_DIR` 默认 `/opt/workbuddy2api`。
 
 ### 以后怎么更新上游代码
 
@@ -128,7 +125,6 @@ sudo APP_DIR=/opt/wbm \
 |---|---|---|
 | `APP_DIR` | `/opt/workbuddy-manager` | 管理端目录 |
 | `UPSTREAM_DIR` | `/opt/workbuddy2api` | 上游目录 |
-| `UPSTREAM_REPO` | 上游 GitHub 地址 | 上游仓库地址 |
 | `MANAGER_PORT` | `7864` | 管理端端口 |
 | `UPSTREAM_PORT` | `7863` | 上游端口 |
 | `PY` | `/usr/bin/python3` | Python 解释器路径 |

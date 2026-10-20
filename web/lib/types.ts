@@ -1023,8 +1023,8 @@ export interface UpdateStatus {
   version: string;
   updater_found: boolean;
   upstream_dir: string;
-  /** 当前固定的上游版本（空 = 跟随分支） */
-  upstream_ref?: string;
+  /** 随包上游的稳定标识（空 = 旧部署没有 .upstream-id） */
+  upstream_id?: string;
   started_at?: number;
   finished_at?: number | null;
   duration?: number;

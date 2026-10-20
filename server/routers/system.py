@@ -26,15 +26,6 @@ class UpdateIn(BaseModel):
     source: str = Field('release', pattern='^(release|uploaded)$')
 
 
-class UpstreamRefIn(BaseModel):
-    """固定上游版本。ref 为空串表示取消固定、恢复跟随分支。
-
-    这里只做长度限制，格式校验交给 updater.set_upstream_ref——
-    该值最终会作为 git 参数，必须严格校验（不能接受任意字符串）。
-    """
-    ref: str = Field(max_length=80)
-
-
 @router.get('/update-status')
 def update_status(user: dict = Depends(security.current_user)) -> dict:
     """更新进度与当前版本（含运行中的日志）。"""
@@ -180,16 +171,6 @@ def delete_update_package(user: dict = Depends(security.require_session_admin)) 
     updater.clear_package()
     security.audit(user, 'delete_update_package', '', '清掉离线升级包')
     return {'ok': True}
-
-
-@router.post('/upstream-ref')
-def set_upstream_ref(body: UpstreamRefIn, user: dict = Depends(security.require_session_admin)) -> dict:
-    """固定上游版本（或取消固定），用于上游某提交自身有问题时回退。"""
-    try:
-        ref = updater.set_upstream_ref(body.ref)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {'ok': True, 'upstream_ref': ref}
 
 
 @router.delete('/update-status')

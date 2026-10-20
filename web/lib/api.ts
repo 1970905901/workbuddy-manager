@@ -735,9 +735,6 @@ export const systemApi = {
     return post<UpdatePackageMeta>('/api/system/update-package', body);
   },
   deletePackage: () => del<{ok: boolean}>('/api/system/update-package'),
-  /** 固定上游版本（空串 = 取消固定，恢复跟随分支） */
-  setUpstreamRef: (ref: string) =>
-    post<{ok: boolean; upstream_ref: string}>('/api/system/upstream-ref', {ref}),
   /**
    * 清除上次更新的结果与日志（issue #105）。
    *

@@ -18,7 +18,7 @@ from an unapproved channel"}`（与请求规模、tools、stream、max_tokens �
 3. `handler.go` 把这次 11102 当 `ErrModelBlocked`，写 6 小时 (账号,模型) 负缓存；
 4. 逐个账号重复，16 个 cn 号被打满 → 对外 503 `no_healthy_account`。
 
-补丁只解决第 1 步（指纹本身）；第 2–4 步是**放大器**，由 `0017` 修掉——回退路径上的
+补丁只解决第 1 步（指纹本身）；第 2–4 步是**放大器**，由 `0018` 修掉——回退路径上的
 11102 只说明「这条路径没有这个模型」，不构成「该账号被禁」。两者独立，也都要有：
 指纹是黑名单，永远补不完，只要放大器还在，别的句式照样能把整池打穿。见
 `docs/console-fallback-model-missing.md`。
@@ -64,7 +64,7 @@ You are a helpful AI assistant.
 
 ## 补丁与资产
 
-实现位于 `dev/upstream-patches/0016-dsh-system-prompt-fingerprint.patch`，基线
+实现位于 `dev/upstream-patches/0017-dsh-system-prompt-fingerprint.patch`，基线
 （现行的 `upstream-src` 资产）：
 
 ```text
@@ -72,11 +72,11 @@ size:   902658
 sha256: c477fc58286bfe05d0e6570227910b614222b8009f472b8c28955f3425fe2b0c
 ```
 
-重打包后的资产（含 `0017`；312 个文件，**待维护者上传**）：
+重打包后的资产（含 `0018`；312 个文件，**待维护者上传**）：
 
 ```text
-size:   907160
-sha256: 0a094c29bfb460f3f9fa9207e3bc7ae070c8e49490ea1cc92af39c1096fff307
+size:   907152
+sha256: b16c081dc70bb1608846190640401f4fac375f4a9f78e2643d062790abf1da8a
 ```
 
 > 合并本补丁后**必须**先重打包并覆盖上传 `upstream-src` 载体 Release，再发面板版本：

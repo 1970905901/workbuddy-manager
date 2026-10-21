@@ -1,8 +1,17 @@
-diff --git a/internal/upstream/sanitize.go b/internal/upstream/sanitize.go
-index 4577630..2b16a2a 100644
 --- a/internal/upstream/sanitize.go
 +++ b/internal/upstream/sanitize.go
-@@ -78,6 +78,40 @@ var sanitizeRewrites = [][2]string{
+@@ -18,8 +18,8 @@
+ 	"You are Claude Code",        // 身份句（截断前缀即可命中）
+ 	"Main branch (",              // 注入指令句（截断前缀即可命中）
+ 	"You are a coding agent running in the Codex CLI", // Codex instructions 首段（截断前缀即可命中）
+-	"github.com/anthropics/",     // 反馈句里的 Anthropic 仓库链接
+-	"11128",                      // 上游反探测：裸数字错误码
++	"github.com/anthropics/",                          // 反馈句里的 Anthropic 仓库链接
++	"11128",                                           // 上游反探测：裸数字错误码
+ }
+ 
+ // sanitizeHdrRe 剥离层：header 键名即触发（与值无关），整段删除。
+@@ -78,6 +78,40 @@
  	},
  }
  
@@ -43,7 +52,7 @@ index 4577630..2b16a2a 100644
  // sanitizeText 单段文本净化：预检不中 → 返回原串（零分配）。
  func sanitizeText(text string) string {
  	if !hasFingerprint(text) {
-@@ -86,6 +120,7 @@ func sanitizeText(text string) string {
+@@ -86,6 +120,7 @@
  	for _, rw := range sanitizeRewrites {
  		text = strings.ReplaceAll(text, rw[0], rw[1])
  	}
@@ -51,25 +60,34 @@ index 4577630..2b16a2a 100644
  	if sanitizeHdrRe.MatchString(text) {
  		text = sanitizeHdrRe.ReplaceAllString(text, "")
  	}
-@@ -112,6 +147,13 @@ func hasFingerprint(text string) bool {
+@@ -111,6 +146,13 @@
+ 		if strings.Contains(text, f) {
  			return true
  		}
- 	}
++	}
 +	// DSH 句式指纹（见 sanitizeDshRe）：**必须在这里也认**，否则预检直接
 +	// return，改写层根本执行不到——issue #246 里上游 hub 版的补丁就踩过这个
 +	// 坑：特征表是大小写敏感的 strings.Contains，而原文是 "AI agent"，
 +	// 补进去的小写串永远命中不到。本正则自带 (?i)，不依赖原文大小写。
 +	if sanitizeDshRe.MatchString(text) {
 +		return true
-+	}
+ 	}
  	return sanitizeBareHdrRe.MatchString(text)
  }
- 
-diff --git a/internal/upstream/sanitize_test.go b/internal/upstream/sanitize_test.go
-index e4c97d7..ec8bee6 100644
 --- a/internal/upstream/sanitize_test.go
 +++ b/internal/upstream/sanitize_test.go
-@@ -495,3 +495,98 @@ func TestSanitizeLiteralByteExact(t *testing.T) {
+@@ -431,8 +431,8 @@
+ 		"You are Claude Code",        // 身份句（截断前缀即可命中）
+ 		"Main branch (",              // 注入指令句（截断前缀即可命中）
+ 		"You are a coding agent running in the Codex CLI", // Codex instructions 首段（截断前缀即可命中）
+-		"github.com/anthropics/",     // 反馈句里的 Anthropic 仓库链接
+-		"11128",                      // 上游反探测：裸数字错误码
++		"github.com/anthropics/",                          // 反馈句里的 Anthropic 仓库链接
++		"11128",                                           // 上游反探测：裸数字错误码
+ 	}
+ 	if len(sanitizeFeatures) != len(features) {
+ 		t.Fatalf("sanitizeFeatures 项数=%d want %d（快照与实现不同步，见测试头注释的验证步骤）", len(sanitizeFeatures), len(features))
+@@ -495,3 +495,98 @@
  		}
  	}
  }

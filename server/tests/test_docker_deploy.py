@@ -894,6 +894,48 @@ class MultiArchImageTest(unittest.TestCase):
         self.assertIn('exit 1', df, '不支持的架构应直接失败')
 
 
+class UpstreamImagePublishTest(unittest.TestCase):
+    """上游也要发预构建镜像（issue #241）。
+
+    用户要跑多个上游容器做分组时，此前只能自己 build：先拉 golang 基础镜像、
+    再编译 6 个二进制；国内网络常常卡在拉基础镜像那一步。于是有人拿第三方镜像
+    顶上，面板随即提示「与项目上游源码不一致」—— 版本漂移的根源不是用户乱来，
+    而是官方没给可拉的东西。
+
+    这里锁住三条：镜像必须**用发布包里那份源码**构建（= 资产 + 全部补丁，
+    与面板随包上游同源，否则又制造一次漂移）、必须多架构、取不到上游源码时
+    不能把发版带红。
+    """
+
+    def setUp(self) -> None:
+        self.wf = (_ROOT / '.github' / 'workflows' / 'release.yml').read_text(encoding='utf-8')
+
+    def _step(self, name: str) -> str:
+        start = self.wf.find('- name: ' + name)
+        self.assertGreater(start, 0, f'找不到步骤：{name}')
+        end = self.wf.find('- name:', start + 10)
+        return self.wf[start:end if end > 0 else len(self.wf)]
+
+    def test_builds_from_the_bundled_upstream(self) -> None:
+        block = self._step('构建并推送上游镜像')
+        self.assertIn('${{ steps.pack.outputs.stage }}/upstream', block,
+                      '上游镜像必须用发布包里那份源码构建，否则会与面板随包上游漂移')
+        self.assertIn('workbuddy2api', self.wf, '镜像名里没有上游项目名')
+
+    def test_upstream_image_is_multi_arch(self) -> None:
+        block = self._step('构建并推送上游镜像')
+        self.assertIn('linux/amd64', block)
+        self.assertIn('linux/arm64', block,
+                      '上游镜像也要 arm64 —— 否则 ARM 主机仍然只能自己 build')
+
+    def test_missing_upstream_does_not_break_release(self) -> None:
+        block = self._step('构建并推送上游镜像')
+        self.assertIn("steps.pack.outputs.has_upstream == '1'", block,
+                      '取不到上游源码时应跳过，不能让发版失败')
+        self.assertIn('continue-on-error: true', block,
+                      '镜像推不上去不该让发布作业标红')
+
+
 # 模板**随仓库分发**（PR #58）：用户 fork 之后把它复制进自己 fork 的
 # `.github/workflows/` 才会生效。这里直接测模板本身，而不是等它在
 # `.github/workflows/build-image.yml` 下出现 —— 后者在本仓库永远不会出现

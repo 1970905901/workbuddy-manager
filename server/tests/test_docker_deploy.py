@@ -981,6 +981,20 @@ class UpstreamImagePublishTest(unittest.TestCase):
                       '镜像推不上去不该让发布作业标红')
 
 
+class UpdaterBootstrapPackagingTest(unittest.TestCase):
+    """发布包必须把更新器放一份到 server/（issue #240）。
+
+    旧安装的根目录 `deploy/update.py` 可能不支持随包同步；它不会替换自己，
+    只靠根目录那份会让「随包上游与本机不一致」永远消不掉。server/ 每次更新
+    都会被整体替换，因此包内 `server/deploy/update.py` 是更新器的自举入口。
+    """
+
+    def test_release_stage_copies_updater_into_server(self) -> None:
+        wf = (_ROOT / '.github' / 'workflows' / 'release.yml').read_text(encoding='utf-8')
+        self.assertIn('cp deploy/update.py "$STAGE/server/deploy/update.py"', wf,
+                      '发布包没有把更新器放进 server/，旧部署的更新器永远换不掉')
+
+
 # 模板**随仓库分发**（PR #58）：用户 fork 之后把它复制进自己 fork 的
 # `.github/workflows/` 才会生效。这里直接测模板本身，而不是等它在
 # `.github/workflows/build-image.yml` 下出现 —— 后者在本仓库永远不会出现

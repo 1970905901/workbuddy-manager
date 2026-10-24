@@ -57,7 +57,7 @@ C 没有任何快过期积分，却独占了一整段会话流量。会话持续
 
 ## 实现位置
 
-- `dev/upstream-patches/0020-sticky-first-bind-weighted.patch`
+- `dev/upstream-patches/0021-sticky-first-bind-weighted.patch`
   - `internal/pool/weightedbind.go`（新增 `Pool.WeightedPickAmong`）
   - `internal/session/session.go`（`Config.PickForModel` + 慢路径分配）
   - `cmd/server/wiring.go`、`cmd/server/main.go`（realm 感知注入）
@@ -65,11 +65,16 @@ C 没有任何快过期积分，却独占了一整段会话流量。会话持续
   - `README.md`「选号语义」补一句首绑口径
 - 面板侧无需改动：它是按发布包随附的上游源码构建的。
 
+## 补丁组成
+
+- `0021-sticky-first-bind-weighted.patch`：功能改动。
+- `0022-sticky-gofmt.patch`：仅修正补丁动过文件的 gofmt 对齐（发布门禁会检查）。
+
 ## 验证
 
 在已应用 0001–0019 的基线快照上跑 `dev/apply_upstream_patches.py`：
 
-- 首次：`applied: 0020-sticky-first-bind-weighted.patch`；重跑：`already applied`（幂等）
+- 首次：`applied: 0021-sticky-first-bind-weighted.patch`；重跑：`already applied`（幂等）
 - `go build ./...` 通过
 - `go test ./internal/pool/ ./internal/session/ ./cmd/server/` 全通过
 - 全量 `go test ./...` 仅 `cmd/stats` 的 `TestBuildFrameStructure` 失败 —— 该用例在

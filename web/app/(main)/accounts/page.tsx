@@ -950,10 +950,11 @@ export default function AccountsPage() {
       (a.manual_disabled === true &&
         Boolean(a.manual_reason && a.manual_reason.startsWith('手动冷却')));
     // 手机卡片宽度只有 260–300px，必须换行（否则最右侧的停用/删除被裁掉）；
-    // 桌面表格空间足够，固定一行 —— 否则窄的「操作」列会把图标挤成两行
-    // （issue #151 的后续反馈）。表格容器自身可横向滚动，md 以上不再换行。
+    // 桌面表格改为固定列宽（table-fixed）后，操作列拿到 330px 定宽 —— 10 个图标
+    // 按钮按 h-7 + 2px 间距正好排成一行（9×28+8×2 是常见形态，留了余量），
+    // 所以 md 以上既不需要换行，也不会再把表格推宽（issue #151 的后续反馈）。
     return (
-      <div className="flex flex-wrap justify-end gap-1 md:flex-nowrap">
+      <div className="flex flex-wrap justify-end gap-1 md:flex-nowrap md:gap-0.5">
         {/* 备注（issue #67）：只动本端库里的一行文本，不碰上游、不重启容器，
             所以放在最前——它是最轻的动作。任何状态下的账号都能写备注：
             停用的号恰恰更容易忘了它是谁。 */}
@@ -1467,17 +1468,24 @@ export default function AccountsPage() {
         </div>
 
         {/* 桌面端：表格 */}
+        {/* 桌面端表格：固定列宽（table-fixed）+ UID 单行省略。
+            此前这里是 auto 布局，列宽由内容撑开 —— UID 是 36 字符的 UUID、
+            操作列最多有 10 个图标按钮，两者加起来必然把表格推宽，于是容器
+            （Table 组件自带的 overflow-x-auto）出现横向滚动条，用户每次都要
+            拖动才能看到最右侧的操作按钮（issue #151 的后续反馈）。
+            固定布局把「列宽」从内容手里拿走：内容超宽就在本列内省略 / 换行，
+            表格永远等于容器宽度，不再需要横向拖动。 */}
         <div className="hidden md:block">
-        <Table>
+        <Table className="table-fixed [&_td]:overflow-hidden">
           <TableHeader>
             <TableRow className="border-b border-border/60 hover:bg-transparent">
-              <TableHead className="pl-4 text-[11px] text-muted-foreground">{t('accounts.colNickname')}</TableHead>
-              <TableHead className="text-[11px] text-muted-foreground">UID</TableHead>
-              <TableHead className="text-[11px] text-muted-foreground">{t('accounts.colStatus')}</TableHead>
-              <TableHead className="text-[11px] text-muted-foreground">{t('metric.credits')}</TableHead>
-              <TableHead className="text-[11px] text-muted-foreground">{t('accounts.colExpiry')}</TableHead>
-              {hasProxyUi && <TableHead className="text-[11px] text-muted-foreground">{t('accounts.proxyLine')}</TableHead>}
-              {isAdmin && <TableHead className="whitespace-nowrap pr-4 text-right text-[11px] text-muted-foreground">{t('accounts.colActions')}</TableHead>}
+              <TableHead className="w-[17%] pl-4 text-[11px] text-muted-foreground">{t('accounts.colNickname')}</TableHead>
+              <TableHead className="w-[21%] text-[11px] text-muted-foreground">UID</TableHead>
+              <TableHead className="w-[9%] text-[11px] text-muted-foreground">{t('accounts.colStatus')}</TableHead>
+              <TableHead className="w-[12%] text-[11px] text-muted-foreground">{t('metric.credits')}</TableHead>
+              <TableHead className="w-[13%] text-[11px] text-muted-foreground">{t('accounts.colExpiry')}</TableHead>
+              {hasProxyUi && <TableHead className="w-[10%] text-[11px] text-muted-foreground">{t('accounts.proxyLine')}</TableHead>}
+              {isAdmin && <TableHead className="w-[330px] whitespace-nowrap pr-4 text-right text-[11px] text-muted-foreground">{t('accounts.colActions')}</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -1509,7 +1517,11 @@ export default function AccountsPage() {
                     </Badge>
                   </div>
                 </TableCell>
-                <TableCell className="font-mono text-xs text-muted-foreground">{a.uid}</TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">
+                  {/* 固定列宽下 UID（36 字符 UUID）装不满整行，省略号收尾 +
+                      title 保留全文，鼠标悬停可看完整值（复制按钮在详情里）。 */}
+                  <div className="truncate" title={a.uid}>{a.uid}</div>
+                </TableCell>
                 <TableCell>
                   <div className="flex flex-wrap items-center gap-1.5">
                     {renderStatus(a)}

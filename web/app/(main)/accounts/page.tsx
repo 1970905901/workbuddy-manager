@@ -27,6 +27,7 @@ import {
   Scale,
   FolderInput,
   TriangleAlert,
+  ScanSearch,
 } from 'lucide-react';
 import {useHeartbeat} from '@/lib/use-heartbeat';
 import {useAsyncAll} from '@/lib/use-async-data';
@@ -73,6 +74,7 @@ import {MoveAccountDialog} from '@/components/common/accounts/MoveAccountDialog'
 import {UpstreamFormDialog} from '@/components/common/upstreams/UpstreamFormDialog';
 import {AccountCoolingDialog} from '@/components/common/accounts/AccountCoolingDialog';
 import {AccountTaskDialog} from '@/components/common/accounts/AccountTaskDialog';
+import {ModelProbeDialog} from '@/components/common/accounts/ModelProbeDialog';
 import {useAuth} from '@/lib/auth-context';
 import {realmLabel, useRealm} from '@/lib/realm-context';
 import {useT} from '@/lib/i18n/provider';
@@ -128,6 +130,8 @@ export default function AccountsPage() {
   const [coolingTarget, setCoolingTarget] = useState<Account | null>(null);
   // 活动任务（单账号执行成长任务）的目标账号；null = 对话框关闭
   const [taskTarget, setTaskTarget] = useState<Account | null>(null);
+  /** 账号 × 模型主动探测（issue #270） */
+  const [probeOpen, setProbeOpen] = useState(false);
   const [busyFile, setBusyFile] = useState<string | null>(null);
   /**
    * 列表的检索 / 状态筛选 / 排序 / 页码（P1-3）。
@@ -1015,9 +1019,8 @@ export default function AccountsPage() {
             task_runner.py），区别是只对这一个账号跑 —— 池子里某个号想单独
             补一轮任务时，不必把全部账号再跑一遍。国际版不适用 CN 任务中心
             （脚本自己会 skip），所以与签到按钮同一个可见条件。
-            分组账号暂不在这里跑任务（任务脚本目前只覆盖默认分组的目录，
-            见 server/services/taskrun.py），所以非默认分组下不显示这个按钮。 */}
-        {(!off || viaBit) && canCheckin && groupId == null && (
+            分组账号同样可用（issue #274）：脚本通过 WB2A_AUTHS 读该分组的目录。 */}
+        {(!off || viaBit) && canCheckin && (
           <Button
             variant="ghost"
             size="icon"
@@ -1212,6 +1215,20 @@ export default function AccountsPage() {
                 <RefreshCw className={refreshTokensBusy ? 'animate-spin' : ''} />
                 <span className="hidden sm:inline">{t('accounts.refreshTokens')}</span>
                 <span className="sm:hidden">{t('accounts.refreshTokensShort')}</span>
+              </Button>
+            )}
+            {isAdmin && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="rounded-full"
+                onClick={() => setProbeOpen(true)}
+                disabled={!visible.length}
+                title={t('accounts.probeTitle')}
+              >
+                <ScanSearch />
+                <span className="hidden sm:inline">{t('accounts.probeShort')}</span>
+                <span className="sm:hidden">{t('accounts.probeShort')}</span>
               </Button>
             )}
             {/* 「全部签到」仅国内版显示：国际版**没有签到体系**（上游调度器对
@@ -1669,10 +1686,21 @@ export default function AccountsPage() {
       />
       <AccountTaskDialog
         account={taskTarget}
+        upstreamId={groupId}
+        groupName={groups.find((g) => g.id === groupId)?.name ?? ''}
         open={taskTarget !== null}
         onOpenChange={(open) => { if (!open) setTaskTarget(null); }}
         onFinished={reloadAll}
       />
+      {probeOpen && (
+        <ModelProbeDialog
+          open={probeOpen}
+          onOpenChange={setProbeOpen}
+          accounts={visible}
+          upstreamId={groupId}
+          realm={realm}
+        />
+      )}
     </div>
   );
 }

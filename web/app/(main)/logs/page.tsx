@@ -382,6 +382,7 @@ export default function LogsPage() {
               <TableHead className="text-[11px] text-muted-foreground">{t('nav.keys')}</TableHead>
               <TableHead className="text-[11px] text-muted-foreground">IP</TableHead>
               <TableHead className="text-[11px] text-muted-foreground">{t('logs.colAccount')}</TableHead>
+              <TableHead className="text-[11px] text-muted-foreground">{t('logs.colChannel')}</TableHead>
               <TableHead className="text-[11px] text-muted-foreground">{t('nav.models')}</TableHead>
               <TableHead className="text-[11px] text-muted-foreground">{t('logs.colEffort')}</TableHead>
               <TableHead className="text-[11px] text-muted-foreground">{t('accounts.colStatus')}</TableHead>
@@ -406,6 +407,12 @@ export default function LogsPage() {
                     所以刚打完的请求可能还是「—」，稍后刷新就有。 */}
                 <TableCell className="text-xs">
                   <AccountCell account={l.account} />
+                </TableCell>
+                {/* 客户端渠道（issue #233）：按 UA 归类，用来定位「哪类客户端在把
+                    账号打进 429」。旧记录没有这一列，显示「—」而不是猜一个。 */}
+                <TableCell className="font-mono text-[11px] text-muted-foreground"
+                           title={l.channel ? `User-Agent: ${l.ua || ''}` : undefined}>
+                  {l.channel || '—'}
                 </TableCell>
                 <TableCell className="text-xs">
                   {l.model || '—'}

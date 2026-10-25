@@ -586,6 +586,26 @@ async def refresh_token(auth: dict) -> tuple[bool, str, dict]:
     return True, '刷新成功（上游未返回有效期，沿用原值）', out
 
 
+# 10001 的两层语义（issue #256）：上游既用它表示「今天已签到」（幂等成功），
+# 也用它表示「签到失败，请稍后重试」（瞬时限流）。只按业务码判断会把失败记成成功，
+# 所以这里再看 msg 文案区分。英文文案来自上游 i18n 版本。
+_ALREADY_CHECKIN_MARKERS = ('已签到', '已经签到', 'already checked in',
+                            'already signed in', 'already checkin')
+
+
+def is_already_checkin_message(code: int, message: str = '') -> bool:
+    """报告 (code, message) 是否表示「今天已签到」。
+
+    空消息保持旧行为（按已签到处理）：上游省略 msg 时不能把幂等成功误记成失败。
+    """
+    if code != 10001:
+        return False
+    msg = (message or '').strip().lower()
+    if not msg:
+        return True
+    return any(m in msg for m in _ALREADY_CHECKIN_MARKERS)
+
+
 async def checkin(access_token: str | dict, realm: Realm = CN) -> tuple[int, str]:
     """每日签到。10001 = 今日已签到，属正常幂等。
 
@@ -595,6 +615,9 @@ async def checkin(access_token: str | dict, realm: Realm = CN) -> tuple[int, str
 
     access_token 可传字符串（只有 Authorization）或完整 auth dict
     （额外带上 X-User-Id 等身份头——上游 billing 域一直这么做，见 BillingHeaders）。
+
+    返回码：0 成功 / 10001 今日已签到 / -2 国际版跳过 / -3 上游瞬时拒绝
+    （10001「签到失败，请稍后重试」，可退避重试）/ -1 网络或解析异常。
     """
     if not supports_checkin(realm):
         return -2, '国际版无签到体系，已跳过'
@@ -609,7 +632,18 @@ async def checkin(access_token: str | dict, realm: Realm = CN) -> tuple[int, str
         if code == 0:
             return 0, '签到成功'
         if code == 10001:
-            return 10001, '今日已签到'
+            msg = ''
+            try:
+                env = resp.json()
+                if isinstance(env, dict):
+                    msg = str(env.get('msg') or '')
+            except Exception:  # noqa: BLE001
+                msg = ''
+            if is_already_checkin_message(code, msg):
+                return 10001, '今日已签到'
+            # 同一个 10001 的瞬时拒绝语义（issue #256 实测批量签到偶发）：
+            # 用 -3 与「已签到」区分，调用方才不会把失败记成成功。
+            return -3, msg or '签到失败，请稍后重试'
         return code, f'签到返回 code={code}'
     except Exception as exc:  # noqa: BLE001
         return -1, f'签到异常: {err_text(exc)}'
@@ -1279,6 +1313,56 @@ async def probe_account(auth: dict, model: str = 'glm-5.2') -> tuple[bool, str]:
     except Exception as exc:  # noqa: BLE001
         return False, f'请求异常: {err_text(exc)}'
 
+
+
+_PROBE_CODE_RE = re.compile(r'code=([0-9][0-9-]*)')
+# 额度不足文案（与上游 ErrHardCredit 的关键词同口径，大小写不敏感）
+_PROBE_CREDIT_HINTS = ('积分不足', '额度不足', '余额不足', '积分耗尽', '积分用完',
+                       'insufficient credit', 'no credit', 'quota exceeded')
+
+
+def classify_probe_result(ok: bool, message: str) -> tuple[str, str | None]:
+    """把 `probe_account` 的 (ok, message) 映射成结构化状态（issue #270）。
+
+    状态：ok / rate / credit / auth / no_model / error。
+
+    为什么从 message 里回读业务码而不是另起一套请求实现：`probe_account`
+    已经是**唯一**的探测请求构造点（渠道校验、路径回落、请求头都在那里），
+    再复制一份必然漂移。`_explain_code` 的输出格式固定含 `code=X`，回读稳。
+    """
+    if ok:
+        return 'ok', None
+    m = _PROBE_CODE_RE.search(message or '')
+    code = m.group(1) if m else None
+    text = (message or '').lower()
+    if code == '11102':
+        return 'no_model', code
+    if code in ('12153', '401'):
+        return 'auth', code
+    if code in ('6004', '429'):
+        return 'rate', code
+    if code in ('402', '14018'):
+        return 'credit', code
+    if any(h in message for h in _PROBE_CREDIT_HINTS) or 'credit' in text:
+        return 'credit', code
+    return 'error', code
+
+
+async def probe_model(auth: dict, model: str) -> dict:
+    """账号 × 模型探测（issue #270）：在 `probe_account` 之上补结构化分类。
+
+    返回 `{status, code, message, latency_ms}`。`status='no_model'` 表示
+    「该账号没有这个模型」——账号本身没问题，不计入错误。
+    """
+    started = time.time()
+    ok, message = await probe_account(auth, model)
+    status, code = classify_probe_result(ok, message)
+    return {
+        'status': status,
+        'code': code,
+        'message': message,
+        'latency_ms': int((time.time() - started) * 1000),
+    }
 
 
 def _is_channel_check(code: object, raw: str) -> bool:

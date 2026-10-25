@@ -422,6 +422,105 @@ def _usage_cache(usage: dict | None) -> tuple[int | None, int | None, int | None
             _one('prompt_cache_write_tokens'))
 
 
+# 客户端渠道归类（issue #233）：只用于日志可观测性，**不改变转发行为**。
+#
+# 为什么要它：429 / 6004 是账号级或模型级冷却，出问题时最想知道「是哪类客户端
+# 把号打冷的」。UA 是唯一无需客户端配合就能拿到的来源维度；归类宁可粗、不可猜错：
+# 认不出就记 other，不把「可能是」写成「就是」。
+def client_channel(ua: str | None) -> str:
+    text = (ua or '').strip().lower()
+    if not text:
+        return 'unknown'
+    if 'codex' in text:
+        return 'codex'
+    if 'claude-code' in text or 'claude code' in text:
+        return 'claude-code'
+    if 'deepseek' in text or 'dsh' in text:
+        return 'dsh'
+    if 'vscode' in text or 'visual studio code' in text or 'cursor' in text:
+        return 'vscode'
+    if 'jetbrains' in text or 'intellij' in text:
+        return 'jetbrains'
+    if 'workbuddy' in text:
+        return 'wb'
+    if 'mozilla' in text or 'chrome/' in text or 'safari/' in text or 'edg/' in text:
+        return 'web'
+    if any(k in text for k in ('python', 'httpx', 'requests/', 'curl/', 'node-fetch',
+                               'axios', 'okhttp', 'go-http-client')):
+        return 'api'
+    return 'other'
+
+
+def _image_part_to_openai(part: dict) -> dict | None:
+    """把常见的「非标准图片 part」归一成 OpenAI 的 image_url 形态（issue #134）。
+
+    各家客户端写法不一，上游只认 `{"type":"image_url","image_url":{"url":...}}`：
+      · `{"type":"input_image","image_url":"data:..."}`（Responses 风格混进 chat）
+      · `{"type":"image_url","image_url":"https://..."}`（url 直接给字符串）
+      · Anthropic 风格 `{"type":"image","source":{"type":"base64",...}}`
+    认不出的原样返回 None（调用方保持原 part 不动），不做有损改写。
+    """
+    kind = part.get('type')
+
+    def _url_of(value: object) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            inner = value.get('url')
+            return inner if isinstance(inner, str) else ''
+        return ''
+
+    if kind in ('input_image', 'image_url'):
+        url = _url_of(part.get('image_url')) or _url_of(part.get('url'))
+        if url:
+            return {'type': 'image_url', 'image_url': {'url': url}}
+        return None
+    if kind == 'image':
+        source = part.get('source')
+        if isinstance(source, dict):
+            stype = str(source.get('type') or '')
+            if stype == 'base64':
+                media = str(source.get('media_type') or 'image/png')
+                data = source.get('data')
+                if isinstance(data, str) and data:
+                    return {'type': 'image_url',
+                            'image_url': {'url': f'data:{media};base64,{data}'}}
+            elif stype == 'url':
+                url = _url_of(source.get('url'))
+                if url:
+                    return {'type': 'image_url', 'image_url': {'url': url}}
+    return None
+
+
+def normalize_chat_images(body: object) -> int:
+    """就地归一 chat 请求里的图片 part，返回改写的数量。
+
+    只动 `messages[*].content` 里的**列表**；字符串内容与其他字段一字不改。
+    客户端发图失败时最常见的形态是 url 直接给字符串或 input_image 混用，
+    上游解析不了就整条 400，这里换成标准形态即可（issue #134）。
+    """
+    if not isinstance(body, dict):
+        return 0
+    messages = body.get('messages')
+    if not isinstance(messages, list):
+        return 0
+    changed = 0
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get('content')
+        if not isinstance(content, list):
+            continue
+        for idx, part in enumerate(content):
+            if not isinstance(part, dict):
+                continue
+            fixed = _image_part_to_openai(part)
+            if fixed is not None and fixed != part:
+                content[idx] = fixed
+                changed += 1
+    return changed
+
+
 def _record(key: dict | None, ip: str, model: str, mapped: str, status: int, pt: int, ct: int, latency: int, ua: str | None, error: str | None, stream: bool, *, credit: float | None = None, first_token: int | None = None, usage: dict | None = None, effort: str | None = None) -> None:
     """记录调用日志与用量。
 
@@ -483,6 +582,8 @@ def _record(key: dict | None, ip: str, model: str, mapped: str, status: int, pt:
             cache_write_tokens=cache_write,
             # 思考强度只作展示：客户端传什么记什么，不做推断（NULL=没传/旧记录）。
             effort=db._clean(effort, 16) if effort else None,
+            # 客户端渠道（issue #233）：UA 归类，供日志页按来源排查限流来源。
+            channel=client_channel(ua),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning('写入请求日志失败（不影响请求）: %s', exc)
@@ -1061,6 +1162,10 @@ async def _chat(request: Request, upstream_path: str):
     # 越界的 max_tokens 会被上游包装成 503（见 clamp_max_tokens 的说明），
     # 鉴权后、转发前压回上限。
     clamp_max_tokens(body)
+
+    # 图片 part 归一（issue #134）：把 input_image / image_url 字符串 /
+    # Anthropic source 形态改写成上游认的标准形态；认不出的原样保留。
+    normalize_chat_images(body)
 
     # 思考强度（reasoning_effort）：仅用于日志展示，**不改写请求体**——
     # 档位归一化/降级由上游网关负责，面板只记录客户端实际传了什么。

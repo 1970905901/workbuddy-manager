@@ -609,6 +609,14 @@ const UPSTREAM_FIELDS: Field[] = [
     desc: '是否把客户端 IP（X-Forwarded-For / X-Real-IP）透传给上游。缺省关闭——不把内网/代理 IP 暴露给上游',
     def: false,
   },
+  {
+    key: 'gzip_body',
+    kind: 'bool',
+    label: '压缩大请求体（gzip）',
+    desc: '超过 64 KB 的对话请求先 gzip 压缩再发给上游。服务器出口带宽窄时长上下文的'
+      + '首字节能快 20 秒以上；短对话不压缩、无额外开销。上游不接受压缩时会自动改用未压缩重发',
+    def: true,
+  },
 ];
 
 /**

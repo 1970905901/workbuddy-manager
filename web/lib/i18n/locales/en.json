@@ -1886,6 +1886,8 @@
     "留空 = 不读文件": "empty = do not read a file",
     "透传客户端 IP": "Forward client IP",
     "是否把客户端 IP（X-Forwarded-For / X-Real-IP）透传给上游。缺省关闭——不把内网/代理 IP 暴露给上游": "Whether to forward the client IP (X-Forwarded-For / X-Real-IP) upstream. Off by default, so internal or proxy IPs are not exposed to upstream",
+    "压缩大请求体（gzip）": "Compress large request bodies (gzip)",
+    "超过 64 KB 的对话请求先 gzip 压缩再发给上游。服务器出口带宽窄时长上下文的首字节能快 20 秒以上；短对话不压缩、无额外开销。上游不接受压缩时会自动改用未压缩重发": "Chat requests larger than 64 KB are gzip-compressed before being sent upstream. With a narrow server uplink this cuts more than 20 seconds off the first byte for long contexts; short chats are sent uncompressed with no overhead. If upstream rejects the compressed body, the request is automatically resent uncompressed.",
     "启用国际版路由": "Enable Global-edition routing",
     "开启后，realm=global 的账号走 workbuddy.ai（国际版模型与端点）。关闭 = 锁死纯 CN：此时国际版账号会被当成国内版账号发往国内端点，属配置错误": "When on, realm=global accounts use workbuddy.ai (Global models and endpoints). Turning it off locks the deployment to China only: Global accounts are then sent to the China endpoints as if they were China accounts, which is a misconfiguration",
     "国际版 Chat 基址": "Global chat base URL",

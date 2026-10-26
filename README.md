@@ -243,6 +243,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ithtelab/workbuddy-manager/m
 - [部署指南](deploy/README.md) —— 反向代理、HTTPS、Windows 原生、一键更新
 - [账号出口线路](docs/account-proxy-routes.md) —— 每个账号走不同代理出口
 - [API 令牌](docs/api-tokens.md) —— 只读令牌与作用域
+- [QQ 机器人通知与开放接口](docs/qq-bot.md) —— AstrBot 对接、UMO 与机器人控制边界
 
 ---
 

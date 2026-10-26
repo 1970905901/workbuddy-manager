@@ -4,7 +4,7 @@
  * 「设置 → 页面监控」：上游网页改版 / 活动入口的定时监控。
  *
  * 三件事在这张页上：**看**（上次检测做了什么、判读是什么）、**调**（间隔、
- * 目标、通知时机）、**验**（立即跑一轮、探测 SMTP 出口、发一封测试信）。
+ * 目标、通知时机）、**验**（立即跑一轮、探测 SMTP 出口、发测试邮件 / QQ 消息）。
  *
  * 为什么所有输入共用一个 `form` 而不是每个字段一份 state：这张表单有 30 多个
  * 字段，保存时要把它们作为一个整体提交（后端以**当前配置**为底合并，少传一段
@@ -17,6 +17,7 @@ import {
   Cpu,
   Loader2,
   Mail,
+  MessageCircle,
   Play,
   PlugZap,
   Plus,
@@ -38,6 +39,8 @@ import type {
   WatchdogEgress,
   WatchdogLlmConfig,
   WatchdogMailConfig,
+  WatchdogQqBot,
+  WatchdogQqConfig,
   WatchdogRunResult,
   WatchdogTarget,
   WatchdogVerdict,
@@ -109,6 +112,10 @@ export function WatchdogPanel() {
   const [mailTesting, setMailTesting] = useState(false);
   const [llmTesting, setLlmTesting] = useState(false);
   const [llmSample, setLlmSample] = useState<WatchdogVerdict | null>(null);
+  const [qqChecking, setQqChecking] = useState(false);
+  const [qqTesting, setQqTesting] = useState(false);
+  const [qqBots, setQqBots] = useState<WatchdogQqBot[] | null>(null);
+  const [qqError, setQqError] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -160,6 +167,9 @@ export function WatchdogPanel() {
   const patchLlm = (next: Partial<WatchdogLlmConfig>) =>
     setForm((current) =>
       current ? {...current, llm: {...current.llm, ...next}} : current);
+  const patchQq = (next: Partial<WatchdogQqConfig>) =>
+    setForm((current) =>
+      current ? {...current, qq: {...current.qq, ...next}} : current);
   const patchTarget = (index: number, next: Partial<WatchdogTarget>) =>
     setForm((current) => {
       if (!current) return current;
@@ -188,6 +198,10 @@ export function WatchdogPanel() {
           port: num(String(form.mail.port), 465),
           // 空串会清掉已保存的收件人；打码的密码原样回传 = 保持不变
           to: mailToText.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean),
+        },
+        qq: {
+          ...form.qq,
+          timeout_seconds: num(String(form.qq.timeout_seconds), 15),
         },
       });
       setForm(r.config);
@@ -275,6 +289,50 @@ export function WatchdogPanel() {
       notify.err(errText(e));
     } finally {
       setLlmTesting(false);
+    }
+  }
+
+  async function checkQq() {
+    if (!form) return;
+    setQqChecking(true);
+    setQqError('');
+    try {
+      const r = await watchdogApi.qqBots({...form.qq});
+      if (r.ok) {
+        setQqBots(r.bots ?? []);
+        notify.ok(t('watchdog.qqOk', {
+          bots: (r.bots ?? []).length,
+        }));
+      } else {
+        setQqBots(null);
+        setQqError(r.error || '-');
+        notify.err(t('watchdog.qqFail', {error: r.error || '-'}));
+      }
+    } catch (e) {
+      setQqError(errText(e));
+      notify.err(errText(e));
+    } finally {
+      setQqChecking(false);
+    }
+  }
+
+  async function sendTestQq() {
+    if (!form) return;
+    setQqTesting(true);
+    setQqError('');
+    try {
+      const r = await watchdogApi.testQq({...form.qq});
+      if (r.ok) {
+        notify.ok(t('watchdog.qqSent'));
+      } else {
+        setQqError(r.error || '-');
+        notify.err(t('watchdog.qqNotSent'));
+      }
+    } catch (e) {
+      setQqError(errText(e));
+      notify.err(errText(e));
+    } finally {
+      setQqTesting(false);
     }
   }
 
@@ -421,7 +479,7 @@ export function WatchdogPanel() {
               disabled={!isAdmin}
               onValueChange={(value) => patch({notify_on: value as WatchdogConfig['notify_on']})}
             >
-              <SelectTrigger>
+              <SelectTrigger aria-label={t('watchdog.notifyOn')}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -505,7 +563,7 @@ export function WatchdogPanel() {
                       onValueChange={(value) =>
                         patchTarget(index, {kind: value as WatchdogTarget['kind']})}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger aria-label={t('watchdog.targetKind')}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -518,6 +576,7 @@ export function WatchdogPanel() {
                   </div>
                   <div className="flex items-center gap-2 pb-2">
                     <Switch
+                      aria-label={t('watchdog.targetEnabled')}
                       checked={target.enabled}
                       disabled={!isAdmin}
                       onCheckedChange={(checked) => patchTarget(index, {enabled: checked})}
@@ -717,7 +776,7 @@ export function WatchdogPanel() {
               onValueChange={(value) =>
                 patchMail({security: value as WatchdogMailConfig['security']})}
             >
-              <SelectTrigger>
+              <SelectTrigger aria-label={t('watchdog.mailSecurity')}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -809,6 +868,122 @@ export function WatchdogPanel() {
         )}
       </Card>
 
+      {/* ── QQ 通知（AstrBot） ── */}
+      <Card
+        title={t('watchdog.qqTitle')}
+        icon={<MessageCircle className="h-4 w-4" />}
+        action={
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!isAdmin || qqChecking}
+              onClick={() => void checkQq()}
+            >
+              {qqChecking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlugZap className="h-3.5 w-3.5" />}
+              {t('watchdog.qqCheck')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!isAdmin || qqTesting}
+              onClick={() => void sendTestQq()}
+            >
+              {qqTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+              {t('watchdog.qqTest')}
+            </Button>
+          </div>
+        }
+      >
+        <div className="mb-3 flex items-center gap-2">
+          <Switch
+            id="wd-qq"
+            checked={form.qq.enabled}
+            disabled={!isAdmin}
+            onCheckedChange={(checked) => patchQq({enabled: checked})}
+          />
+          <Label htmlFor="wd-qq">{t('watchdog.qqEnable')}</Label>
+        </div>
+        <p className="mb-1 text-xs text-muted-foreground">{t('watchdog.qqDesc')}</p>
+        <p className="mb-3 text-xs text-muted-foreground">{t('watchdog.qqEnableHint')}</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <Label htmlFor="wd-qq-base">{t('watchdog.qqBaseUrl')}</Label>
+            <Input
+              id="wd-qq-base"
+              value={form.qq.base_url}
+              disabled={!isAdmin}
+              placeholder="https://astrbot.example.com"
+              onChange={(e) => patchQq({base_url: e.target.value})}
+            />
+            <p className="mt-1 text-xs text-muted-foreground">{t('watchdog.qqBaseUrlHint')}</p>
+          </div>
+          <div>
+            <Label htmlFor="wd-qq-key">{t('watchdog.qqApiKey')}</Label>
+            <Input
+              id="wd-qq-key"
+              type="password"
+              autoComplete="new-password"
+              value={form.qq.api_key}
+              disabled={!isAdmin}
+              placeholder="abk_..."
+              onChange={(e) => patchQq({api_key: e.target.value})}
+            />
+            <p className="mt-1 text-xs text-muted-foreground">{t('watchdog.qqApiKeyHint')}</p>
+          </div>
+          <div>
+            <Label htmlFor="wd-qq-timeout">{t('watchdog.qqTimeout')}</Label>
+            <Input
+              id="wd-qq-timeout"
+              type="number"
+              min={3}
+              max={120}
+              value={String(form.qq.timeout_seconds)}
+              disabled={!isAdmin}
+              onChange={(e) => patchQq({timeout_seconds: num(e.target.value, 15)})}
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <Label htmlFor="wd-qq-umo">{t('watchdog.qqUmo')}</Label>
+            <Input
+              id="wd-qq-umo"
+              value={form.qq.umo}
+              disabled={!isAdmin}
+              placeholder="qq_official:GroupMessage:xxxxxxxx"
+              onChange={(e) => patchQq({umo: e.target.value})}
+            />
+            <p className="mt-1 text-xs text-muted-foreground">{t('watchdog.qqUmoHint')}</p>
+          </div>
+        </div>
+        {(qqBots !== null || qqError) && (
+          <div className="mt-3 rounded-2xl bg-muted/40 p-3 text-xs">
+            {qqError ? (
+              <div className="text-destructive">{t('watchdog.qqFail', {error: qqError})}</div>
+            ) : (
+              <div className="text-emerald-600 dark:text-emerald-400">
+                {t('watchdog.qqOk', {bots: (qqBots ?? []).length})}
+              </div>
+            )}
+            {qqBots !== null && (
+              <div className="mt-1 text-muted-foreground">
+                <span>{t('watchdog.qqBots')}：</span>
+                {qqBots.length === 0 ? (
+                  <span className="ml-1">{t('watchdog.qqNoBots')}</span>
+                ) : (
+                  <ul className="mt-1 list-disc pl-5">
+                    {qqBots.map((bot, i) => (
+                      <li key={i}>
+                        {String(bot.name || bot.id || bot.type || JSON.stringify(bot))}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+
       {/* ── 最近一轮 ── */}
       <Card
         title={t('watchdog.runTitle')}
@@ -844,6 +1019,11 @@ export function WatchdogPanel() {
               {lastRun.mail && (
                 <Badge variant={lastRun.mail.ok ? 'secondary' : 'outline'}>
                   {lastRun.mail.ok ? t('watchdog.mailSent') : t('watchdog.mailNotSent')}
+                </Badge>
+              )}
+              {lastRun.qq && (
+                <Badge variant={lastRun.qq.ok ? 'secondary' : 'outline'}>
+                  {lastRun.qq.ok ? t('watchdog.qqSent') : t('watchdog.qqNotSent')}
                 </Badge>
               )}
             </div>

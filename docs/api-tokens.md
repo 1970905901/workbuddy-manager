@@ -145,6 +145,9 @@ CREATE INDEX IF NOT EXISTS idx_tokens_prefix ON api_tokens(prefix);
   scope / 最后使用时间与 IP）、停用 / 删除；创建时按 scope 给出用途说明。
 - Go SDK 已提供 `WithAdminToken("wbt_...")`（本设计落地后即可直接使用），
   走 `Authorization: Bearer`，优先级高于 Cookie，且不参与 401 重登。
+- 用 QQ 机器人控制管理面时，建议单独建一个 `readonly` token（如
+  `qq-bot-readonly`）；可调用的只读端点、写操作的人工确认与高危接口边界见
+  [docs/qq-bot.md](qq-bot.md) 的「开放接口操作」一节。
 
 ## 兼容与迁移
 

@@ -207,7 +207,12 @@ async def limit_api_body(request: Request, call_next):
 
 
 class _ApiBodyTooLarge(Exception):
-    """内部信号：/api/* 请求体在读取层超过上限。只被 ApiBodyLimitMiddleware 捕获。"""
+    """内部信号：/api/* 请求体在读取层超过上限。
+
+    注意：路由里 `except Exception` 很常见（`/api/login` 解析失败就转 400），
+    所以它不一定能到达中间件变成 413 —— 被就地转成 400 也是**安全**的：
+    超限时读取已经中止，内存不再增长。声明 413 只在这条异常成功穿透路由时生效。
+    """
 
 
 class ApiBodyLimitMiddleware:

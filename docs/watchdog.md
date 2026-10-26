@@ -25,6 +25,12 @@
 （`class` / `id` / `data-*` / `role` / `aria-*`）与可见文案——改版信号就在这两处。
 `kind=js` 的目标只抽字符串字面量与 `/billing`、`/activity` 这类路径。
 
+`kind=assets`（默认的 plans-usage 用它）会先抓页面骨架，再顺着 `<script src>` /
+`<link href>` 抓最多 `asset_limit` 个**自有 CDN** 的前端构建产物，抽出其中的中文
+字符串与接口路径一起进指纹。原因是 SPA 的活动文案与「领取」按钮并不在页面
+HTML 里，而在 bundle 里；页面 HTML 只反映「有没有发布新版本」。第三方脚本
+（如 `res.wx.qq.com`）排在最后，避免占掉名额。`asset_limit=0` 退化为只比骨架。
+
 关键词规则是 LLM 的**退化路径**：没配 LLM、或 LLM 调用失败时，只要结构变了且
 命中「领取 / 奖励 / 补偿 / claim / reward …」就告警，并标注 `source=rule`。
 
@@ -84,11 +90,12 @@ POP3 / IMAP 不参与发信，因此没有接入：本功能只需要 SMTP 出�
   "interval_minutes": 360,
   "targets": [
     {"name": "plans-usage", "url": "https://www.workbuddy.cn/profile/plans-usage",
-     "kind": "html", "enabled": true},
+     "kind": "assets", "enabled": true},
     {"name": "codebuddy-home", "url": "https://www.codebuddy.cn/",
      "kind": "html", "enabled": false}
   ],
   "timeout_seconds": 20,
+  "asset_limit": 4,
   "notify_on": "change",
   "scan_compensation": true,
   "auto_claim": false,
@@ -124,7 +131,7 @@ POP3 / IMAP 不参与发信，因此没有接入：本功能只需要 SMTP 出�
 
 - 目标 URL 只允许 http/https；默认**拒绝解析到内网 / 回环 / 链路本地 / 保留地址**
   的目标（SSRF），确需监控内网再显式打开 `allow_private_targets`；
-- 单目标响应上限 2 MB，超限即中止并记错误；
+- 单目标响应上限 4 MB，超限即中止并记错误；
 - 快照写在 `DATA_DIR/watchdog/`，只存归一化后的行，不存原始 HTML；
 - 邮件密码 / LLM Key 读取时打码，保存时回传 `********` 表示「不改」；
 - LLM 输入只包含**差异片段与关键词**，不整页回传；输出要求严格 JSON，

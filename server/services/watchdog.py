@@ -62,7 +62,7 @@ import time
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from .. import config, db, upstreamsvc
 from . import tencent, wb2api
@@ -80,9 +80,11 @@ MAX_INTERVAL_MINUTES = 7 * 24 * 60
 
 # 单次抓取的响应体上限。活动页通常 <300KB；设上限是为了防止目标返回
 # 一个巨大的 bundle 把内存与 diff 都拖垮（也避免把整份 JS 存进快照）。
-MAX_FETCH_BYTES = 2 * 1024 * 1024
+MAX_FETCH_BYTES = 4 * 1024 * 1024
 # 快照里保留的归一化行数上限（超出部分截断，指纹仍按全量算）
 MAX_SNAPSHOT_LINES = 8000
+# 每个资源最多保留多少行（bundle 里的字符串可能上万条，截断后仍够 LLM 看）
+MAX_ASSET_LINES = 2000
 
 # 出口探测的端口：按「现代邮件客户端」的常见顺序，先测用户配置的端口。
 _COMMON_SMTP_PORTS = (587, 465, 25)
@@ -110,11 +112,13 @@ def _default_config() -> dict:
         # 的布局同样会随改版变化，且改版往往同时影响活动页——这正是要抓的信号。
         'targets': [
             {'name': 'plans-usage', 'url': 'https://www.workbuddy.cn/profile/plans-usage',
-             'kind': 'html', 'enabled': True},
+             'kind': 'assets', 'enabled': True},
             {'name': 'codebuddy-home', 'url': 'https://www.codebuddy.cn/',
              'kind': 'html', 'enabled': False},
         ],
         'timeout_seconds': 20,
+        # kind=assets 时最多抓几个静态资源（0 = 只比页面骨架，不下载 bundle）
+        'asset_limit': 4,
         'notify_on': 'change',   # change | claimable | anomaly
         'scan_compensation': True,
         'auto_claim': False,     # 只有 scan 明确「有可领」且这里开着才真领
@@ -185,8 +189,8 @@ def _clean_targets(raw: list) -> list[dict]:
             raise ValueError('targets 的每一项都要有 name 与 url')
         if name in seen:
             raise ValueError(f'目标名重复：{name}')
-        if kind not in ('html', 'js', 'text'):
-            raise ValueError(f'目标 {name} 的 kind 只能是 html / js / text')
+        if kind not in ('html', 'js', 'text', 'assets'):
+            raise ValueError(f'目标 {name} 的 kind 只能是 html / js / text / assets')
         seen.add(name)
         out.append({'name': name, 'url': url, 'kind': kind,
                     'enabled': bool(item.get('enabled', True))})
@@ -226,6 +230,9 @@ async def save_config(raw: object, *, actor: dict | None = None) -> dict:
     timeout = merged.get('timeout_seconds')
     if not isinstance(timeout, int) or not 5 <= timeout <= 120:
         raise ValueError('timeout_seconds 必须在 5-120 之间')
+    asset_limit = merged.get('asset_limit')
+    if not isinstance(asset_limit, int) or not 0 <= asset_limit <= 8:
+        raise ValueError('asset_limit 必须是 0-8 的整数（0 = 不抓静态资源）')
     if merged.get('notify_on') not in ('change', 'claimable', 'anomaly'):
         raise ValueError('notify_on 只能是 change / claimable / anomaly')
     for target in merged['targets']:
@@ -400,10 +407,14 @@ async def fetch_target(target: dict, timeout: float, *, allow_private: bool) -> 
 _TAG_RE = re.compile(r'<\s*([a-zA-Z][\w:-]*)((?:\s+[^<>]*?)?)\s*/?>')
 _ATTR_RE = re.compile(r'([\w:-]+)\s*=\s*("([^"]*)"|\'([^\']*)\'|([^\s>]+))')
 _COMMENT_RE = re.compile(r'<!--.*?-->', re.S)
-_SCRIPT_RE = re.compile(r'<(script|style)\b[^>]*>.*?</\1\s*>', re.S | re.I)
+# 只清**内容**、保留标签本身：script/link 的 src 是前端构建的指纹，
+# 整段删掉就连「这一版是哪个 bundle」都看不到了。
+# 只清**内容**、保留标签本身：script/link 的 src 是前端构建的指纹，
+# 整段删掉就连「这一版是哪个 bundle」都看不到了。
+_SCRIPT_RE = re.compile(r'<(script|style)\b([^>]*)>.*?</\1\s*>', re.S | re.I)
 _TEXT_RE = re.compile(r'>([^<>]+)<')
 _WS_RE = re.compile(r'[\s\u00a0]+')
-_JS_STR_RE = re.compile(r'(["\'])((?:\.|(?!\1).){4,200}?)\1')
+_CJK_RE = re.compile('[\u4e00-\u9fff]')
 _ENDPOINT_RE = re.compile(r'/[\w./-]{3,120}')
 
 # 结构行里保留哪些属性：class / id / data-* / role / aria-* 是版式的骨架；
@@ -411,10 +422,18 @@ _ENDPOINT_RE = re.compile(r'/[\w./-]{3,120}')
 # 每天一次——但它们的**存在性**仍有意义，所以只保留键名，不保留值。
 _STRUCT_ATTRS = {'class', 'id', 'role', 'type', 'name', 'data-testid', 'aria-label'}
 _ATTR_PRESENCE_ONLY = {'href', 'src', 'action', 'data-src'}
+# 资源类属性：script/link 的 src/href 承载的就是「前端这一版是哪个构建」
+_ASSET_ATTRS = {'src', 'href'}
 
 
-def _norm_attr(name: str, value: str) -> str:
+def _norm_attr(name: str, value: str, tag: str = '') -> str:
     name = name.lower()
+    if name in _ASSET_ATTRS and tag in ('script', 'link'):
+        # 静态资源的**路径**要留：SPA 的页面骨架是常量，前端一发布变的就是
+        # `index-B9cHY3Wf.js` 这种带构建哈希的文件名（构建号也在路径里）。
+        # 只留 path、去掉 origin/query，避免 CDN 域名或跟踪参数制造噪音。
+        path = urlparse(value).path
+        return f'{name}={path}' if path else name
     if name in _ATTR_PRESENCE_ONLY:
         return f'{name}'
     if name.startswith('data-') or name in _STRUCT_ATTRS:
@@ -432,14 +451,15 @@ def normalize_html(text: str) -> list[str]:
     都变（版本号、时间戳），保留它们会让指纹永远在抖，监控就退化成噪音。
     """
     body = _COMMENT_RE.sub('', text)
-    body = _SCRIPT_RE.sub('', body)
+    body = _SCRIPT_RE.sub(
+        lambda m: f'<{m.group(1)}{m.group(2)}></{m.group(1)}>', body)
     lines: list[str] = []
     for match in _TAG_RE.finditer(body):
         tag = match.group(1).lower()
         attrs = []
         for attr in _ATTR_RE.finditer(match.group(2) or ''):
             value = next((g for g in attr.groups()[2:] if g is not None), '')
-            piece = _norm_attr(attr.group(1), value)
+            piece = _norm_attr(attr.group(1), value, tag)
             if piece:
                 attrs.append(piece)
         lines.append('TAG ' + tag + (' ' + ' '.join(sorted(attrs)) if attrs else ''))
@@ -453,12 +473,51 @@ def normalize_html(text: str) -> list[str]:
     return lines
 
 
+def _js_strings(text: str) -> list[str]:
+    """线性扫描 JS 的字符串字面量（单引号 / 双引号 / 反引号）。
+
+    为什么不用正则：带反向引用与惰性量词的字符串正则，在 800KB 的压缩 bundle
+    上会**灾难性回溯**（实测把一次检测挂住几分钟）。手写扫描是 O(n)，且能正确
+    跳过转义。
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    quotes = ('"', "'", '`')
+    backslash = chr(92)
+    newline = chr(10)
+    while i < n:
+        ch = text[i]
+        if ch not in quotes:
+            i += 1
+            continue
+        quote = ch
+        j = i + 1
+        buf: list[str] = []
+        closed = False
+        while j < n:
+            ch = text[j]
+            if ch == quote:
+                closed = True
+                break
+            if ch == backslash and j + 1 < n:
+                buf.append(text[j:j + 2])  # 转义：原样保留下一个字符
+                j += 2
+                continue
+            if ch == newline:
+                break
+            buf.append(ch)
+            j += 1
+        if closed and 4 <= len(buf) <= 200:
+            out.append(''.join(buf))
+        i = j + 1 if closed else j
+    return out
+
+
 def normalize_js(text: str) -> list[str]:
     """JS → 字符串字面量 + 端点路径（只为「改版/新活动」服务，不还原代码）。"""
     lines: set[str] = set()
-    for match in _JS_STR_RE.finditer(text):
-        raw = match.group(2)
-        if re.search(r'[\u4e00-\u9fff]', raw) or any(k in raw.lower() for k in _KEYWORDS):
+    for raw in _js_strings(text):
+        if _CJK_RE.search(raw) or any(k in raw.lower() for k in _KEYWORDS):
             lines.add('STR ' + _WS_RE.sub(' ', raw)[:200])
     for match in _ENDPOINT_RE.finditer(text):
         path = match.group(0)
@@ -474,6 +533,56 @@ def normalize_text(text: str) -> list[str]:
         if line:
             out.append(line)
     return out
+
+
+_ASSET_RE = re.compile(
+    r'<(?:script|link)\b[^>]*(?:src|href)\s*=\s*["\']([^"\']+)["\']', re.I)
+# 明显不是前端代码的资源，抓来分析只会浪费字节
+_SKIP_ASSET_EXT = ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.woff',
+                   '.woff2', '.ttf', '.eot', '.map')
+
+
+def discover_assets(html: str, base_url: str, limit: int) -> list[str]:
+    """从页面里找出前端 bundle / 样式表（保持出现顺序、去重、限个数）。
+
+    SPA 的活动文案与「领取」按钮长在这些 bundle 里，页面 HTML 本身只有骨架。
+    只取**同站或 CDN 的 script/link**，不递归（bundle 里再引 bundle 的情况极少，
+    递归会让一次检测变成爬站）。
+    """
+    if limit <= 0:
+        return []
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for raw in _ASSET_RE.findall(html):
+        url = urljoin(base_url, raw.strip())
+        parsed = urlparse(url)
+        if parsed.scheme not in ('http', 'https') or url in seen:
+            continue
+        if parsed.path.lower().endswith(_SKIP_ASSET_EXT):
+            continue
+        seen.add(url)
+        candidates.append(url)
+
+    def rank(url: str) -> tuple[int, int]:
+        host = (urlparse(url).hostname or '').lower()
+        # 自有 CDN 的构建产物排在前面：第三方脚本（jweixin 之类）与活动无关，
+        # 让它占掉 asset_limit 的名额就等于没监控到前端。
+        own = 0 if ('workbuddy' in host or 'codebuddy' in host) else 1
+        return own, candidates.index(url)
+
+    return sorted(candidates, key=rank)[:limit]
+
+
+def asset_lines(url: str, body: str) -> list[str]:
+    """把一个资源的可读信号归一化成行（JS 抽字符串/端点，CSS 只留选择器）。"""
+    path = urlparse(url).path
+    if path.lower().endswith('.css'):
+        lines = normalize_text(body)
+        # CSS 的声明值（颜色、尺寸）改版时爱变，只留选择器块更稳
+        lines = [line for line in lines if line.endswith('{') or line.startswith('@')]
+    else:
+        lines = normalize_js(body)
+    return [f'ASSET {path}'] + lines[:MAX_ASSET_LINES]
 
 
 def normalize(kind: str, text: str) -> list[str]:
@@ -892,9 +1001,36 @@ def _format_report(target: dict, diff: dict, verdict: dict, hits: list[dict],
 
 
 async def _check_target(cfg: dict, target: dict) -> dict:
-    text = await fetch_target(target, cfg['timeout_seconds'],
-                              allow_private=bool(cfg.get('allow_private_targets')))
-    lines = normalize(target['kind'], text)
+    allow_private = bool(cfg.get('allow_private_targets'))
+    timeout = cfg['timeout_seconds']
+    # wait_for 是**总时长**上限：httpx 的 timeout 是单次读写的上限，连接建立后
+    # 对端一点点往回挤字节时，那些超时永远不会触发。监控是定时任务，不能因为
+    # 一个慢 CDN 就把整轮检测挂住。
+    text = await asyncio.wait_for(
+        fetch_target(target, timeout, allow_private=allow_private), timeout=timeout + 5)
+    if target['kind'] == 'assets':
+        # 页面骨架 + 前端 bundle 里的字符串/端点：前者看「发布没」，
+        # 后者看「有没有新的活动文案/领取入口」。
+        lines = normalize_html(text)
+        # 整组资源共用一个预算：单个慢 CDN 不能把整轮检测拖成几分钟。
+        deadline = asyncio.get_running_loop().time() + timeout * 2
+        for url in discover_assets(text, target['url'], int(cfg.get('asset_limit') or 0)):
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 1:
+                logger.info('资源抓取预算用尽，跳过剩余资源（%s）', target['name'])
+                lines.append('ASSET budget-exhausted')
+                break
+            try:
+                body = await asyncio.wait_for(
+                    fetch_target({'url': url}, timeout, allow_private=allow_private),
+                    timeout=min(timeout + 5, remaining))
+            except Exception as exc:  # noqa: BLE001
+                logger.info('抓取资源失败（跳过） %s: %s', url, exc)
+                lines.append(f'ASSET {urlparse(url).path} ERROR')
+                continue
+            lines.extend(asset_lines(url, body))
+    else:
+        lines = normalize(target['kind'], text)
     digest = digest_of(lines)
     snapshot = load_snapshot(target['url'])
     if snapshot is None:

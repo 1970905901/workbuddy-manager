@@ -36,16 +36,28 @@ class NormalizeTest(unittest.TestCase):
         joined = '\n'.join(lines)
         self.assertIn('TAG div class=a b id=root', joined)
         self.assertIn('TAG button class=claim-btn data-testid=claim', joined)
+        # script 的 src 要留（构建哈希是前端发布信号），但它的**内容**要丢
+        self.assertIn('TAG script src=/app.8f3a.js', joined)
         self.assertIn('TEXT 领取 500 积分', joined)
         self.assertNotIn('build=', joined)       # 脚本内容丢弃
         self.assertNotIn('color:red', joined)    # 样式内容丢弃
         self.assertNotIn('tracking', joined)     # 注释丢弃
 
-    def test_dynamic_hashes_do_not_change_digest(self) -> None:
-        a = watchdog.normalize_html(
-            '<div><script src="/app.111.js"></script><a href="/x/111">活动</a></div>')
-        b = watchdog.normalize_html(
-            '<div><script src="/app.222.js"></script><a href="/x/222">活动</a></div>')
+    def test_bundle_hash_is_a_signal(self) -> None:
+        # SPA 的页面骨架是常量，前端一发布变的就是 script 的构建哈希 —— 必须算进指纹
+        a = watchdog.normalize_html('<div><script src="/app.111.js"></script></div>')
+        b = watchdog.normalize_html('<div><script src="/app.222.js"></script></div>')
+        self.assertNotEqual(watchdog.digest_of(a), watchdog.digest_of(b))
+
+    def test_anchor_ids_do_not_change_digest(self) -> None:
+        # 普通链接里的内容 id 不该让指纹抖（同一版页面也会随内容变化）
+        a = watchdog.normalize_html('<div><a href="/x/111">活动</a></div>')
+        b = watchdog.normalize_html('<div><a href="/x/222">活动</a></div>')
+        self.assertEqual(watchdog.digest_of(a), watchdog.digest_of(b))
+
+    def test_inline_script_content_is_ignored(self) -> None:
+        a = watchdog.normalize_html('<div><script>var build="1";</script>活动</div>')
+        b = watchdog.normalize_html('<div><script>var build="2";</script>活动</div>')
         self.assertEqual(watchdog.digest_of(a), watchdog.digest_of(b))
 
     def test_real_layout_change_changes_digest(self) -> None:
@@ -68,6 +80,37 @@ class NormalizeTest(unittest.TestCase):
         hits = watchdog.keyword_hits(lines)
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0]['word'], '领取')
+
+
+class AssetDiscoveryTest(unittest.TestCase):
+    def test_prefers_own_cdn_and_limits(self) -> None:
+        html = ('<script src="https://res.wx.qq.com/a.js"></script>'
+                '<link href="https://assets.workbuddy.cn/b.css">'
+                '<script src="/c.js"></script>'
+                '<img src="/d.png">')
+        urls = watchdog.discover_assets(html, 'https://www.workbuddy.cn/page', 2)
+        self.assertEqual(urls[0], 'https://assets.workbuddy.cn/b.css')
+        self.assertEqual(urls[1], 'https://www.workbuddy.cn/c.js')
+
+    def test_zero_limit_disables_assets(self) -> None:
+        self.assertEqual(watchdog.discover_assets(
+            '<script src="/a.js"></script>', 'https://a.example/', 0), [])
+
+    def test_asset_lines_shape(self) -> None:
+        js = watchdog.asset_lines(
+            'https://assets.workbuddy.cn/a/index.js',
+            'const t="领取 500 积分"; fetch("/billing/meter/claim-compensation");')
+        self.assertEqual(js[0], 'ASSET /a/index.js')
+        self.assertTrue(any(x.startswith('STR 领取') for x in js))
+        self.assertTrue(any(x.startswith('URL /billing/') for x in js))
+
+    def test_css_keeps_only_selectors(self) -> None:
+        lines = watchdog.asset_lines(
+            'https://assets.workbuddy.cn/a/index.css',
+            '.claim-btn {' + chr(10) + '  color: red;' + chr(10) + '}' + chr(10))
+        self.assertEqual(lines[0], 'ASSET /a/index.css')
+        self.assertIn('.claim-btn {', lines)
+        self.assertFalse(any('color: red' in x for x in lines))
 
 
 class DiffTest(unittest.TestCase):

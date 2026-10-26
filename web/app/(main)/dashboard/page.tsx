@@ -22,6 +22,7 @@ import {
 import {useHeartbeat} from '@/lib/use-heartbeat';
 import {useAsyncAll} from '@/lib/use-async-data';
 import {collectScopedExpiries} from '@/lib/dashboard-credits';
+import {flowSeries, flowAxis, flowTop as niceFlowTop, flowBars as toFlowBars} from '@/lib/credits-flow-chart';
 import {
   getCreditsChartType,
   getExpiryDailyGroup,
@@ -262,30 +263,19 @@ export default function DashboardPage() {
   const hasFlow = flow.total.income > 0 || flow.total.expense > 0;
 
   /**
-   * 单日范围下探到小时（issue #285）：后端 days=1 时返回 24 个小时桶，
-   * 否则退回按天。旧后端不返回 hourly，这里自然退回原来的单点渲染。
+   * 单日范围下探到小时（issue #285）：序列选择、X 轴参数与发散柱上限的
+   * 规则收在 `@/lib/credits-flow-chart`（纯函数，Node 直测）。旧后端不返回
+   * hourly 时那里自然退回天序列，维持单点渲染。
    */
-  const flowHours = flow.granularity === 'hour' && Array.isArray(flow.hourly)
-    ? flow.hourly
-    : null;
-  const flowByHour = flowHours !== null;
-  const flowPoints = flowHours ?? flow.daily;
+  const {points: flowPoints, byHour: flowByHour} = flowSeries(flow);
+  const flowXAxis = flowAxis(flowByHour);
   /** 发散柱：支出取负让柱子向下生长；net 用折线叠在同一根轴上。 */
-  const flowBars = useMemo(
-    () => flowPoints.map((p) => ({...p, expenseDown: -p.expense})),
-    [flowPoints],
-  );
+  const flowBars = useMemo(() => toFlowBars(flowPoints), [flowPoints]);
   /**
    * 单轴上限：收入与支出共用一根轴，取两者峰值的整齐上限（1/2/2.5/5/10 档）。
    * 没有这一步，Recharts 会把上下限取成数据极值，柱子贴边且 0 线不在中间。
    */
-  const flowTop = useMemo(() => {
-    const peak = flowPoints.reduce((m, p) => Math.max(m, p.income, p.expense), 0);
-    if (peak <= 0) return 1;
-    const mag = 10 ** Math.floor(Math.log10(peak));
-    const step = [1, 2, 2.5, 5, 10].find((s) => peak <= s * mag) ?? 10;
-    return step * mag;
-  }, [flowPoints]);
+  const flowTop = useMemo(() => niceFlowTop(flowPoints), [flowPoints]);
 
   const slices: GroupSlice[] = values.pool ?? EMPTY_SLICES;
   const summary: StatsSummary | null = values.summary ?? null;
@@ -806,13 +796,11 @@ export default function DashboardPage() {
                     <ComposedChart data={flowBars} margin={{top: 4, right: 4, bottom: 0, left: 0}}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                       <XAxis
-                        dataKey={flowByHour ? 'hour' : 'day'}
+                        dataKey={flowXAxis.dataKey}
                         tickLine={false} axisLine={false} fontSize={11}
                         stroke="var(--muted-foreground)"
-                        interval={flowByHour ? 2 : 'preserveStartEnd'}
-                        tickFormatter={(v) => (flowByHour
-                          ? `${String(v).padStart(2, '0')}:00`
-                          : String(v).slice(5))}
+                        interval={flowXAxis.interval}
+                        tickFormatter={(v) => flowXAxis.format(v)}
                       />
                       {/* 刻度取绝对值：支出柱是负值，但读数不该显示成「-600」。 */}
                       <YAxis
@@ -850,13 +838,11 @@ export default function DashboardPage() {
                     <LineChart data={flowPoints} margin={{top: 4, right: 4, bottom: 0, left: 0}}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                       <XAxis
-                        dataKey={flowByHour ? 'hour' : 'day'}
+                        dataKey={flowXAxis.dataKey}
                         tickLine={false} axisLine={false} fontSize={11}
                         stroke="var(--muted-foreground)"
-                        interval={flowByHour ? 2 : 'preserveStartEnd'}
-                        tickFormatter={(v) => (flowByHour
-                          ? `${String(v).padStart(2, '0')}:00`
-                          : String(v).slice(5))}
+                        interval={flowXAxis.interval}
+                        tickFormatter={(v) => flowXAxis.format(v)}
                       />
                       {/* 双 Y 轴：收入常是几千、支出常是几十。同一根轴会把支出压成
                           贴着 0 的直线，等于没画。左轴收入、右轴支出，颜色与曲线对应。 */}

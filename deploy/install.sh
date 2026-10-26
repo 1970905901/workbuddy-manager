@@ -53,6 +53,27 @@ step "0/4 环境预检"
 
 [ "$(id -u)" -eq 0 ] || die "请用 root 运行（sudo bash deploy/install.sh）"
 
+# APP_DIR 会被 `chown -R` 交给服务账号（见第 2 步）。指到 /opt、/home 这类
+# 公共目录会把无关文件的所有权一起改掉，所以先拒绝明显过宽的路径。
+case "$APP_DIR" in
+  /|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/media|/mnt|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/var)
+    die "APP_DIR=${APP_DIR} 太宽（chown -R 会波及整个目录）；请用 /opt/workbuddy-manager 这类专用目录"
+    ;;
+esac
+case "$APP_DIR" in
+  /*) ;;
+  *) die "APP_DIR 必须是绝对路径（当前 ${APP_DIR}）" ;;
+esac
+case "$UPSTREAM_DIR" in
+  /|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/media|/mnt|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/var)
+    die "UPSTREAM_DIR=${UPSTREAM_DIR} 太宽（chown -R 会波及整个目录）；请用 /opt/workbuddy2api 这类专用目录"
+    ;;
+esac
+case "$UPSTREAM_DIR" in
+  /*) ;;
+  *) die "UPSTREAM_DIR 必须是绝对路径（当前 ${UPSTREAM_DIR}）" ;;
+esac
+
 command -v "$PY" >/dev/null 2>&1 || die "未找到 python3（$PY）"
 PYVER="$("$PY" -c 'import sys;print("%d.%d"%sys.version_info[:2])')"
 "$PY" -c 'import sys;sys.exit(0 if sys.version_info>=(3,9) else 1)' \
@@ -334,9 +355,13 @@ else
 fi
 
 # 目录属主交给服务账号：代码只读即可，data/ 要可写。
-# 上游侧只对齐 config.json（auths/data 已在步骤 1 chown 为 10001，同一 uid）。
+# 上游目录也要交给它：面板的「一键更新」会把新源码写进 UPSTREAM_DIR
+# （auths/data 在步骤 1 已 chown 为 10001，与服务账号同一 uid，不受影响）。
 if [ -n "$RUN_USER" ]; then
   chown -R "$RUN_USER:$RUN_USER" "${APP_DIR}"
+  if [ "$SKIP_UPSTREAM" -eq 0 ] && [ -d "${UPSTREAM_DIR}" ]; then
+    chown -R "$RUN_USER:$RUN_USER" "${UPSTREAM_DIR}"
+  fi
   [ -f "${UPSTREAM_DIR}/config.json" ] && \
     chown "$RUN_USER:$RUN_USER" "${UPSTREAM_DIR}/config.json" 2>/dev/null || true
 fi

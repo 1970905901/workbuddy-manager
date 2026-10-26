@@ -166,9 +166,10 @@ const groupQs = (upstreamId?: number | null): string =>
 
 export const accountApi = {
   proxies: () => get<{routes: string[]; default: string}>('/api/proxies'),
-  /** 上游「账号管理接口」（admin.enabled）开关状态；供解禁队列判断能否真的解封 */
-  adminApiStatus: () =>
-    get<{enabled: boolean | null}>('/api/accounts/admin-api-status'),
+  /** 上游「账号管理接口」（admin.enabled）开关状态；供解禁队列判断能否真的解封。
+   *  非默认分组返回 null（面板读不到那套实例的 config.json）。 */
+  adminApiStatus: (upstreamId?: number | null) =>
+    get<{enabled: boolean | null}>('/api/accounts/admin-api-status' + groupQs(upstreamId)),
   setProxy: (filename: string, proxy: string, upstreamId?: number | null) =>
     put<{ok: boolean; proxy: string; reload_triggered: boolean}>(
       `/api/accounts/${encodeURIComponent(filename)}/proxy` + groupQs(upstreamId), {proxy}),

@@ -505,11 +505,14 @@ export default function AccountsPage() {
   useEffect(() => {
     if (!isAdmin) return;
     let alive = true;
-    accountApi.adminApiStatus()
+    // 切分组先回到「未知」：否则会拿上一个分组的开关状态去提示当前分组。
+    // 非默认分组的面板读不到那套实例的 config.json，接口会回 null。
+    setAdminApiEnabled(null);
+    accountApi.adminApiStatus(groupId)
       .then((d) => { if (alive) setAdminApiEnabled(d.enabled); })
       .catch(() => { if (alive) setAdminApiEnabled(null); });
     return () => { alive = false; };
-  }, [isAdmin]);
+  }, [isAdmin, groupId]);
 
   /** 封禁账号的「解禁出路」提示：按上游管理接口开关是否已开启，如实告知。 */
   const reloginHint =

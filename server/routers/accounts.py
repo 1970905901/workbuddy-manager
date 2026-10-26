@@ -1111,17 +1111,24 @@ def _local_uids() -> set[str]:
 
 
 @router.get('/accounts/admin-api-status')
-def account_admin_api_status(user: dict = Depends(security.require_admin)) -> dict:
+def account_admin_api_status(upstream_id: int | None = Query(None),
+                             user: dict = Depends(security.require_admin)) -> dict:
     """上游「账号管理接口」（admin.enabled）开关状态，供解禁队列提示用。
 
     revive / enable / disable 这组解封操作都依赖上游这组接口：开关没开时，
     重新登录只换令牌、清不掉「禁用」位。前端据此把「可通过解禁队列重新登录
     解封」换成「需先在设置开启管理接口」，避免误导用户白重登。
 
-    这里只读**配置文件**、不做运行时探测：运行时是否生效由「保存设置自动
+    这里只读**本地配置文件**、不做运行时探测：运行时是否生效由「保存设置自动
     重启」保证；若要更精确（配置已开但运行中的上游没加载到它），应参照
     `_disable_hint` 的运行时诊断逻辑，本接口刻意保持轻量。
+
+    非默认分组通常跑在另一套容器/主机上，面板读不到它的 config.json——
+    这时返回 `enabled=None`（未知），前端就不会拿默认分组的开关状态去误导它。
     """
+    group = _group(upstream_id)
+    if not group.get('is_default'):
+        return {'enabled': None}
     enabled, _ = wb2api.admin_enabled_in_config()
     # 只回开关状态，不回配置路径（`where`）——那是部署信息，前端也用不到，
     # 最小化接口暴露面。

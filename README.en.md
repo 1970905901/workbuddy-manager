@@ -236,6 +236,8 @@ Threat model and hardening notes: [security notes](docs/security-notes.md) and t
 - [Deployment guide](deploy/README.md) — reverse proxy, HTTPS, Windows, updates
 - [Account proxy routes](docs/account-proxy-routes.md) — per-account egress
 - [API tokens](docs/api-tokens.md) — read-only tokens and scopes
+- [Page watchdog](docs/watchdog.md) — upstream page change detection, LLM triage, email / QQ alerts
+- [QQ notifications & open API](docs/qq-bot.md) — AstrBot integration, UMO, bot control boundaries
 
 ---
 

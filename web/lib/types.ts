@@ -1541,6 +1541,23 @@ export interface WatchdogMailConfig {
   subject_prefix: string;
 }
 
+/**
+ * QQ 通知（经 AstrBot HTTP OpenAPI 中转）。
+ *
+ * 管理端不持有 QQ 官方机器人的 AppID/Secret：那是 AstrBot 的职责。这里只有
+ * 「AstrBot 在哪、用什么密钥、发给哪个会话」三样。
+ */
+export interface WatchdogQqConfig {
+  enabled: boolean;
+  /** AstrBot 地址；不带路径时自动补 `/api/v1` */
+  base_url: string;
+  /** 开发者访问密钥 `abk_...`（需 `im` scope）；打码值 `********` 表示保持不变 */
+  api_key: string;
+  /** UMO：`平台:消息类型:会话ID`，如 `qq_official:GroupMessage:<group_openid>` */
+  umo: string;
+  timeout_seconds: number;
+}
+
 export interface WatchdogConfig {
   enabled: boolean;
   interval_minutes: number;
@@ -1557,6 +1574,7 @@ export interface WatchdogConfig {
   allow_private_targets: boolean;
   llm: WatchdogLlmConfig;
   mail: WatchdogMailConfig;
+  qq: WatchdogQqConfig;
 }
 
 /** 单个 SMTP 端口的出口探测结果。 */
@@ -1623,8 +1641,18 @@ export interface WatchdogRunResult {
   scan?: WatchdogScanSummary | null;
   claim?: {ok: boolean; message: string} | null;
   mail?: {ok: boolean; message?: string; skipped?: string} | null;
+  qq?: WatchdogQqResult | null;
   /** 已有一次检测在运行时返回 */
   skipped?: string;
+}
+
+export interface WatchdogQqResult {
+  ok: boolean;
+  message?: string;
+  skipped?: string;
+  error?: string;
+  /** 已发送的目标 UMO */
+  umo?: string;
 }
 
 export interface WatchdogState {
@@ -1657,4 +1685,27 @@ export interface WatchdogMailTest {
   message?: string;
   skipped?: string;
   egress: WatchdogEgress;
+}
+
+/** AstrBot 平台适配器（`GET /api/v1/im/bots` 的返回项）。 */
+export interface WatchdogQqBot {
+  id?: string;
+  name?: string;
+  type?: string;
+  [key: string]: unknown;
+}
+
+export interface WatchdogQqBotsResult {
+  ok: boolean;
+  error?: string;
+  status?: number;
+  bots?: WatchdogQqBot[];
+}
+
+export interface WatchdogQqTest extends WatchdogQqBotsResult {
+  /** auth = 地址/密钥/scope 没过；send = 已通过鉴权，问题在 UMO 或发送 */
+  stage?: 'auth' | 'send';
+  message?: string;
+  sent_at?: number;
+  umo?: string;
 }

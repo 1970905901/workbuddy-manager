@@ -70,6 +70,9 @@ import type {
   WatchdogLlmConfig,
   WatchdogMailConfig,
   WatchdogMailTest,
+  WatchdogQqBotsResult,
+  WatchdogQqConfig,
+  WatchdogQqTest,
   WatchdogRunResult,
   WatchdogSaveResult,
   WatchdogStatus,
@@ -752,6 +755,13 @@ export const watchdogApi = {
     post<WatchdogEgress>('/api/watchdog/mail/egress', mail ?? {}),
   testMail: (mail?: Partial<WatchdogMailConfig>) =>
     post<WatchdogMailTest>('/api/watchdog/mail/test', mail ?? {}),
+  /** 检测 AstrBot 地址 / 密钥 / scope，并列出可用平台适配器（拼 UMO 用） */
+  qqBots: (qq?: Partial<WatchdogQqConfig>) =>
+    post<WatchdogQqBotsResult>('/api/watchdog/qq/bots', qq ?? {}),
+  /** 发一条 QQ 测试消息（同样用表单当前值，不要求先保存） */
+  testQq: async (qq?: Partial<WatchdogQqConfig>) =>
+    (await http.post<WatchdogQqTest>(
+      '/api/watchdog/qq/test', qq ?? {}, {timeout: 60000})).data,
   testLlm: async (llm?: Partial<WatchdogLlmConfig>) =>
     (await http.post<{ok: boolean; verdict: WatchdogVerdict}>(
       '/api/watchdog/llm/test', llm ?? {}, {timeout: 120000})).data,

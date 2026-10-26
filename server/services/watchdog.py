@@ -355,12 +355,24 @@ class TargetError(ValueError):
     """目标不可抓取（scheme 不对 / 解析到内网 / 响应过大）。"""
 
 
+def _is_non_public(ip: ipaddress._BaseAddress) -> bool:
+    """地址是否落在不该被监控的网段（含 IPv4-mapped IPv6）。"""
+    mapped = getattr(ip, 'ipv4_mapped', None)
+    if mapped is not None:
+        return _is_non_public(mapped)
+    return (ip.is_private or ip.is_loopback or ip.is_link_local
+            or ip.is_reserved or ip.is_unspecified or ip.is_multicast)
+
+
 async def _assert_public_url(url: str, *, allow_private: bool) -> None:
     """SSRF 防线：只放行 http(s)，且默认拒绝内网地址。
 
     解析用 `socket.getaddrinfo`（在事件循环里跑会卡住其他请求，所以丢线程池）。
     DNS 解析失败时**放行**：那是目标不可达，交给真正的请求去报错，而不是在这里
     把「临时解析失败」误判成「内网地址」。真正的防线是"解析成功且落在内网"。
+
+    注意：这只校验**当前**这一跳。`fetch_target` 对手动跟随的每一跳都调用它，
+    不能开 httpx 的自动跟随——否则公网 URL 302 到 `http://127.0.0.1/` 就能绕过。
     """
     parsed = urlparse(url)
     if parsed.scheme not in ('http', 'https') or not parsed.netloc:
@@ -378,37 +390,48 @@ async def _assert_public_url(url: str, *, allow_private: bool) -> None:
             ip = ipaddress.ip_address(addr)
         except ValueError:
             continue
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+        if _is_non_public(ip):
             raise TargetError(f'目标解析到非公网地址 {addr}（如确需监控内网，'
                               '请显式打开 allow_private_targets）')
 
 
+_MAX_REDIRECTS = 5
+
+
 async def fetch_target(target: dict, timeout: float, *, allow_private: bool) -> str:
-    await _assert_public_url(target['url'], allow_private=allow_private)
-    chunks: list[bytes] = []
-    size = 0
+    """抓取一个目标；**手动跟随重定向，每一跳都重新做 SSRF 校验**。"""
+    url = target['url']
     async with config.http_client(timeout, lane='watchdog') as client:
-        async with client.stream('GET', target['url'], headers={'User-Agent': _UA},
-                                 follow_redirects=True) as resp:
-            if resp.status_code >= 400:
-                raise TargetError(f'HTTP {resp.status_code}')
-            async for chunk in resp.aiter_bytes():
-                size += len(chunk)
-                if size > MAX_FETCH_BYTES:
-                    raise TargetError(f'响应超过 {MAX_FETCH_BYTES // (1024 * 1024)} MB 上限')
-                chunks.append(chunk)
-            encoding = resp.encoding or 'utf-8'
-    try:
-        return b''.join(chunks).decode(encoding, errors='replace')
-    except LookupError:
-        return b''.join(chunks).decode('utf-8', errors='replace')
+        for _ in range(_MAX_REDIRECTS + 1):
+            await _assert_public_url(url, allow_private=allow_private)
+            chunks: list[bytes] = []
+            size = 0
+            async with client.stream('GET', url, headers={'User-Agent': _UA},
+                                     follow_redirects=False) as resp:
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    location = resp.headers.get('location')
+                    if not location:
+                        raise TargetError(f'HTTP {resp.status_code} 重定向缺少 Location')
+                    url = urljoin(url, location)
+                    continue
+                if resp.status_code >= 400:
+                    raise TargetError(f'HTTP {resp.status_code}')
+                async for chunk in resp.aiter_bytes():
+                    size += len(chunk)
+                    if size > MAX_FETCH_BYTES:
+                        raise TargetError(f'响应超过 {MAX_FETCH_BYTES // (1024 * 1024)} MB 上限')
+                    chunks.append(chunk)
+                encoding = resp.encoding or 'utf-8'
+            try:
+                return b''.join(chunks).decode(encoding, errors='replace')
+            except LookupError:
+                return b''.join(chunks).decode('utf-8', errors='replace')
+    raise TargetError(f'重定向超过 {_MAX_REDIRECTS} 次')
 
 
 _TAG_RE = re.compile(r'<\s*([a-zA-Z][\w:-]*)((?:\s+[^<>]*?)?)\s*/?>')
 _ATTR_RE = re.compile(r'([\w:-]+)\s*=\s*("([^"]*)"|\'([^\']*)\'|([^\s>]+))')
 _COMMENT_RE = re.compile(r'<!--.*?-->', re.S)
-# 只清**内容**、保留标签本身：script/link 的 src 是前端构建的指纹，
-# 整段删掉就连「这一版是哪个 bundle」都看不到了。
 # 只清**内容**、保留标签本身：script/link 的 src 是前端构建的指纹，
 # 整段删掉就连「这一版是哪个 bundle」都看不到了。
 _SCRIPT_RE = re.compile(r'<(script|style)\b([^>]*)>.*?</\1\s*>', re.S | re.I)
@@ -1180,8 +1203,9 @@ async def run_once(trigger: str = 'manual') -> dict:
                 subject, body = _format_report(
                     item, item['diff'], item['verdict'], item['keywords'],
                     scan, claim_result)
+                # 每个变化的目标各发一封：只发第一封会让第二个目标的变化
+                # 完全没有出口（状态里有、邮件里没有），而邮件正是告警通道。
                 mail_result = await send_mail(subject, body, cfg=cfg)
-                break  # 一轮只发一封：多个目标同时变时，正文里已经列全
 
         state_result = {
             'trigger': trigger,

@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import socket
 import sys
 import tempfile
@@ -453,6 +454,118 @@ class SchedulerTest(unittest.TestCase):
         self.assertTrue(watchdog._is_due(cfg, {'last_run_at': 0}, now=10**9))  # noqa: SLF001
         self.assertFalse(watchdog._is_due(cfg, {'last_run_at': 10**9}, now=10**9 + 60))  # noqa: SLF001
         self.assertTrue(watchdog._is_due(cfg, {'last_run_at': 10**9}, now=10**9 + 3600))  # noqa: SLF001
+
+
+class SsrfGuardTest(unittest.TestCase):
+    """SSRF 防线：目标与**每一次重定向**都必须落在公网。"""
+
+    def test_private_loopback_and_mapped_are_rejected(self) -> None:
+        for addr in ('127.0.0.1', '10.1.2.3', '169.254.1.1', '0.0.0.0',
+                     '::1', '::ffff:127.0.0.1'):
+            with self.subTest(addr=addr):
+                def addrinfo(host, port, *a, _addr=addr, **k):
+                    return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', (_addr, 0))]
+
+                with mock.patch.object(watchdog.socket, 'getaddrinfo', addrinfo):
+                    with self.assertRaises(watchdog.TargetError):
+                        asyncio.run(watchdog._assert_public_url(  # noqa: SLF001
+                            'https://example.test/', allow_private=False))
+
+    def test_allow_private_skips_ip_check(self) -> None:
+        def addrinfo(host, port, *a, **k):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('127.0.0.1', 0))]
+
+        with mock.patch.object(watchdog.socket, 'getaddrinfo', addrinfo):
+            asyncio.run(watchdog._assert_public_url(  # noqa: SLF001
+                'https://example.test/', allow_private=True))
+
+    def test_redirect_to_private_is_rejected_before_second_request(self) -> None:
+        class _Resp:
+            status_code = 302
+            headers = {'location': 'http://127.0.0.1/secret'}
+            encoding = 'utf-8'
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        class _Client:
+            def __init__(self):
+                self.calls: list[str] = []
+
+            def stream(self, method, url, **kw):
+                self.calls.append(url)
+                return _Resp()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        client = _Client()
+        seen: list[str] = []
+
+        async def assert_public(url, *, allow_private):
+            seen.append(url)
+            if '127.0.0.1' in url:
+                raise watchdog.TargetError('非公网')
+
+        with mock.patch.object(watchdog.config, 'http_client', lambda *a, **k: client), \
+             mock.patch.object(watchdog, '_assert_public_url', assert_public):
+            with self.assertRaises(watchdog.TargetError):
+                asyncio.run(watchdog.fetch_target(  # noqa: SLF001
+                    {'url': 'https://public.test/'}, 5, allow_private=False))
+        self.assertEqual(client.calls, ['https://public.test/'],
+                         '重定向目标必须在发出第二跳请求前就被校验')
+        self.assertEqual(seen, ['https://public.test/', 'http://127.0.0.1/secret'])
+
+    def test_public_redirect_is_followed(self) -> None:
+        class _Resp:
+            def __init__(self, status, headers=None, body=b''):
+                self.status_code = status
+                self.headers = headers or {}
+                self.encoding = 'utf-8'
+                self._body = body
+
+            async def aiter_bytes(self):
+                yield self._body
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        class _Client:
+            def __init__(self):
+                self.calls: list[str] = []
+
+            def stream(self, method, url, **kw):
+                self.calls.append(url)
+                if len(self.calls) == 1:
+                    return _Resp(301, {'location': 'https://cdn.test/final'})
+                return _Resp(200, body='<div>活动</div>'.encode())
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        client = _Client()
+
+        async def assert_public(url, *, allow_private):
+            return None
+
+        with mock.patch.object(watchdog.config, 'http_client', lambda *a, **k: client), \
+             mock.patch.object(watchdog, '_assert_public_url', assert_public):
+            out = asyncio.run(watchdog.fetch_target(  # noqa: SLF001
+                {'url': 'https://public.test/'}, 5, allow_private=False))
+        self.assertIn('活动', out)
+        self.assertEqual(client.calls, ['https://public.test/', 'https://cdn.test/final'])
 
 
 if __name__ == '__main__':

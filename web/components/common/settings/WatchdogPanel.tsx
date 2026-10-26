@@ -421,7 +421,7 @@ export function WatchdogPanel() {
               disabled={!isAdmin}
               onValueChange={(value) => patch({notify_on: value as WatchdogConfig['notify_on']})}
             >
-              <SelectTrigger>
+              <SelectTrigger aria-label={t('watchdog.notifyOn')}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -505,7 +505,7 @@ export function WatchdogPanel() {
                       onValueChange={(value) =>
                         patchTarget(index, {kind: value as WatchdogTarget['kind']})}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger aria-label={t('watchdog.targetKind')}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -518,6 +518,7 @@ export function WatchdogPanel() {
                   </div>
                   <div className="flex items-center gap-2 pb-2">
                     <Switch
+                      aria-label={t('watchdog.targetEnabled')}
                       checked={target.enabled}
                       disabled={!isAdmin}
                       onCheckedChange={(checked) => patchTarget(index, {enabled: checked})}
@@ -717,7 +718,7 @@ export function WatchdogPanel() {
               onValueChange={(value) =>
                 patchMail({security: value as WatchdogMailConfig['security']})}
             >
-              <SelectTrigger>
+              <SelectTrigger aria-label={t('watchdog.mailSecurity')}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

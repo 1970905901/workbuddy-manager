@@ -341,6 +341,108 @@ class RunOnceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('领取', sent[0][1])
 
 
+class StateTargetTest(unittest.TestCase):
+    """落库的那份结果要「说清结论」，但不该把 diff 原文整段写进设置项。"""
+
+    def test_trims_diff_and_keeps_verdict(self) -> None:
+        result = {
+            'name': 't', 'url': 'https://example.com/', 'status': 'changed',
+            'digest': 'abc', 'lines': 3,
+            'diff': {'added': 2, 'removed': 1,
+                     'excerpt': '+' + 'x' * 5000, 'truncated': True},
+            'keywords': [{'word': '领取', 'line': 'TEXT 领取'}],
+            'verdict': {
+                'layout_changed': True, 'claimable': True, 'anomaly': True,
+                'confidence': 0.75, 'summary': '新增领取入口',
+                'evidence': ['TAG button class=claim'], 'actions': ['打开页面确认'],
+                'source': 'llm',
+            },
+        }
+        out = watchdog._state_target(result)  # noqa: SLF001
+        self.assertNotIn('keywords', out)
+        self.assertNotIn('excerpt', out['diff'])
+        self.assertEqual(out['diff'], {'added': 2, 'removed': 1, 'truncated': True})
+        self.assertEqual(out['verdict']['summary'], '新增领取入口')
+        self.assertTrue(out['verdict']['claimable'])
+        self.assertEqual(out['verdict']['confidence'], 0.75)
+        self.assertEqual(out['verdict']['source'], 'llm')
+
+    def test_tolerates_bad_values(self) -> None:
+        """库里的判读可能被手改坏（字符串、null）——界面不能因此 500。"""
+        out = watchdog._state_target({  # noqa: SLF001
+            'name': 't', 'status': 'changed',
+            'diff': {'added': 'x', 'removed': None},
+            'verdict': {'confidence': 'nope', 'evidence': None, 'actions': 'oops'},
+        })
+        self.assertEqual(out['diff'], {'added': 0, 'removed': 0, 'truncated': False})
+        self.assertEqual(out['verdict']['confidence'], 0.0)
+        self.assertEqual(out['verdict']['evidence'], [])
+        self.assertEqual(out['verdict']['actions'], [])
+
+
+class RouterOverrideTest(unittest.TestCase):
+    """测试按钮用「表单当前值」而不是已保存配置（用户填完就要能点）。"""
+
+    def test_merge_mail_prefers_form_values(self) -> None:
+        from server.routers import watchdog as router  # noqa: PLC0415
+
+        base = {'host': '', 'port': 465, 'security': 'ssl', 'username': '',
+                'password': '', 'from': '', 'to': [], 'subject_prefix': ''}
+        out = router._merge_mail(base, {  # noqa: SLF001
+            'host': ' smtp.qq.com ', 'port': 587, 'security': 'starttls',
+            'to': ['a@example.com', ' '], 'password': 'secret',
+        })
+        self.assertEqual(out['host'], 'smtp.qq.com')
+        self.assertEqual(out['port'], 587)
+        self.assertEqual(out['security'], 'starttls')
+        self.assertEqual(out['to'], ['a@example.com'])
+        self.assertEqual(out['password'], 'secret')
+
+    def test_merge_mail_keeps_saved_password_when_masked(self) -> None:
+        from server.routers import watchdog as router  # noqa: PLC0415
+
+        base = {'host': 'smtp.old', 'port': 465, 'security': 'ssl',
+                'password': 'saved-pw', 'to': []}
+        out = router._merge_mail(base, {'host': 'smtp.new', 'password': '********'})  # noqa: SLF001
+        self.assertEqual(out['host'], 'smtp.new')
+        self.assertEqual(out['password'], 'saved-pw')
+
+    def test_merge_llm_keeps_saved_key_when_masked(self) -> None:
+        from server.routers import watchdog as router  # noqa: PLC0415
+
+        base = {'enabled': True, 'base_url': '', 'api_key': 'sk-old', 'model': ''}
+        out = router._merge_llm(base, {'base_url': ' https://x/v1 ', 'model': 'm',
+                                       'api_key': '********'})  # noqa: SLF001
+        self.assertEqual(out['base_url'], 'https://x/v1')
+        self.assertEqual(out['model'], 'm')
+        self.assertEqual(out['api_key'], 'sk-old')
+
+
+class TestMailTest(unittest.IsolatedAsyncioTestCase):
+    async def test_test_mail_works_before_enabling_notifications(self) -> None:
+        """「发送测试邮件」不该要求先打开通知开关——用户正是要在开启前验证。"""
+        cfg = {'mail': {
+            'enabled': False, 'host': 'smtp.example.com', 'port': 465,
+            'security': 'ssl', 'username': 'u', 'password': 'p', 'from': 'f@example.com',
+            'to': ['t@example.com'], 'subject_prefix': '[监控]',
+        }}
+        sent: list[dict] = []
+
+        async def fake_send(subject: str, body: str, *, cfg: dict | None = None) -> dict:
+            sent.append(cfg or {})
+            return {'ok': True}
+
+        with mock.patch.object(watchdog, 'probe_smtp_egress', return_value={
+                'ok': True, 'host': 'smtp.example.com', 'port': 465,
+                'banner': '220 ok', 'error': '', 'ports': [], 'checked_at': 0}), \
+             mock.patch.object(watchdog, 'send_mail', new=mock.AsyncMock(side_effect=fake_send)):
+            result = await watchdog.test_mail(cfg)
+
+        self.assertTrue(result['ok'])
+        self.assertEqual(len(sent), 1)
+        self.assertTrue(sent[0]['mail']['enabled'])
+
+
 class SchedulerTest(unittest.TestCase):
     def test_due_respects_interval_and_enabled(self) -> None:
         cfg = watchdog._default_config()  # noqa: SLF001

@@ -12,13 +12,62 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
 from .. import security
 from ..iputil import client_ip
 from ..services import watchdog
 
 router = APIRouter(prefix='/api/watchdog', tags=['watchdog'])
+
+
+def _merge_mail(mail: dict, raw: object) -> dict:
+    """用请求体里的值覆盖邮件配置（**只用于这一次测试，不落库**）。
+
+    为什么需要它：用户填完 SMTP 主机就会去点「检测出口」，这时还没保存。
+    如果测试读的是已保存的配置，实际体验就是「填了没用、必须先保存」——
+    而那一步完全没有提示。测试用表单当前值，保存仍由 PUT /config 负责。
+    """
+    out = dict(mail)
+    if not isinstance(raw, dict):
+        return out
+    for key in ('host', 'username', 'password', 'from', 'subject_prefix'):
+        value = raw.get(key)
+        if isinstance(value, str):
+            out[key] = value if key == 'password' else value.strip()
+    port = raw.get('port')
+    if isinstance(port, int) and not isinstance(port, bool):
+        out['port'] = port
+    if raw.get('security') in ('ssl', 'starttls', 'none'):
+        out['security'] = raw['security']
+    to = raw.get('to')
+    if isinstance(to, list):
+        out['to'] = [str(x).strip() for x in to if str(x).strip()]
+    # 打码值 = 保持已保存的密码：界面上不可能拿到明文
+    if out.get('password') == '********':
+        out['password'] = mail.get('password') or ''
+    return out
+
+
+def _merge_llm(llm: dict, raw: object) -> dict:
+    """同 `_merge_mail`：测试 LLM 用表单当前值，不落库。"""
+    out = dict(llm)
+    if not isinstance(raw, dict):
+        return out
+    for key in ('base_url', 'model'):
+        value = raw.get(key)
+        if isinstance(value, str):
+            out[key] = value.strip()
+    if isinstance(raw.get('api_key'), str):
+        out['api_key'] = raw['api_key']
+    timeout = raw.get('timeout_seconds')
+    if isinstance(timeout, int) and not isinstance(timeout, bool):
+        out['timeout_seconds'] = timeout
+    if isinstance(raw.get('enabled'), bool):
+        out['enabled'] = raw['enabled']
+    if out.get('api_key') == '********':
+        out['api_key'] = llm.get('api_key') or ''
+    return out
 
 
 @router.get('/config')
@@ -72,9 +121,10 @@ def reset_baseline(request: Request,
 
 @router.post('/mail/egress')
 async def check_egress(request: Request,
+                       payload: dict | None = Body(default=None),
                        user: dict = Depends(security.require_admin)) -> dict:
     cfg = watchdog.load_config()
-    mail = cfg['mail']
+    mail = _merge_mail(cfg['mail'], payload)
     if not mail.get('host'):
         raise HTTPException(status_code=400, detail='请先填写 SMTP 主机')
     result = await asyncio.to_thread(
@@ -88,8 +138,10 @@ async def check_egress(request: Request,
 
 @router.post('/mail/test')
 async def test_mail(request: Request,
+                    payload: dict | None = Body(default=None),
                     user: dict = Depends(security.require_admin)) -> dict:
     cfg = watchdog.load_config()
+    cfg = {**cfg, 'mail': _merge_mail(cfg['mail'], payload)}
     if not cfg['mail'].get('host') or not cfg['mail'].get('to'):
         raise HTTPException(status_code=400, detail='请先填好 SMTP 与收件人')
     result = await watchdog.test_mail(cfg)
@@ -101,10 +153,12 @@ async def test_mail(request: Request,
 
 @router.post('/llm/test')
 async def test_llm(request: Request,
+                   payload: dict | None = Body(default=None),
                    user: dict = Depends(security.require_admin)) -> dict:
     cfg = watchdog.load_config()
-    if not cfg['llm'].get('enabled'):
-        raise HTTPException(status_code=400, detail='请先启用并配置 LLM')
+    cfg = {**cfg, 'llm': _merge_llm(cfg['llm'], payload)}
+    if not cfg['llm'].get('base_url') or not cfg['llm'].get('model'):
+        raise HTTPException(status_code=400, detail='请先填写 LLM 接口地址与模型')
     sample_diff = {
         'added': 3, 'removed': 1,
         'excerpt': ('--- before\n+++ after\n+TAG button class=claim-btn\n'

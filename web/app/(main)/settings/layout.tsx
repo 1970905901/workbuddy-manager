@@ -21,6 +21,7 @@ import {
   FileText,
   KeyRound,
   Route,
+  Radar,
 } from 'lucide-react';
 import {usePathname} from 'next/navigation';
 import {notify} from '@/lib/toast';
@@ -54,6 +55,7 @@ import {PgSyncPanel} from '@/components/common/settings/PgSyncPanel';
 import {ProxyPanel} from '@/components/common/settings/ProxyPanel';
 import {TokensPanel} from '@/components/common/settings/TokensPanel';
 import {ChangelogPanel} from '@/components/common/settings/ChangelogPanel';
+import {WatchdogPanel} from '@/components/common/settings/WatchdogPanel';
 import {UpstreamReloadNotice} from '@/components/common/settings/UpstreamReloadNotice';
 import {CopyButton} from '@/components/ui/copy-button';
 import {Button} from '@/components/ui/button';
@@ -929,6 +931,7 @@ export default function SettingsLayout({children}: {children: React.ReactNode}) 
     users: {icon: <Users className="h-3.5 w-3.5" />},
     tokens: {icon: <KeyRound className="h-3.5 w-3.5" />},
     system: {icon: <DownloadCloud className="h-3.5 w-3.5" />},
+    watchdog: {icon: <Radar className="h-3.5 w-3.5" />},
     backup: {icon: <Database className="h-3.5 w-3.5" />},
     changelog: {icon: <FileText className="h-3.5 w-3.5" />},
     about: {icon: <Info className="h-3.5 w-3.5" />},
@@ -2178,6 +2181,11 @@ export default function SettingsLayout({children}: {children: React.ReactNode}) 
         {/* ═══ 系统更新 ═══ */}
         <TabsContent value="system" className="mt-4 space-y-4">
           <UpdatePanel />
+        </TabsContent>
+
+        {/* ═══ 页面监控 ═══ */}
+        <TabsContent value="watchdog" className="mt-4 space-y-4">
+          <WatchdogPanel />
         </TabsContent>
 
         {/* ═══ 数据备份 ═══ */}

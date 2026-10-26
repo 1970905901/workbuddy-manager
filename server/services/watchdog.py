@@ -933,8 +933,13 @@ async def send_mail(subject: str, body: str, *, cfg: dict | None = None) -> dict
 
 
 async def test_mail(cfg: dict) -> dict:
-    """「发送测试邮件」：先探出口，再真发一封。"""
-    mail = cfg['mail']
+    """「发送测试邮件」：先探出口，再真发一封。
+
+    测试发信**不看 `enabled`**：用户正是在「还没开启通知」的时候需要验证主机、
+    账号与收件人是否可用。开关只约束定时任务里的自动发信。
+    """
+    mail = {**cfg['mail'], 'enabled': True}
+    cfg = {**cfg, 'mail': mail}
     egress = await asyncio.to_thread(probe_smtp_egress, mail['host'], mail['port'])
     if not egress['ok']:
         return {'ok': False, 'egress': egress,
@@ -1064,6 +1069,60 @@ async def _check_target(cfg: dict, target: dict) -> dict:
             'verdict': verdict}
 
 
+def _state_target(result: dict) -> dict:
+    """把一次抓取结果裁剪成能进 `watchdog_state` 的形状。
+
+    为什么不原样存：`diff.excerpt` 是整段 unified diff（最多 160 行），
+    `keywords` 可能上百条——两者都不该进数据库设置项（每轮都整段重写）。
+    但界面要说清「变了什么、判读写的是什么」，所以保留差异的**计数**与判读的
+    **结论 / 证据**，丢掉原文；单条证据与结论都截断到一句话的长度。
+    """
+    out = {k: v for k, v in result.items()
+           if k not in ('diff', 'keywords', 'verdict')}
+    diff = result.get('diff')
+    if isinstance(diff, dict):
+        out['diff'] = {
+            'added': _as_int(diff.get('added')),
+            'removed': _as_int(diff.get('removed')),
+            'truncated': bool(diff.get('truncated')),
+        }
+    verdict = result.get('verdict')
+    if isinstance(verdict, dict):
+        out['verdict'] = {
+            'layout_changed': bool(verdict.get('layout_changed')),
+            'claimable': bool(verdict.get('claimable')),
+            'anomaly': bool(verdict.get('anomaly')),
+            'confidence': _as_float(verdict.get('confidence')),
+            'summary': str(verdict.get('summary') or '')[:300],
+            'evidence': _str_list(verdict.get('evidence'), 5),
+            'actions': _str_list(verdict.get('actions'), 3),
+            'source': str(verdict.get('source') or ''),
+            'llm_error': str(verdict.get('llm_error') or '')[:300],
+        }
+    return out
+
+
+def _str_list(value: object, limit: int, width: int = 200) -> list[str]:
+    """只接受真正的列表；字符串 `'oops'` 被当成列表会切成 `['o','o','p']`。"""
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(x)[:width] for x in list(value)[:limit]]
+
+
+def _as_int(value: object) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
+def _as_float(value: object) -> float:
+    try:
+        return round(float(value), 2)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+
+
 _run_lock = asyncio.Lock()
 
 
@@ -1128,9 +1187,7 @@ async def run_once(trigger: str = 'manual') -> dict:
             'trigger': trigger,
             'started_at': started,
             'finished_at': int(time.time()),
-            'targets': [{k: v for k, v in r.items()
-                         if k not in ('diff', 'keywords', 'verdict')}
-                        for r in target_results],
+            'targets': [_state_target(r) for r in target_results],
             'changed': [r['name'] for r in changed],
             'errors': errors,
             'scan': ({k: v for k, v in scan.items() if k != 'results'}

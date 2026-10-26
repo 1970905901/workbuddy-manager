@@ -1498,3 +1498,163 @@ export interface PgSyncTestResult {
   message: string;
   server_version?: string;
 }
+
+/* ── 页面监控（watchdog）──────────────────────────────── */
+/**
+ * 监控目标。`kind` 决定「比什么」：
+ *   · `html`   —— 页面结构行（标签 + 可见文本）；
+ *   · `assets` —— 页面骨架 + 它引用的前端 bundle（JS 里的字符串与端点）。
+ *     前端发版时页面骨架往往一个字都不变，变的是 bundle 的哈希与内容——
+ *     活动入口和领取文案都在那里，所以默认目标用的是这个。
+ *   · `js` / `text` —— 目标本身就是一个 JS 文件 / 纯文本，直接比其中的字符串。
+ */
+export interface WatchdogTarget {
+  name: string;
+  url: string;
+  kind: 'html' | 'js' | 'text' | 'assets';
+  enabled: boolean;
+}
+
+/** 通知时机：任意变化 / 只有出现可领取 / 只有异常（含可领取）。 */
+export type WatchdogNotifyOn = 'change' | 'claimable' | 'anomaly';
+
+export interface WatchdogLlmConfig {
+  enabled: boolean;
+  /** OpenAI 兼容的 base url；不带 /v1 时自动补 */
+  base_url: string;
+  /** 打码值 `********` 表示保持不变 */
+  api_key: string;
+  model: string;
+  timeout_seconds: number;
+}
+
+export interface WatchdogMailConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  security: 'ssl' | 'starttls' | 'none';
+  username: string;
+  /** 打码值 `********` 表示保持不变 */
+  password: string;
+  from: string;
+  to: string[];
+  subject_prefix: string;
+}
+
+export interface WatchdogConfig {
+  enabled: boolean;
+  interval_minutes: number;
+  targets: WatchdogTarget[];
+  timeout_seconds: number;
+  /** kind=assets 时最多抓几个静态资源（0 = 不抓 bundle） */
+  asset_limit: number;
+  notify_on: WatchdogNotifyOn;
+  /** 检测到变化后，逐账号只读查询「活动补偿」状态 */
+  scan_compensation: boolean;
+  /** 扫描明确可领时才真的领取（复用每日计划里的补偿任务） */
+  auto_claim: boolean;
+  /** 允许监控内网地址（默认关闭：SSRF 防护） */
+  allow_private_targets: boolean;
+  llm: WatchdogLlmConfig;
+  mail: WatchdogMailConfig;
+}
+
+/** 单个 SMTP 端口的出口探测结果。 */
+export interface WatchdogPortProbe {
+  port: number;
+  ok: boolean;
+  banner: string;
+  error: string;
+}
+
+export interface WatchdogEgress {
+  ok: boolean;
+  host: string;
+  port?: number;
+  banner?: string;
+  error?: string;
+  ports: WatchdogPortProbe[];
+  checked_at: number;
+}
+
+/** 判读结论（LLM 或规则退化；`source=rule` 表示 LLM 未启用/失败）。 */
+export interface WatchdogVerdict {
+  layout_changed: boolean;
+  claimable: boolean;
+  anomaly: boolean;
+  confidence: number;
+  summary: string;
+  evidence: string[];
+  actions: string[];
+  source: string;
+  llm_error?: string;
+}
+
+export interface WatchdogTargetResult {
+  name: string;
+  url: string;
+  /** baseline_created = 首次建立基线（不告警） */
+  status: 'baseline_created' | 'unchanged' | 'changed' | 'error';
+  digest: string;
+  previous_digest?: string;
+  lines: number;
+  diff?: {added: number; removed: number; truncated: boolean};
+  verdict?: WatchdogVerdict;
+}
+
+export interface WatchdogScanSummary {
+  ok: boolean;
+  total?: number;
+  claimable?: number;
+  already?: number;
+  unknown?: number;
+  failed?: number;
+  error?: string;
+}
+
+export interface WatchdogRunResult {
+  ok: boolean;
+  trigger: string;
+  started_at?: number;
+  finished_at?: number;
+  targets?: WatchdogTargetResult[];
+  changed?: string[];
+  errors?: {name: string; error: string}[];
+  scan?: WatchdogScanSummary | null;
+  claim?: {ok: boolean; message: string} | null;
+  mail?: {ok: boolean; message?: string; skipped?: string} | null;
+  /** 已有一次检测在运行时返回 */
+  skipped?: string;
+}
+
+export interface WatchdogState {
+  last_run_at?: number;
+  last_result?: WatchdogRunResult;
+  last_error?: string;
+  egress?: WatchdogEgress;
+}
+
+export interface WatchdogStatus {
+  config: WatchdogConfig;
+  state: WatchdogState;
+  /** 现在是否已到下一次检测时间 */
+  due: boolean;
+  next_run_at: number | null;
+}
+
+export interface WatchdogConfigResponse {
+  config: WatchdogConfig;
+}
+
+export interface WatchdogSaveResult {
+  config: WatchdogConfig;
+  mail_egress?: WatchdogEgress | null;
+  warning?: string;
+}
+
+export interface WatchdogMailTest {
+  ok: boolean;
+  message?: string;
+  skipped?: string;
+  egress: WatchdogEgress;
+}

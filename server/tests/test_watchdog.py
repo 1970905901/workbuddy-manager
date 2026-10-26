@@ -1,0 +1,314 @@
+"""上游网页改版监控（services/watchdog.py）。
+
+这里钉住的是**判读口径**，不是实现细节：
+
+1. 归一化必须忽略"每天都会变"的东西（bundle 哈希、时间戳、脚本内容），
+   否则指纹天天变，监控退化成噪音；
+2. 但**结构骨架**与**可见文案**必须留在指纹里——改版信号就在这两处；
+3. 邮件启用是**条件式**的：SMTP 出口探不通就不能落成 enabled=true；
+4. LLM 不可用时要退化成关键词规则，不能因为没配 LLM 就静默不告警。
+"""
+from __future__ import annotations
+
+import socket
+import sys
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from server.services import watchdog  # noqa: E402
+
+
+class NormalizeTest(unittest.TestCase):
+    def test_html_drops_scripts_and_keeps_structure(self) -> None:
+        html = (
+            '<html><head><script src="/app.8f3a.js">var build="20261020";</script>'
+            '<style>.x{color:red}</style></head>'
+            '<body><!-- tracking --><div class="b  a" id="root">'
+            '<button class="claim-btn" data-testid="claim">领取 500 积分</button>'
+            '</div></body></html>'
+        )
+        lines = watchdog.normalize_html(html)
+        joined = '\n'.join(lines)
+        self.assertIn('TAG div class=a b id=root', joined)
+        self.assertIn('TAG button class=claim-btn data-testid=claim', joined)
+        self.assertIn('TEXT 领取 500 积分', joined)
+        self.assertNotIn('build=', joined)       # 脚本内容丢弃
+        self.assertNotIn('color:red', joined)    # 样式内容丢弃
+        self.assertNotIn('tracking', joined)     # 注释丢弃
+
+    def test_dynamic_hashes_do_not_change_digest(self) -> None:
+        a = watchdog.normalize_html(
+            '<div><script src="/app.111.js"></script><a href="/x/111">活动</a></div>')
+        b = watchdog.normalize_html(
+            '<div><script src="/app.222.js"></script><a href="/x/222">活动</a></div>')
+        self.assertEqual(watchdog.digest_of(a), watchdog.digest_of(b))
+
+    def test_real_layout_change_changes_digest(self) -> None:
+        a = watchdog.normalize_html('<div class="old-entry">活动</div>')
+        b = watchdog.normalize_html(
+            '<div class="new-entry"><button>领取</button></div>')
+        self.assertNotEqual(watchdog.digest_of(a), watchdog.digest_of(b))
+
+    def test_js_keeps_chinese_and_endpoints(self) -> None:
+        lines = watchdog.normalize_js(
+            'const a="领取奖励"; const b="/billing/meter/claim-compensation";'
+            ' const c="build-20261020";')
+        joined = '\n'.join(lines)
+        self.assertIn('STR 领取奖励', joined)
+        self.assertIn('URL /billing/meter/claim-compensation', joined)
+        self.assertNotIn('build-20261020', joined)
+
+    def test_keyword_hits_are_limited_and_deduped(self) -> None:
+        lines = ['TEXT 领取 500 积分', 'TEXT 领取 500 积分', 'TEXT 普通文案']
+        hits = watchdog.keyword_hits(lines)
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]['word'], '领取')
+
+
+class DiffTest(unittest.TestCase):
+    def test_counts_added_and_removed(self) -> None:
+        diff = watchdog.diff_lines(['a', 'b'], ['a', 'c'])
+        self.assertEqual(diff['added'], 1)
+        self.assertEqual(diff['removed'], 1)
+        self.assertIn('+c', diff['excerpt'])
+
+    def test_truncation_flag(self) -> None:
+        diff = watchdog.diff_lines([str(i) for i in range(500)],
+                                   [str(i) + 'x' for i in range(500)], limit=10)
+        self.assertTrue(diff['truncated'])
+
+
+class VerdictTest(unittest.TestCase):
+    def test_rule_verdict_flags_claim_keywords(self) -> None:
+        verdict = watchdog.rule_verdict(
+            {'added': 1, 'removed': 0, 'excerpt': '', 'truncated': False},
+            [{'word': '领取', 'line': 'TEXT 领取 500 积分'}])
+        self.assertTrue(verdict['claimable'])
+        self.assertEqual(verdict['source'], 'rule')
+
+    def test_rule_verdict_without_claim_keywords(self) -> None:
+        verdict = watchdog.rule_verdict(
+            {'added': 1, 'removed': 0, 'excerpt': '', 'truncated': False},
+            [{'word': '积分', 'line': 'TEXT 积分明细'}])
+        self.assertFalse(verdict['claimable'])
+
+    def test_parse_verdict_accepts_fenced_json(self) -> None:
+        verdict = watchdog._parse_verdict(  # noqa: SLF001
+            '```json\n{"layout_changed": true, "claimable": true, '
+            '"anomaly": true, "confidence": 0.8, "summary": "新增领取入口"}\n```')
+        self.assertTrue(verdict['claimable'])
+        self.assertAlmostEqual(verdict['confidence'], 0.8)
+
+    def test_parse_verdict_rejects_non_json(self) -> None:
+        with self.assertRaises(RuntimeError):
+            watchdog._parse_verdict('看起来像有新活动')  # noqa: SLF001
+
+    def test_should_notify_modes(self) -> None:
+        verdict = {'claimable': False, 'anomaly': False}
+        self.assertTrue(watchdog._should_notify({'notify_on': 'change'}, verdict, None))  # noqa: SLF001
+        self.assertFalse(watchdog._should_notify({'notify_on': 'claimable'}, verdict, None))  # noqa: SLF001
+        self.assertFalse(watchdog._should_notify({'notify_on': 'anomaly'}, verdict, None))  # noqa: SLF001
+        scan = {'claimable': 2}
+        self.assertTrue(watchdog._should_notify({'notify_on': 'claimable'}, verdict, scan))  # noqa: SLF001
+
+
+class ConfigTest(unittest.IsolatedAsyncioTestCase):
+    async def test_mail_not_enabled_when_egress_blocked(self) -> None:
+        stored: dict = {}
+        fail = {'ok': False, 'host': 'smtp.example.com', 'port': 465,
+                'error': 'timed out', 'ports': [], 'checked_at': 0}
+        with mock.patch.object(watchdog.db, 'get_setting', return_value=None), \
+             mock.patch.object(watchdog.db, 'set_setting',
+                               side_effect=lambda k, v: stored.__setitem__(k, v)), \
+             mock.patch.object(watchdog, 'probe_smtp_egress', return_value=fail):
+            result = await watchdog.save_config({
+                'mail': {'enabled': True, 'host': 'smtp.example.com', 'port': 465,
+                         'from': 'a@example.com', 'to': ['b@example.com']},
+            })
+        self.assertFalse(result['config']['mail']['enabled'])
+        self.assertIn('SMTP 出口不通', result['warning'])
+        self.assertFalse(stored[watchdog.CONFIG_KEY]['mail']['enabled'])
+
+    async def test_mail_enabled_when_egress_ok(self) -> None:
+        ok = {'ok': True, 'host': 'smtp.example.com', 'port': 465,
+              'banner': '220 hi', 'ports': [], 'checked_at': 0}
+        stored: dict = {}
+        with mock.patch.object(watchdog.db, 'get_setting', return_value=None), \
+             mock.patch.object(watchdog.db, 'set_setting',
+                               side_effect=lambda k, v: stored.__setitem__(k, v)), \
+             mock.patch.object(watchdog, 'probe_smtp_egress', return_value=ok):
+            result = await watchdog.save_config({
+                'mail': {'enabled': True, 'host': 'smtp.example.com', 'port': 465,
+                         'from': 'a@example.com', 'to': ['b@example.com']},
+            })
+        self.assertTrue(result['config']['mail']['enabled'])
+        self.assertEqual(result['warning'], '')
+
+    async def test_masked_password_keeps_old_value(self) -> None:
+        current = watchdog._default_config()  # noqa: SLF001
+        current['mail']['password'] = 'old-secret'
+        current['mail']['host'] = 'smtp.example.com'
+        current['mail']['enabled'] = False
+        stored: dict = {}
+        with mock.patch.object(watchdog.db, 'get_setting', return_value=current), \
+             mock.patch.object(watchdog.db, 'set_setting',
+                               side_effect=lambda k, v: stored.__setitem__(k, v)):
+            await watchdog.save_config({'mail': {'password': '********'},
+                                        'targets': [{'name': 'x', 'url': 'https://a.example/'}]})
+        self.assertEqual(stored[watchdog.CONFIG_KEY]['mail']['password'], 'old-secret')
+        self.assertEqual(watchdog.public_config(stored[watchdog.CONFIG_KEY])
+                         ['mail']['password'], '********')
+
+    async def test_partial_save_keeps_other_sections(self) -> None:
+        current = watchdog._default_config()  # noqa: SLF001
+        current['targets'] = [{'name': 'keep-me', 'url': 'https://a.example/',
+                               'kind': 'html', 'enabled': True}]
+        current['llm']['model'] = 'keep-model'
+        stored: dict = {}
+        with mock.patch.object(watchdog.db, 'get_setting', return_value=current),              mock.patch.object(watchdog.db, 'set_setting',
+                               side_effect=lambda k, v: stored.__setitem__(k, v)):
+            await watchdog.save_config({'interval_minutes': 60})
+        saved = stored[watchdog.CONFIG_KEY]
+        self.assertEqual(saved['targets'][0]['name'], 'keep-me')
+        self.assertEqual(saved['llm']['model'], 'keep-model')
+        self.assertEqual(saved['interval_minutes'], 60)
+
+    async def test_invalid_interval_rejected(self) -> None:
+        with mock.patch.object(watchdog.db, 'get_setting', return_value=None):
+            with self.assertRaises(ValueError):
+                await watchdog.save_config({'interval_minutes': 1})
+
+    async def test_targets_must_be_http(self) -> None:
+        with mock.patch.object(watchdog.db, 'get_setting', return_value=None):
+            with self.assertRaises(ValueError):
+                await watchdog.save_config(
+                    {'targets': [{'name': 'x', 'url': 'file:///etc/passwd'}]})
+
+
+class EgressTest(unittest.TestCase):
+    def test_probe_reads_banner(self) -> None:
+        server = socket.socket()
+        server.bind(('127.0.0.1', 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+
+        def serve() -> None:
+            conn, _ = server.accept()
+            try:
+                conn.sendall(b'220 fake-smtp ready\r\n')
+            finally:
+                conn.close()
+                server.close()
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        result = watchdog._probe_one('127.0.0.1', port, timeout=2)  # noqa: SLF001
+        thread.join(timeout=3)
+        self.assertTrue(result['ok'])
+        self.assertIn('220', result['banner'])
+
+    def test_probe_reports_unreachable(self) -> None:
+        # 绑一个端口再立刻关掉：大概率拿到 RST/拒绝连接 —— 断言"不通"即可
+        server = socket.socket()
+        server.bind(('127.0.0.1', 0))
+        port = server.getsockname()[1]
+        server.close()
+        result = watchdog._probe_one('127.0.0.1', port, timeout=1)  # noqa: SLF001
+        self.assertFalse(result['ok'])
+        self.assertTrue(result['error'])
+
+
+class RunOnceTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.snapshots: dict[str, dict] = {}
+
+    def _patch_env(self, cfg: dict, pages: list[str]):
+        def fake_load(url: str):
+            return self.snapshots.get(url)
+
+        def fake_save(url: str, digest: str, lines: list[str]) -> None:
+            self.snapshots[url] = {'url': url, 'digest': digest, 'lines': lines}
+
+        return [
+            mock.patch.object(watchdog, 'load_config', return_value=cfg),
+            mock.patch.object(watchdog, 'load_snapshot', side_effect=fake_load),
+            mock.patch.object(watchdog, '_save_snapshot', side_effect=fake_save),
+            mock.patch.object(watchdog, 'fetch_target',
+                              new=mock.AsyncMock(side_effect=pages)),
+            mock.patch.object(watchdog.db, 'get_setting', return_value={}),
+            mock.patch.object(watchdog.db, 'set_setting'),
+        ]
+
+    async def test_baseline_then_unchanged_then_changed(self) -> None:
+        cfg = watchdog._default_config()  # noqa: SLF001
+        cfg['targets'] = [{'name': 't', 'url': 'https://a.example/', 'kind': 'html',
+                           'enabled': True}]
+        cfg['scan_compensation'] = False
+        pages = ['<div>活动</div>', '<div>活动</div>',
+                 '<div><button>领取</button></div>']
+        patches = self._patch_env(cfg, pages)
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+        first = await watchdog.run_once('test')
+        self.assertEqual(first['targets'][0]['status'], 'baseline_created')
+        second = await watchdog.run_once('test')
+        self.assertEqual(second['targets'][0]['status'], 'unchanged')
+        third = await watchdog.run_once('test')
+        self.assertEqual(third['targets'][0]['status'], 'changed')
+        self.assertIn('t', third['changed'])
+        # 邮件未启用时 send_mail 会返回 skipped，而不是静默不记录
+        self.assertFalse(third['mail']['ok'])
+        self.assertIn('未启用', third['mail']['skipped'])
+
+    async def test_changed_target_triggers_mail(self) -> None:
+        cfg = watchdog._default_config()  # noqa: SLF001
+        cfg['targets'] = [{'name': 't', 'url': 'https://a.example/', 'kind': 'html',
+                           'enabled': True}]
+        cfg['scan_compensation'] = False
+        cfg['mail'] = {**cfg['mail'], 'enabled': True, 'host': 'smtp.example.com',
+                       'from': 'a@example.com', 'to': ['b@example.com']}
+        self.snapshots['https://a.example/'] = {
+            'digest': watchdog.digest_of(['TAG div']), 'lines': ['TAG div']}
+        patches = self._patch_env(cfg, ['<div>领取</div>'])
+        sent: list[tuple[str, str]] = []
+
+        async def fake_send(subject: str, body: str, *, cfg=None):
+            sent.append((subject, body))
+            return {'ok': True}
+
+        patches.append(mock.patch.object(watchdog, 'send_mail',
+                                         new=mock.AsyncMock(side_effect=fake_send)))
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+        result = await watchdog.run_once('test')
+        self.assertEqual(result['targets'][0]['status'], 'changed')
+        self.assertEqual(len(sent), 1)
+        self.assertIn('t', sent[0][0])
+        self.assertIn('领取', sent[0][1])
+
+
+class SchedulerTest(unittest.TestCase):
+    def test_due_respects_interval_and_enabled(self) -> None:
+        cfg = watchdog._default_config()  # noqa: SLF001
+        cfg['enabled'] = False
+        self.assertFalse(watchdog._is_due(cfg, {'last_run_at': 0}, now=10**9))  # noqa: SLF001
+        cfg['enabled'] = True
+        cfg['interval_minutes'] = 60
+        self.assertTrue(watchdog._is_due(cfg, {'last_run_at': 0}, now=10**9))  # noqa: SLF001
+        self.assertFalse(watchdog._is_due(cfg, {'last_run_at': 10**9}, now=10**9 + 60))  # noqa: SLF001
+        self.assertTrue(watchdog._is_due(cfg, {'last_run_at': 10**9}, now=10**9 + 3600))  # noqa: SLF001
+
+
+if __name__ == '__main__':
+    unittest.main()

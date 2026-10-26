@@ -122,7 +122,7 @@ export function ReloginQueueDialog({
               </Badge>
             </div>
             <DialogDescription className="text-xs text-muted-foreground mt-1">
-              封控账号排队重新登录解封；点击下方列表中的任意账号可直接跳转切换。
+              {t('accounts.reloginQueueDesc')}
             </DialogDescription>
           </DialogHeader>
 
@@ -142,9 +142,9 @@ export function ReloginQueueDialog({
               <div className="grid h-12 w-12 place-items-center rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
                 <CheckCircle2 className="h-6 w-6" />
               </div>
-              <div className="text-sm font-medium">当前没有封控中的账号</div>
+              <div className="text-sm font-medium">{t('accounts.reloginQueueEmptyTitle')}</div>
               <p className="text-xs text-muted-foreground max-w-sm">
-                所有账号均正常在线或在正常调度中，无需重新登录解封。
+                {t('accounts.reloginQueueEmptyDesc')}
               </p>
             </div>
           ) : (
@@ -178,7 +178,7 @@ export function ReloginQueueDialog({
 
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/40">
                     <span className="text-[11px] text-muted-foreground">
-                      测试其连通性，或发起重新授权登录
+                      {t('accounts.reloginQueueCurrentHint')}
                     </span>
                     <div className="flex gap-2">
                       <Button
@@ -207,8 +207,8 @@ export function ReloginQueueDialog({
               {/* 队列清单（点击任意行直接跳转并选中该账号） */}
               <div className="space-y-2 mt-4">
                 <div className="flex items-center justify-between px-1 text-xs text-muted-foreground font-medium">
-                  <span>{t('accounts.reloginQueueWaiting')}列表（共 {queue.length} 个）</span>
-                  <span className="text-[11px] opacity-75">点击行跳转 · 点重登直达</span>
+                  <span>{t('accounts.reloginQueueWaitingCount', {count: queue.length})}</span>
+                  <span className="text-[11px] opacity-75">{t('accounts.reloginQueueListHint')}</span>
                 </div>
 
                 <div className="rounded-xl border border-border/50 divide-y divide-border/40 overflow-hidden bg-background/50">

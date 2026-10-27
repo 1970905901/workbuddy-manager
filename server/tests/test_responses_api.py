@@ -1386,7 +1386,6 @@ class StructuredOutputInstructionTest(unittest.TestCase):
         self.assertEqual([m['role'] for m in out['messages']], ['user'])
 
 
-
 class OrphanToolOutputTest(unittest.TestCase):
     """无 call_id 且无对应 function_call 的工具结果不能写成 role=tool。
 
@@ -1416,7 +1415,6 @@ class OrphanToolOutputTest(unittest.TestCase):
         ]})
         tool_msg = next(m for m in out['messages'] if m['role'] == 'tool')
         self.assertEqual(tool_msg['tool_call_id'], 'c9')
-
 
 
 if __name__ == '__main__':

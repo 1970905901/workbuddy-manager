@@ -548,6 +548,15 @@ curl -s http://127.0.0.1:7863/healthz
 chown -R 10001:10001 /opt/workbuddy2api/auths /opt/workbuddy2api/data
 ```
 
+若管理端跑在宿主机（systemd）而**不是**容器里，建议再给 `auths` 打开 setgid
+并把属组对齐服务账号。这样容器里新建的账号文件继承同一个属组，管理端重登时
+写回也不会因为「改不到别的组」被拒：
+
+```bash
+chgrp -R workbuddy /opt/workbuddy2api/auths
+chmod g+s /opt/workbuddy2api/auths
+```
+
 **Q：首次构建上游很慢**
 上游是 Go 项目，首次 `docker compose up --build` 需拉取基础镜像并编译，
 视网络情况可能需要几分钟，属正常现象。不想本地编译就把 compose 的 `build: .`

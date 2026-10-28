@@ -121,11 +121,9 @@
 
 ## 官方下载源
 
-**只从本仓库的 [Releases](https://github.com/ithtelab/workbuddy-manager/releases) 下载。** 本项目的官方发布包提供 sha256 与 `.sig` 签名，更新器会核对它们。
+**建议从本仓库的 [Releases](https://github.com/ithtelab/workbuddy-manager/releases) 下载。** 官方发布包提供 sha256 与 `.sig` 签名，更新器会核对它们；从别处获得的包无法按这条校验链确认来源与完整性，请自行判断，并**不要为此跳过摘要或签名校验**（`WB_SKIP_SIGNATURE=1` 等）。
 
-近期有第三方账号在 issue 里引导用户到 `github.com/AEmbers/workbuddy-manager` 下载所谓 `v2.8.4` / `v2.8.5`，并声称“已独立接手本项目”。该 fork 未获得本项目授权，构建也没有本项目的离线签名，无法按官方校验链确认来源和完整性。**不要为了安装第三方包设置 `WB_SKIP_SIGNATURE=1` 或跳过摘要校验。**
-
-如果已经在第三方包上登录过面板或填写过上游账号，建议轮换面板管理员密码和上游账号授权，然后重新安装官方发布包。
+本项目以 MIT 许可开源，欢迎任何人在许可证范围内使用、修改与分发；出现其他来源的构建属于正常现象，请以本仓库的发布说明与校验值为准。
 
 ---
 

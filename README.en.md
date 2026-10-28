@@ -129,11 +129,9 @@ More screenshots: [full gallery](docs/screenshots.md).
 
 ## Official download source
 
-**Download only from this repository's [Releases](https://github.com/ithtelab/workbuddy-manager/releases).** Official packages ship with a sha256 digest and `.sig` signature, and the updater verifies them.
+**We recommend downloading from this repository's [Releases](https://github.com/ithtelab/workbuddy-manager/releases).** Official packages ship with a sha256 digest and `.sig` signature, and the updater verifies both. Packages obtained elsewhere cannot be verified through that chain, so judge the source yourself — and **never disable the digest or signature checks** (`WB_SKIP_SIGNATURE=1`, etc.) to install one.
 
-A third-party account has been directing users in issues to `github.com/AEmbers/workbuddy-manager` for so-called `v2.8.4` / `v2.8.5` builds, claiming to have "taken over" this project. That fork is not authorized by this project, and its builds do not carry this project's offline signature, so their origin and integrity cannot be verified through the official chain. **Do not set `WB_SKIP_SIGNATURE=1` or disable digest checks to install a third-party package.**
-
-If you have already signed in to the panel or entered upstream accounts on a third-party build, rotate the panel admin password and upstream account authorizations, then reinstall the official package.
+This project is open source under the MIT licence, and anyone may use, modify and redistribute it within that licence. Builds from other sources existing is expected; treat this repository's release notes and checksums as the reference.
 
 ---
 

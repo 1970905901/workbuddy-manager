@@ -553,6 +553,15 @@
     "reloginQueueWaitingCount": "列表（共 {count} 個）",
     "reloginQueueListHint": "點擊列切換 · 點重登直達"
   },
+  "whatsNew": {
+    "title": "本次更新：v{version}",
+    "titleFallback": "本次更新",
+    "thanks": "感謝大家提出的意見與回饋的問題，也感謝 PR 共創者一起努力完善本專案。",
+    "boundaryTitle": "使用邊界",
+    "boundary": "本專案只用於管理**本人及親屬自願授權**的帳號；禁止批次註冊、帳號交易、代註冊、接碼、盜號、繞過平台風控，以及任何商業轉售或營利用途。使用即表示你已閱讀並同意完整免責聲明。",
+    "disclaimerLink": "查看完整免責聲明",
+    "fullChangelog": "查看完整更新日誌"
+  },
   "keys": {
     "title": "API 金鑰",
     "description": "對外反向代理閘道的派發金鑰，支援版本限定、有效期、IP 白名單、模型白名單與配額（每 60 秒自動重新整理）",

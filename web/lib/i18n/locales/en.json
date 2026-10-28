@@ -580,6 +580,15 @@
     "reloginQueueWaitingCount": "Queue ({count})",
     "reloginQueueListHint": "Click a row to switch · Re-login jumps straight in"
   },
+  "whatsNew": {
+    "title": "What's new in v{version}",
+    "titleFallback": "What's new",
+    "thanks": "Thanks to everyone who filed issues and suggestions, and to the PR contributors who helped improve this project.",
+    "boundaryTitle": "Intended use",
+    "boundary": "This project is only for managing accounts **you or your family members have voluntarily authorized**. Bulk registration, account trading, registration-on-behalf, SMS-code farming, account theft, bypassing platform risk controls, resale, or any for-profit use are prohibited. Using it means you have read and agreed to the full disclaimer.",
+    "disclaimerLink": "Read the full disclaimer",
+    "fullChangelog": "Open the full changelog"
+  },
   "keys": {
     "title": "API keys",
     "description": "Distribution keys for the public gateway, with edition pinning, expiry, IP allowlist, model allowlist and quota (auto-refresh every 60s)",

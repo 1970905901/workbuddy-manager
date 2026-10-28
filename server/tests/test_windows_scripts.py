@@ -389,5 +389,25 @@ class WindowsLauncherUpdateTest(unittest.TestCase):
         self.assertIn('检查更新', src)
 
 
+class WindowsConsoleEncodingTest(unittest.TestCase):
+    """issue #306：UTF-8 控制台（Beta「Unicode UTF-8 全球语言支持」）下不能按 GBK 解码。"""
+
+    def _src(self) -> str:
+        path = _ROOT / 'windows' / 'launcher' / 'src' / 'ServiceGate.cs'
+        self.assertTrue(path.is_file(), f'缺少 {path}')
+        return path.read_text(encoding='utf-8-sig')
+
+    def test_uses_console_output_encoding(self) -> None:
+        src = self._src()
+        self.assertIn('ConsoleOutputEncoding()', src,
+                      '脚本输出必须按当前控制台编码解码，不能写死 OEM 代码页')
+        self.assertIn('Console.OutputEncoding', src)
+
+    def test_falls_back_to_oem_when_console_missing(self) -> None:
+        src = self._src()
+        self.assertIn('OEMCodePage', src,
+                      '取不到控制台编码时应退回 OEM 代码页（无控制台启动的旧行为）')
+
+
 if __name__ == '__main__':
     unittest.main()

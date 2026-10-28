@@ -1386,5 +1386,36 @@ class StructuredOutputInstructionTest(unittest.TestCase):
         self.assertEqual([m['role'] for m in out['messages']], ['user'])
 
 
+class OrphanToolOutputTest(unittest.TestCase):
+    """无 call_id 且无对应 function_call 的工具结果不能写成 role=tool。
+
+    Codex 的「agent 创建会话」会在子会话开头只下发一条
+    `function_call_output`（name=create_thread，内容为 <codex_delegation>），
+    没有对应的 function_call，也没有 call_id。旧实现会把它写成
+    `role=tool, tool_call_id=''`，上游严格校验直接返回
+    11148 `tool calls and tool results do not match`，新会话第一轮即失败。
+
+    修复：这种孤儿结果降级为 user 消息，内容保留（委派任务就在其中）。
+    带 call_id 的结果保持既有行为不变（见 ToolOutputImageTest）。
+    """
+
+    def test_orphan_output_without_call_id_becomes_user_message(self) -> None:
+        out = R.to_chat_request({'model': 'm', 'input': [
+            {'type': 'function_call_output', 'name': 'create_thread',
+             'output': '<codex_delegation><input>只回复 OK</input></codex_delegation>'},
+        ]})
+        roles = [m['role'] for m in out['messages']]
+        self.assertEqual(roles, ['user'], f'孤儿结果不应变成 tool：{roles}')
+        self.assertIn('codex_delegation', out['messages'][0]['content'])
+
+    def test_output_without_call_id_pairs_with_single_open_call(self) -> None:
+        out = R.to_chat_request({'model': 'm', 'input': [
+            {'type': 'function_call', 'call_id': 'c9', 'name': 'bar', 'arguments': '{}'},
+            {'type': 'function_call_output', 'output': 'result-9'},
+        ]})
+        tool_msg = next(m for m in out['messages'] if m['role'] == 'tool')
+        self.assertEqual(tool_msg['tool_call_id'], 'c9')
+
+
 if __name__ == '__main__':
     unittest.main()

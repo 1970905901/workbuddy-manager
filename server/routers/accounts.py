@@ -1772,6 +1772,7 @@ _PROBE_MODELS_MAX = 10
 _PROBE_ACCOUNT_GAP_SECONDS = 0.6
 _PROBE_CONCURRENCY = 4
 _PROBE_REQUEST_TIMEOUT = 30
+_MODEL_PROBE_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
 
 
 def _probe_model_name(raw: object) -> str:
@@ -1796,7 +1797,8 @@ async def probe_models(body: dict = Body(...),
     限流保护：同一账号内串行、每条之间 600ms；不同账号最多 4 路并发；
     一次最多 60 条组合。看到 6004 也**不重试**（探测不能变成新的限流来源）。
     """
-    base_dir = _require_dir(_group(upstream_id))
+    group = _group(upstream_id)
+    base_dir = _require_dir(group)
     raw_accounts = body.get('accounts')
     raw_models = body.get('models')
     if not isinstance(raw_accounts, list) or not isinstance(raw_models, list):
@@ -1858,7 +1860,8 @@ async def probe_models(body: dict = Body(...),
     results: list[dict] = []
 
     async def one(target: dict) -> None:
-        async with sem:
+        lock = _MODEL_PROBE_LOCKS.setdefault((group['base_url'], target['uid']), asyncio.Lock())
+        async with sem, lock:
             for idx, model in enumerate(models):
                 if idx:
                     await asyncio.sleep(_PROBE_ACCOUNT_GAP_SECONDS)
@@ -1871,6 +1874,17 @@ async def probe_models(body: dict = Body(...),
                     detail = {'status': 'error', 'code': None,
                               'message': f'探测超时（>{_PROBE_REQUEST_TIMEOUT}s）',
                               'latency_ms': _PROBE_REQUEST_TIMEOUT * 1000}
+                if detail.get('status') == 'ok':
+                    recovered, recovery_message, recovery_code = await wb2api.clear_model_block(
+                        target['uid'], model, base_url=group['base_url'],
+                        api_key=group['api_key'])
+                    if recovery_code == 'no_route':
+                        # admin.enabled 默认 false：没有这条同步通道≠同步失败。
+                        detail['gateway_sync_skipped'] = True
+                    else:
+                        detail['gateway_synced'] = recovered
+                    if recovery_message:
+                        detail['gateway_sync_message'] = recovery_message
                 results.append({
                     'file': target['file'],
                     'uid': target['uid'],

@@ -1028,6 +1028,11 @@ export interface TaskRunStatus {
 export type ProbeStatus = 'ok' | 'rate' | 'credit' | 'auth' | 'no_model' | 'error';
 
 export interface ProbeModelResult {
+  /** 探测成功且已同步网关（解除该模型 11102 误标）；上游没开管理接口时缺省 */
+  gateway_synced?: boolean;
+  /** 上游未注册管理接口（admin.enabled=false）：不是失败，只是无从同步 */
+  gateway_sync_skipped?: boolean;
+  gateway_sync_message?: string;
   file: string;
   uid: string;
   nickname: string;

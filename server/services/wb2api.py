@@ -16,6 +16,7 @@ import ssl
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 from .. import config
 from .filelock import file_lock
@@ -597,6 +598,20 @@ async def _admin_account_call(uid: str, action: str, *, reason: str = '',
     except Exception:  # noqa: BLE001 —— 回显只是锦上添花，解析不了不算失败
         payload = {}
     return True, '', 'ok', payload if isinstance(payload, dict) else {}
+
+
+async def clear_model_block(uid: str, model: str, *, base_url: str | None = None,
+                            api_key: str | None = None) -> tuple[bool, str, str]:
+    """成功探测同步到运行中的网关；只清 11102，不清真实模型配额或账号状态。
+
+    第三项是 `_admin_account_call` 的结果码：`no_route` 表示上游没注册管理接口
+    （`admin.enabled` 默认 false）。那不是同步失败，只是没有这条同步通道 ——
+    调用方据此按「不可用」处理，别把它报成错误、也别反复重试。
+    """
+    action = f'models/{quote(model, safe="")}/available'
+    ok, message, code, _ = await _admin_account_call(
+        uid, action, base_url=base_url, api_key=api_key)
+    return ok, message, code
 
 
 async def set_manual_disabled(uid: str, disabled: bool, reason: str = '',

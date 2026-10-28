@@ -146,7 +146,14 @@ export function WhatsNewDialog() {
   }
 
   // 只展示**当前版本**那一节：历史版本用户自己去「更新日志」看。
-  const current = data?.versions?.find((v) => v.version === data?.current);
+  //
+  // 版本号必须按去掉 `v` 前缀比：`/api/system/changelog` 的 `current` 是
+  // `v2.11.1`（来自 `.version`），而 CHANGELOG 的段标题是 `[2.11.1]`。严格相等
+  // 会让 find 永远落空 —— 弹窗照常出现，但一条更新内容都不显示（只剩致谢与
+  // 免责声明）。「更新日志」页一直按这个口径归一，这里跟它保持一致。
+  const norm = (v: string) => v.replace(/^v/i, '').trim();
+  const current = data?.versions?.find(
+    (v) => !v.unreleased && norm(v.version) === norm(data?.current || ''));
   const sections = current?.sections ?? [];
 
   return (

@@ -71,6 +71,15 @@ class WhatsNewCopyTest(unittest.TestCase):
         self.assertIn('const REPO_URL', src)
         self.assertIn('stargazers', src, 'Star 按钮应直达 stargazers 页')
 
+    def test_version_match_ignores_v_prefix(self) -> None:
+        """`/api/system/changelog` 的 current 是 `v2.11.1`，CHANGELOG 段标题是
+        `[2.11.1]` —— 严格相等会让弹窗一条更新内容都不显示。"""
+        src = _DIALOG.read_text(encoding='utf-8')
+        self.assertNotIn('v.version === data?.current', src,
+                         '版本号必须去掉 v 前缀再比（与 ChangelogPanel 同口径）')
+        self.assertIn("replace(/^v/i", src, '没有对版本号做 v 前缀归一')
+        self.assertIn('!v.unreleased', src, '「未发布」段不该被当成当前版本')
+
     def test_repo_links_are_external_safe(self) -> None:
         src = _DIALOG.read_text(encoding='utf-8')
         self.assertGreaterEqual(src.count('rel="noreferrer"'), 3,

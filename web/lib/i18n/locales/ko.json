@@ -1261,6 +1261,7 @@
     "autoTargetManager": "관리 패널만",
     "autoWindowHint": "시간대는 서버 로컬 시간({tz}) 기준입니다. 시작과 끝이 같으면 하루 종일 업데이트할 수 있습니다.",
     "autoNoDocker": "이 환경에서는 docker를 제어할 수 없어 관리 패널만 자동 업데이트합니다.",
+    "autoUnsupported": "Windows 네이티브 배포는 원클릭 업데이트를 지원하지 않아 자동 업데이트를 사용할 수 없습니다. 수동으로 업데이트한 뒤 windows\\service-tools.ps1 restart 를 실행하세요.",
     "autoLastRun": "마지막 확인: {ago} · {msg}",
     "autoSavedOn": "자동 업데이트를 켰습니다",
     "autoSavedOff": "자동 업데이트를 껐습니다",

@@ -32,7 +32,7 @@ import json
 import logging
 import time
 
-from .. import db, security
+from .. import config, db, security
 from . import updater
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,16 @@ _task: asyncio.Task | None = None
 
 
 # ── 配置 ────────────────────────────────────────────────────────────────
+def unsupported_reason() -> str:
+    """当前部署形态不支持网页一键更新时返回原因；支持时返回空串。
+
+    判据直接取自 `updater.unsupported_reason()`（一键更新的前置拒绝）—— 两处
+    各写一份的话，新增部署形态时只改一处，另一处就会拿过期的判断放行或误拒，
+    而这种不一致只会在无人值守时才暴露。
+    """
+    return updater.unsupported_reason()
+
+
 def default_config() -> dict:
     return {
         'enabled': False,
@@ -238,6 +248,11 @@ def run_once(now: float | None = None, *, force: bool = False) -> dict:
     state = get_state()
     now = time.time() if now is None else now
     if not cfg['enabled'] and not force:
+        return state
+    blocked = unsupported_reason()
+    if blocked:
+        state.update(last_action='unsupported', last_message=blocked, pending_version='')
+        _save_state(state)
         return state
 
     # 上一轮自动启动的更新已经落地：清掉失败重试保护

@@ -218,6 +218,61 @@ class RunOnceTest(unittest.TestCase):
         self.assertEqual(state['last_message'], '已有更新任务正在执行')
         self.assertEqual(state['last_attempt_version'], 'v9.9.9')
 
+    def test_windows_native_is_skipped_without_trying(self) -> None:
+        self.settings[autoupdate.CONFIG_KEY] = _cfg()
+        with mock.patch.object(autoupdate.updater.os, 'name', 'nt'), \
+                mock.patch.object(autoupdate.updater.config, 'WB2API_MODE', 'native'):
+            state = autoupdate.run_once(self._now_at_hour(4))
+        self.assertEqual(state['last_action'], 'unsupported')
+        self.check_mock.assert_not_called()
+        self.start_mock.assert_not_called()
+
+
+class UnsupportedReasonTest(unittest.TestCase):
+    def test_windows_native_unsupported(self) -> None:
+        with mock.patch.object(autoupdate.updater.os, 'name', 'nt'), \
+                mock.patch.object(autoupdate.updater.config, 'WB2API_MODE', 'native'):
+            self.assertTrue(autoupdate.unsupported_reason())
+
+    def test_windows_docker_and_linux_supported(self) -> None:
+        with mock.patch.object(autoupdate.updater.os, 'name', 'nt'), \
+                mock.patch.object(autoupdate.updater.config, 'WB2API_MODE', 'docker'):
+            self.assertEqual(autoupdate.unsupported_reason(), '')
+        with mock.patch.object(autoupdate.updater.os, 'name', 'posix'), \
+                mock.patch.object(autoupdate.updater.config, 'WB2API_MODE', 'native'):
+            self.assertEqual(autoupdate.unsupported_reason(), '')
+
+
+    def test_same_predicate_as_one_click_update(self) -> None:
+        """自动更新与一键更新必须读同一个判据，避免新增部署形态时两处漂移。"""
+        from server.services import updater
+        for os_name, mode, expected in (('nt', 'native', True), ('nt', 'docker', False),
+                                        ('posix', 'native', False), ('posix', 'systemd', False)):
+            with mock.patch.object(updater.os, 'name', os_name),                     mock.patch.object(updater.config, 'WB2API_MODE', mode):
+                self.assertEqual(bool(autoupdate.unsupported_reason()), expected,
+                                 f'{os_name}/{mode}')
+
+
+class SaveEndpointTest(unittest.TestCase):
+    def test_enabling_is_rejected_when_unsupported(self) -> None:
+        from fastapi import HTTPException
+        from server.routers import settings as settings_router
+        with mock.patch.object(autoupdate, 'unsupported_reason', return_value='不支持'), \
+                mock.patch.object(autoupdate, 'save_config') as save:
+            with self.assertRaises(HTTPException) as ctx:
+                settings_router.save_auto_update(_cfg(), user={'username': 'admin'})
+        self.assertEqual(ctx.exception.status_code, 409)
+        save.assert_not_called()
+
+    def test_disabling_still_allowed_when_unsupported(self) -> None:
+        from server.routers import settings as settings_router
+        cfg = {**_cfg(), 'enabled': False}
+        with mock.patch.object(autoupdate, 'unsupported_reason', return_value='不支持'), \
+                mock.patch.object(autoupdate, 'save_config', return_value=cfg), \
+                mock.patch.object(settings_router.security, 'audit'), \
+                mock.patch.object(settings_router, '_auto_update_payload', return_value={}):
+            settings_router.save_auto_update(cfg, user={'username': 'admin'})
+
 
 if __name__ == '__main__':
     unittest.main()

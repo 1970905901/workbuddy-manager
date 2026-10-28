@@ -1254,6 +1254,8 @@ export interface AutoUpdateInfo extends AutoUpdateConfig {
     pending_version: string;
   };
   docker_ok: boolean;
+  /** 非空 = 当前部署形态不支持自动更新（如 Windows 原生），开关禁用 */
+  unsupported_reason: string;
   server_tz_offset_minutes: number;
 }
 

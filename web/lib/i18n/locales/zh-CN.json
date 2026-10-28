@@ -1261,6 +1261,7 @@
     "autoTargetManager": "仅管理端",
     "autoWindowHint": "时间窗按服务器本地时间（{tz}）计算；开始与结束相同表示全天都可以更新。",
     "autoNoDocker": "当前环境无法操作 docker，只会自动更新管理端。",
+    "autoUnsupported": "Windows 原生部署暂不支持网页一键更新，因此无法自动更新；请手动更新后运行 windows\\service-tools.ps1 restart。",
     "autoLastRun": "上次检测：{ago} · {msg}",
     "autoSavedOn": "已开启自动更新",
     "autoSavedOff": "已关闭自动更新",

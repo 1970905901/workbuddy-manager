@@ -14,6 +14,7 @@
 [![Release](https://img.shields.io/github/v/release/ithtelab/workbuddy-manager?color=22c55e&label=Release)](https://github.com/ithtelab/workbuddy-manager/releases)
 [![Changelog](https://img.shields.io/badge/更新日志-CHANGELOG-blue)](CHANGELOG.md)
 [![Issues](https://img.shields.io/github/issues/ithtelab/workbuddy-manager?color=f59e0b&label=反馈)](https://github.com/ithtelab/workbuddy-manager/issues)
+[![Stars](https://img.shields.io/github/stars/ithtelab/workbuddy-manager?color=f5c542&label=Stars)](https://github.com/ithtelab/workbuddy-manager/stargazers)
 
 [English](README.en.md) · **简体中文** ｜ 本项目在 [LINUX DO](https://linux.do) 社区发布与交流
 
@@ -32,6 +33,11 @@
 **界面预览**
 
 </div>
+
+<p align="center">
+  仓库地址：<a href="https://github.com/ithtelab/workbuddy-manager">github.com/ithtelab/workbuddy-manager</a> —— 已经突破 <strong>2000 Stars</strong>，感谢每一位 Star、Issue 与 PR。
+  觉得好用，欢迎点个 <a href="https://github.com/ithtelab/workbuddy-manager/stargazers">Star</a> 给我们一个支持。
+</p>
 
 ---
 

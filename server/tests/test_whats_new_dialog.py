@@ -58,7 +58,23 @@ class WhatsNewCopyTest(unittest.TestCase):
     """五种语言的公告文案必须齐全，且边界声明与 README 同义。"""
 
     REQUIRED = ('title', 'titleFallback', 'thanks', 'boundaryTitle',
-                'boundary', 'disclaimerLink', 'fullChangelog')
+                'boundary', 'disclaimerLink', 'fullChangelog',
+                'starTitle', 'starBody', 'starLink')
+
+    def test_star_block_links_to_the_repo(self) -> None:
+        """2k Stars 模块必须同时给出仓库地址与 Star 入口，且都指向本仓库。"""
+        src = _DIALOG.read_text(encoding='utf-8')
+        self.assertIn('whatsNew.starTitle', src, '弹窗里没有 Star 里程碑')
+        self.assertIn('whatsNew.starLink', src, '没有 Star 按钮')
+        self.assertIn('https://github.com/ithtelab/workbuddy-manager', src)
+        # 仓库地址只写一份常量：两处各写一份必然会漂移
+        self.assertIn('const REPO_URL', src)
+        self.assertIn('stargazers', src, 'Star 按钮应直达 stargazers 页')
+
+    def test_repo_links_are_external_safe(self) -> None:
+        src = _DIALOG.read_text(encoding='utf-8')
+        self.assertGreaterEqual(src.count('rel="noreferrer"'), 3,
+                                '站外链接必须带 rel=noreferrer')
 
     def test_all_locales_have_keys(self) -> None:
         import json

@@ -2,7 +2,7 @@
 
 import {useEffect, useState} from 'react';
 import {useRouter} from 'next/navigation';
-import {Megaphone, Sparkles, X} from 'lucide-react';
+import {ExternalLink, Megaphone, Sparkles, Star, X} from 'lucide-react';
 import {Button} from '@/components/ui/button';
 import {
   Dialog,
@@ -31,6 +31,13 @@ import type {Changelog, ChangelogItem} from '@/lib/types';
  *   · 拿不到更新日志时不弹 —— 弹窗本身不该成为新的报错来源。
  */
 const SEEN_KEY = 'wb.whats-new.seen';
+
+/** 仓库地址：Star 模块与免责声明链接共用，避免两处各写一份而漂移。 */
+const REPO_URL = 'https://github.com/ithtelab/workbuddy-manager';
+/** 界面上展示的仓库简写（链接文字用，省略协议与末尾斜杠）。 */
+const REPO_PATH = 'github.com/ithtelab/workbuddy-manager';
+/** Star 入口：直达 stargazers 页，比让用户自己在仓库页找按钮少一步。 */
+const STAR_URL = `${REPO_URL}/stargazers`;
 
 /** 分类配色（与「设置 → 更新日志」同一套语义色） */
 const SECTION_STYLE: Record<string, string> = {
@@ -179,6 +186,38 @@ export function WhatsNewDialog() {
           </div>
         )}
 
+        {/* 2k Stars 里程碑：这是**用户支持**的反馈，和对项目的要求放在一起说，
+            但排在更新内容之后 —— 用户先看到自己关心什么变了。 */}
+        <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-3">
+          <div className="mb-1 flex items-center gap-1.5 text-[12px] font-medium text-sky-700 dark:text-sky-300">
+            <Star className="size-3.5 fill-current" />
+            {t('whatsNew.starTitle')}
+          </div>
+          <p className="text-[11px] leading-relaxed text-sky-800 dark:text-sky-200">
+            {t('whatsNew.starBody')}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <a
+              href={STAR_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded-full bg-sky-600 px-2.5 py-1 text-[11px] font-medium text-white transition-opacity hover:opacity-90 dark:bg-sky-500"
+            >
+              <Star className="size-3 fill-current" />
+              {t('whatsNew.starLink')}
+            </a>
+            <a
+              href={REPO_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 font-mono text-[10px] text-sky-700 underline underline-offset-2 hover:text-sky-800 dark:text-sky-300 dark:hover:text-sky-200"
+            >
+              <ExternalLink className="size-3" />
+              {REPO_PATH}
+            </a>
+          </div>
+        </div>
+
         {/* 使用边界与免责声明：每次升级都重申一次，而不是只在 README 里躺着。
             文案与 README 首屏完全一致，避免两处说法漂移。 */}
         <div className="mt-1 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
@@ -190,7 +229,7 @@ export function WhatsNewDialog() {
             <RichText text={t('whatsNew.boundary')} />
           </p>
           <a
-            href="https://github.com/ithtelab/workbuddy-manager#使用边界与免责声明"
+            href={`${REPO_URL}#使用边界与免责声明`}
             target="_blank"
             rel="noreferrer"
             className="mt-1.5 inline-block text-[11px] underline underline-offset-2 text-amber-700 hover:text-amber-800 dark:text-amber-300"

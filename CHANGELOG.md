@@ -20,6 +20,18 @@
 
 ---
 
+## [Unreleased]
+
+### 修复
+
+- **DSH（DeepSeek Harness）0.2.1 起每个请求都报「这次调用没通过渠道校验，可能不是官方客户端发出的。」（code 11128，#321）**：
+  DSH 的文件引用说明里那句 `Tokens prefixed with @ are paths the user explicitly referenced`
+  会被上游当成非官方客户端特征拦下。#321 回复里说已加入改写，但实际只覆盖了同一段里的
+  `workspace root`，这句本身仍原样发出。现在这句里的 `@` 会改写成 `the at-sign`，语义不变；
+  需要重新构建上游后生效。
+
+---
+
 ## [2.11.4] - 2026-10-28
 
 ### 修复

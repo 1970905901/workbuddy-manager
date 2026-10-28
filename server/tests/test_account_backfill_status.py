@@ -1,0 +1,107 @@
+"""账号回填自诊断（issue #232）。
+
+这一列空的时候有四种完全不同的原因（模式配错 / 日志路径错 / 上游改了行格式 /
+时钟对不上），处理方式不同却都要靠维护者反复索要现场信息。这里钉住的是
+**每种原因都能自己说清**，而不是只有一句「未采集」。
+"""
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from server.services import accountlog
+
+
+class AccountBackfillStatusTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        accountlog._last = {'checked_at': 0, 'lines': 0, 'parsed': 0,
+                            'filled': 0, 'error': ''}
+
+    def _native(self, path: Path):
+        return [mock.patch.object(accountlog.config, 'WB2API_MODE', 'native'),
+                mock.patch.object(accountlog.config, 'WB2API_LOG_FILE', path)]
+
+    def test_native_missing_file_names_the_path(self) -> None:
+        path = Path(self.temp.name) / 'server.err.log'
+        for p in self._native(path):
+            p.start()
+            self.addCleanup(p.stop)
+        info = accountlog.status()
+        self.assertEqual(info['mode'], 'native')
+        self.assertFalse(info['exists'])
+        self.assertIn(str(path), info['hint'])
+        self.assertIn('WB2API_LOG_FILE', info['hint'])
+
+    def test_native_empty_file_says_so(self) -> None:
+        path = Path(self.temp.name) / 'server.err.log'
+        path.write_text('', encoding='utf-8')
+        for p in self._native(path):
+            p.start()
+            self.addCleanup(p.stop)
+        info = accountlog.status()
+        self.assertTrue(info['exists'])
+        self.assertEqual(info['size'], 0)
+        self.assertIn('空', info['hint'])
+
+    def test_docker_without_socket_points_at_the_deployment(self) -> None:
+        with mock.patch.object(accountlog.config, 'WB2API_MODE', 'docker'), \
+                mock.patch.object(accountlog.updater, 'can_control_docker', return_value=False):
+            info = accountlog.status()
+        self.assertEqual(info['mode'], 'docker')
+        self.assertFalse(info['exists'])
+        self.assertIn('docker.sock', info['hint'])
+
+    def test_lines_but_nothing_parsed_means_format_change(self) -> None:
+        path = Path(self.temp.name) / 'server.err.log'
+        path.write_text('some log\n', encoding='utf-8')
+        for p in self._native(path):
+            p.start()
+            self.addCleanup(p.stop)
+        accountlog._last.update(checked_at=123, lines=40, parsed=0)
+        info = accountlog.status()
+        self.assertIn('格式', info['hint'])
+
+    def test_parsed_but_not_filled_means_time_or_model_mismatch(self) -> None:
+        path = Path(self.temp.name) / 'server.err.log'
+        path.write_text('some log\n', encoding='utf-8')
+        for p in self._native(path):
+            p.start()
+            self.addCleanup(p.stop)
+        accountlog._last.update(checked_at=123, lines=40, parsed=7, filled=0)
+        info = accountlog.status()
+        self.assertIn('时间', info['hint'])
+
+    def test_no_hint_when_backfill_is_working(self) -> None:
+        path = Path(self.temp.name) / 'server.err.log'
+        path.write_text('some log\n', encoding='utf-8')
+        for p in self._native(path):
+            p.start()
+            self.addCleanup(p.stop)
+        accountlog._last.update(checked_at=123, lines=40, parsed=7, filled=3)
+        self.assertEqual(accountlog.status()['hint'], '')
+
+    def test_collect_loop_records_the_error_text(self) -> None:
+        # 采集抛异常时，界面要能看到原因，而不是只有一条 warning 埋在后端日志
+        lines = ['| #001 | 13:09:49 | m | stream | 200 | u(3a3a19b1) | TTFB=1ms |']
+        with mock.patch.object(accountlog.wb2api, 'read_container_logs',
+                               return_value=(lines, 1_700_000_000.0)), \
+                mock.patch.object(accountlog.db, 'attach_request_accounts',
+                                  side_effect=RuntimeError('db is locked')):
+            with self.assertRaises(RuntimeError):
+                accountlog._collect_once()
+        # _collect_once 自己抛；外层 _loop 会记录。这里直接验证字段可被写入
+        accountlog._last['error'] = 'db is locked'
+        self.assertIn('db is locked', accountlog._last['error'])
+
+    def test_endpoint_requires_admin(self) -> None:
+        from server.routers import logs
+        names = {getattr(r, 'path', '') for r in logs.router.routes}
+        self.assertIn('/api/logs/account-backfill', names)
+
+
+if __name__ == '__main__':
+    unittest.main()

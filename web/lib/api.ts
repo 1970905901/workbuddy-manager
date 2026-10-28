@@ -26,6 +26,7 @@ import type {
   CreditExpiry,
   CreditsMeta,
   DrawResult,
+  AccountBackfillInfo,
   AutoUpdateConfig,
   AutoUpdateInfo,
   GithubMirror,
@@ -611,6 +612,8 @@ export const tokenApi = {
 export const logApi = {
   list: (params: Record<string, unknown>) => get<Page<RequestLog>>('/api/logs', params),
   clear: () => post<{ok: boolean}>('/api/logs/clear'),
+  /** 账号列的自诊断：日志从哪读、读到几行、为什么可能是空的（issue #232） */
+  accountBackfill: () => get<AccountBackfillInfo>('/api/logs/account-backfill'),
 };
 
 /* ── 用量统计 ───────────────────────────────────────── */

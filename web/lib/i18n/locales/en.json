@@ -793,6 +793,8 @@
     "colAccount": "Account",
     "rowAccount": "Account",
     "accountPending": "not captured yet (backfills automatically)",
+    "accountBackfillHint": "Backfill source is {mode} ({source}), but the account column is still empty: ",
+    "accountBackfillRecheck": "Check again",
     "colLatency": "Latency",
     "streamShort": "stream",
     "noCreditTitle": "Upstream did not return this field (not the same as free)",

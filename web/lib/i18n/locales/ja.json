@@ -766,6 +766,8 @@
     "colAccount": "アカウント",
     "rowAccount": "アカウント",
     "accountPending": "未取得（後で自動補完）",
+    "accountBackfillHint": "取得元は {mode}（{source}）ですが、アカウント列が空のままです: ",
+    "accountBackfillRecheck": "再確認",
     "colLatency": "合計時間",
     "streamShort": "ストリーム",
     "noCreditTitle": "上流がこの項目を返していません（無料とは限りません）",

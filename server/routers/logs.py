@@ -6,8 +6,20 @@ import time
 from fastapi import APIRouter, Depends, HTTPException
 
 from .. import db, keysvc, security
+from ..services import accountlog
 
 router = APIRouter(prefix='/api/logs', tags=['logs'])
+
+
+@router.get('/account-backfill')
+def account_backfill(user: dict = Depends(security.require_admin)) -> dict:
+    """账号列的来源自诊断（issue #232）。
+
+    请求日志的「账号」是从**上游运行日志**回填的，面板转发时并不知道用了哪个号。
+    这一列空的时候有四种完全不同的原因（模式配错 / 日志路径错 / 上游改了行格式 /
+    时间对不上），靠猜只能来回要现场信息。这里把事实直接给出来。
+    """
+    return accountlog.status()
 
 
 @router.get('')

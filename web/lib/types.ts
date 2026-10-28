@@ -1204,6 +1204,35 @@ export interface Versions {
  * GitHub 镜像（issue #216）：国内机器直连 GitHub 超时时，用加速服务取
  * Release 元信息与发布包。走镜像时**不会**发送 GitHub Token。
  */
+/**
+ * 账号列的自诊断（issue #232）。
+ *
+ * 请求日志的「账号」来自上游运行日志回填，面板转发时并不知道用了哪个号。
+ * 这一列空的时候有四种完全不同的原因，后端把事实与判断依据一起返回。
+ */
+export interface AccountBackfillInfo {
+  /** native = 读日志文件；docker = docker logs */
+  mode: 'native' | 'docker';
+  /** native 是文件路径，docker 是容器名 */
+  source: string;
+  /** 最近一次采集的时刻（epoch 秒，0 = 还没跑过） */
+  checked_at: number;
+  /** 那次读到的日志行数 */
+  lines: number;
+  /** 解析出的请求行数 */
+  parsed: number;
+  /** 成功回填到本地请求记录的行数 */
+  filled: number;
+  /** 采集抛出的异常原文（空 = 没有异常） */
+  error: string;
+  /** native: 日志文件是否存在；docker: 能否操作 docker */
+  exists: boolean;
+  /** native 的日志文件大小（字节） */
+  size?: number;
+  /** 人读的判断结论；空串表示当前没有异常 */
+  hint: string;
+}
+
 /** 自动更新设置（设置 → 更新） */
 export interface AutoUpdateConfig {
   enabled: boolean;

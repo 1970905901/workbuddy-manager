@@ -33,9 +33,10 @@ import asyncio
 import datetime
 import logging
 import re
+import time
 
-from .. import db
-from . import wb2api
+from .. import config, db
+from . import updater, wb2api
 
 logger = logging.getLogger('workbuddy.accountlog')
 
@@ -203,15 +204,79 @@ def parse_request_lines_with_mtime(lines: list[str], mtime: float | None) -> lis
     return out
 
 
+# 最近一次采集的事实快照，供「为什么账号列一直是空的」自诊断用。
+# 采集循环每轮覆盖，读侧拿到的是一份一致的小字典。
+_last: dict = {
+    'checked_at': 0, 'lines': 0, 'parsed': 0, 'filled': 0, 'error': '',
+}
+
+
 def _collect_once() -> int:
     """读一次上游日志并回填账号。返回回填条数（同步，供 to_thread 调用）。"""
     lines, mtime = wb2api.read_container_logs(_TAIL, timestamps=True, with_mtime=True)
+    _last['checked_at'] = int(time.time())
+    _last['lines'] = len(lines)
     if not lines:
+        _last.update(parsed=0, error='')
         return 0
     entries = parse_request_lines_with_mtime(lines, mtime)
+    _last['parsed'] = len(entries)
     if not entries:
+        _last['error'] = ''
         return 0
-    return db.attach_request_accounts(entries)
+    filled = db.attach_request_accounts(entries)
+    _last.update(filled=filled, error='')
+    return filled
+
+
+def status() -> dict:
+    """账号回填的自诊断：日志从哪读、读到几行、解析出几条、为什么可能一直是空的。
+
+    为什么需要它（issue #232）：这一列空的时候，用户只看到「未采集（稍后自动
+    回填）」，而真实原因可能是「Windows 装成了 docker 模式」「日志路径写错」
+    「上游换了行格式」「时钟不同步」——处理方式完全不同，却都得靠维护者反复
+    索要现场信息。把事实直接摆出来，用户自己就能判断。
+    """
+    native = config.WB2API_MODE == 'native'
+    snap = dict(_last)
+    info: dict = {
+        'mode': 'native' if native else 'docker',
+        'source': str(config.WB2API_LOG_FILE) if native else config.WB2API_CONTAINER,
+        **snap,
+    }
+    if native:
+        path = config.WB2API_LOG_FILE
+        info['exists'] = path.is_file()
+        if not info['exists']:
+            info['hint'] = (f'日志文件不存在：{path}。确认上游以原生模式运行，'
+                            '并把它的 stderr 重定向到这个文件（.env 的 WB2API_LOG_FILE）。')
+            return info
+        try:
+            info['size'] = path.stat().st_size
+        except OSError as exc:
+            info['hint'] = f'读不到日志文件：{exc}'
+            return info
+        if not info['size']:
+            info['hint'] = '日志文件是空的：上游还没写过任何请求，或输出没被重定向到这里。'
+            return info
+    else:
+        info['exists'] = updater.can_control_docker()
+        if not info['exists']:
+            info['hint'] = ('当前是 docker 模式但读不到 docker（面板进程没有 docker.sock 权限）。'
+                            '账号回填依赖 `docker logs`：挂载 socket 与 DOCKER_GID，'
+                            '或改用 WB2API_MODE=native + WB2API_LOG_FILE。')
+            return info
+    if not snap['checked_at']:
+        info['hint'] = '采集还没跑过第一轮（启动后最多 15 秒）。稍等再看。'
+    elif snap['lines'] and not snap['parsed']:
+        info['hint'] = ('读到了日志，但没有一行符合上游的请求格式。多半是上游版本变化改了'
+                        '日志排版 —— 请把日志里一条 chat 请求的原文贴出来。')
+    elif snap['parsed'] and not snap['filled']:
+        info['hint'] = ('解析出了请求行，但对不上本地请求记录（时间窗口 3 秒、模型名需一致）。'
+                        '常见于上游与面板时钟不同步，或日志里只有更早的请求。')
+    else:
+        info['hint'] = ''
+    return info
 
 
 async def _loop() -> None:
@@ -224,6 +289,7 @@ async def _loop() -> None:
                 logger.debug('回填账号 %d 条', filled)
         except Exception as exc:  # noqa: BLE001
             # 采集失败只是这一轮没有数据，下一轮继续；不影响任何请求
+            _last['error'] = str(exc)[:200]
             logger.warning('账号回填失败（不影响请求）: %s', exc)
         await asyncio.sleep(_POLL_SECONDS)
 

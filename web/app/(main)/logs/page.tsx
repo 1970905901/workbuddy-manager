@@ -1,7 +1,7 @@
 'use client';
 
 import {useCallback, useRef, useState} from 'react';
-import {ScrollText, RotateCcw, Trash2, ChevronLeft, ChevronRight} from 'lucide-react';
+import {ScrollText, RotateCcw, Trash2, ChevronLeft, ChevronRight, TriangleAlert} from 'lucide-react';
 import {useHeartbeat} from '@/lib/use-heartbeat';
 import {notify} from '@/lib/toast';
 import {keyApi, logApi} from '@/lib/api';
@@ -206,6 +206,24 @@ export default function LogsPage() {
     reload: reloadKeys,
   } = useAsyncAll({keys: () => keyApi.list()}, []);
 
+  /**
+   * 账号回填自诊断（issue #232）。
+   *
+   * 这一列空的时候，用户只看到「未采集（稍后自动回填）」，而真实原因有四种：
+   * 装成了 docker 模式但没有 socket、日志路径写错、上游改了行格式、时钟对不上。
+   * 后端把事实（模式 / 路径 / 读到几行 / 解析出几条）与结论一起返回，这里只在
+   * **确实有话说**时显示一行，不占常驻版面。
+   */
+  // 非管理员没有这个接口的权限：不给 fetcher 就不会打请求（返回 undefined 即跳过）。
+  const {
+    values: backfillValues,
+    reload: reloadBackfill,
+  } = useAsyncAll(
+    {backfill: isAdmin ? () => logApi.accountBackfill() : () => Promise.resolve(undefined)},
+    [isAdmin],
+  );
+  const backfill = backfillValues.backfill;
+
   const logs: RequestLog[] = values.logs?.items ?? EMPTY_LOGS;
   const total = values.logs?.total ?? 0;
   const keys: ApiKey[] = keyValues.keys ?? EMPTY_KEYS;
@@ -312,6 +330,26 @@ export default function LogsPage() {
       {/* 部分失败：已经显示出来的日志仍然是对的，只是可能不是最新的。
           用一条常驻提示说明，**不把表格顶掉**；下一次刷新成功后自动消失。 */}
       {failedCount > 0 && <LoadError message={t('state.partialFailed')} onRetry={retry} />}
+
+      {/* 账号列一直是「未采集」时说明为什么 —— 否则用户只能看到一句
+          「稍后自动回填」等下去，而它可能永远不会填上。 */}
+      {backfill?.hint && (
+        <div className="flex flex-wrap items-start gap-2 rounded-[20px] border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-[11px] leading-relaxed text-amber-800 dark:text-amber-200">
+          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+          <span className="min-w-0 flex-1">
+            {t('logs.accountBackfillHint', {
+              mode: backfill.mode,
+              source: backfill.source,
+            })}
+            {' '}
+            {backfill.hint}
+          </span>
+          <button type="button" className="underline underline-offset-2"
+                  onClick={() => void reloadBackfill()}>
+            {t('logs.accountBackfillRecheck')}
+          </button>
+        </div>
+      )}
 
       <section className="rounded-[20px] bg-muted p-4">
         <div className="grid grid-cols-2 items-end gap-3 md:grid-cols-6">

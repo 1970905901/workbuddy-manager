@@ -172,6 +172,36 @@ sudo APP_DIR=/opt/wbm \
 | `UPSTREAM_PORT` | `7863` | 上游端口 |
 | `PY` | `/usr/bin/python3` | Python 解释器路径 |
 
+### 上游由 systemd 托管（非 docker）
+
+上游直接以二进制运行、由 systemd 管理时，在管理端 `.env` 里写明，否则「清除冷却 /
+设定冷却 / 重启上游」会因为找不到 docker 而失败：
+
+```dotenv
+WB2API_MODE=systemd
+WB2API_SERVICE=workbuddy2api   # 上游的 unit 名，按实际填写
+```
+
+管理端服务账号（install.sh 默认 `workbuddy`）不是 root 时，需要允许它启停这一个
+unit、并读取它的日志：
+
+```bash
+sudo tee /etc/polkit-1/rules.d/49-workbuddy2api.rules >/dev/null <<'POLKIT'
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        subject.user == "workbuddy" &&
+        action.lookup("unit") == "workbuddy2api.service") {
+        return polkit.Result.YES;
+    }
+});
+POLKIT
+sudo usermod -aG systemd-journal workbuddy
+sudo systemctl restart workbuddy-web
+```
+
+只是 `11102` 误判造成的模型限流，或面板设的强制冷却，开启上游 `admin.enabled`
+（「设置 → 上游」）后会在线清除，不需要上面的授权，也不会重启上游。
+
 ---
 
 ## 四、部署后

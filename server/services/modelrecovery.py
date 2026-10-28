@@ -53,6 +53,8 @@ async def run_once(now: float | None = None) -> dict:
     now = time.time() if now is None else now
     if not enabled() or updater.read_status().get('running'):
         return {'checked': 0, 'recovered': 0}
+    # 巡检每 INTERVAL 秒跑一次；没有待复查项时不该反复重写状态文件。
+    before = json.dumps(_entries, sort_keys=True)
     active: set[str] = set()
     due: list[tuple] = []
     for group in upstreamsvc.list_upstreams():
@@ -118,7 +120,8 @@ async def run_once(now: float | None = None) -> dict:
             logger.warning('模型恢复探测失败: %s', exc)
         # 后台单路、每个账号每轮最多一个模型，不与用户流量抢并发。
         await asyncio.sleep(0.6)
-    _save()
+    if json.dumps(_entries, sort_keys=True) != before:
+        _save()
     if checked:
         logger.info('模型自动恢复：检查 %d 项，恢复 %d 项，待复查 %d 项', checked, recovered, len(_entries))
     return {'checked': checked, 'recovered': recovered, 'pending': len(_entries)}

@@ -35,7 +35,7 @@
 </div>
 
 <p align="center">
-  仓库地址：<a href="https://github.com/ithtelab/workbuddy-manager">github.com/ithtelab/workbuddy-manager</a> —— 已经突破 <strong>2000 Stars</strong>，感谢每一位 Star、Issue 与 PR。
+  仓库地址：<a href="https://github.com/ithtelab/workbuddy-manager">github.com/ithtelab/workbuddy-manager</a> —— 已经突破 <strong>2k Stars</strong>，感谢每一位 Star、Issue 与 PR。
   觉得好用，欢迎点个 <a href="https://github.com/ithtelab/workbuddy-manager/stargazers">Star</a> 给我们一个支持。
 </p>
 

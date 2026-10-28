@@ -35,7 +35,7 @@ New customers get 30% off the first purchase with code `WORKBUDDY30`.
 </div>
 
 <p align="center">
-  Repository: <a href="https://github.com/ithtelab/workbuddy-manager">github.com/ithtelab/workbuddy-manager</a> — we just passed <strong>2,000 stars</strong>; thank you to everyone who starred, filed an issue or sent a PR.
+  Repository: <a href="https://github.com/ithtelab/workbuddy-manager">github.com/ithtelab/workbuddy-manager</a> — we just passed <strong>2k stars</strong>; thank you to everyone who starred, filed an issue or sent a PR.
   If this project is useful to you, a <a href="https://github.com/ithtelab/workbuddy-manager/stargazers">star</a> is a real show of support.
 </p>
 

@@ -21,7 +21,8 @@ from .routers import (
     proxies, settings, stats, system, tokens, upstreams, watchdog as watchdog_router,
 )
 from .services import (
-    accountlog, cooling, dailyplan, modelrecovery, pgsync, renew, tasklog, taskrun, watchdog,
+    accountlog, autoupdate, cooling, dailyplan, modelrecovery, pgsync, renew, tasklog,
+    taskrun, watchdog,
 )
 
 # 最早时刻把标准输出/错误钉成 UTF-8：Windows 中文区域默认按 cp936 编码，日志里
@@ -75,6 +76,9 @@ async def lifespan(app: FastAPI):
     # 上游网页改版监控：抓结构指纹 → 变化时 LLM 判读 / 查活动补偿 → 邮件上报。
     # 默认关闭；邮件启用前会先探 SMTP 出口（出口不通就不给开）。
     watchdog.start_scheduler()
+    # 自动更新：按「设置 → 更新」里的开关与时间窗定时检测并执行一键更新。
+    # 默认关闭；真正的更新仍走 updater.start_update（与按钮同一条路）。
+    autoupdate.start_scheduler()
     try:
         yield
     finally:
@@ -87,6 +91,7 @@ async def lifespan(app: FastAPI):
         accountlog.stop_collector()
         pgsync.stop_scheduler()
         watchdog.stop_scheduler()
+        autoupdate.stop_scheduler()
         # 出站客户端是共享的（issue #144：Windows 上每次新建要 ~1 秒），
         # 退出时统一关掉，别把连接池与 SSL 上下文丢在原地。
         await config.close_clients()

@@ -138,6 +138,8 @@ CREATE INDEX IF NOT EXISTS idx_tokens_prefix ON api_tokens(prefix);
   吊销/停用必须主动失效。
 - 高危接口（如一键更新 `/api/system/update`）建议**额外要求会话**，
   即便调用者持有 `admin` scope 的 token——让「能改代码的入口」只对真人开放。
+- 同理，**自动更新开关** `PUT /api/settings/auto-update` 也只对会话开放：打开它
+  等于授权面板在无人值守时自行下载安装新版本并重启服务，与一键更新同一风险级别。
 
 ## 与前端 / SDK 的衔接
 

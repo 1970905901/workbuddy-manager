@@ -26,6 +26,8 @@ import type {
   CreditExpiry,
   CreditsMeta,
   DrawResult,
+  AutoUpdateConfig,
+  AutoUpdateInfo,
   GithubMirror,
   IpAccessLog,
   IpRule,
@@ -784,6 +786,10 @@ export const systemApi = {
   githubMirror: () => get<GithubMirror>('/api/settings/github-mirror'),
   saveGithubMirror: (mirror: string) =>
     put<GithubMirror>('/api/settings/github-mirror', {mirror}),
+  /** 自动更新：定时检测，在时间窗内自动执行一键更新 */
+  autoUpdate: () => get<AutoUpdateInfo>('/api/settings/auto-update'),
+  saveAutoUpdate: (cfg: AutoUpdateConfig) =>
+    put<AutoUpdateInfo>('/api/settings/auto-update', cfg),
   /**
    * 启动一键更新；target: manager | upstream | both。
    * source='uploaded' 用面板里已上传的离线升级包（issue #153）。

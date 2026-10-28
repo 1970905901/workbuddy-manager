@@ -22,8 +22,9 @@ class AccountBackfillStatusTest(unittest.TestCase):
                             'filled': 0, 'error': ''}
 
     def _native(self, path: Path):
+        # 原生模式读的是**对话日志**（上游 stdout），不是业务日志（stderr）
         return [mock.patch.object(accountlog.config, 'WB2API_MODE', 'native'),
-                mock.patch.object(accountlog.config, 'WB2API_LOG_FILE', path)]
+                mock.patch.object(accountlog.config, 'WB2API_CHAT_LOG_FILE', path)]
 
     def test_native_missing_file_names_the_path(self) -> None:
         path = Path(self.temp.name) / 'server.err.log'
@@ -34,7 +35,7 @@ class AccountBackfillStatusTest(unittest.TestCase):
         self.assertEqual(info['mode'], 'native')
         self.assertFalse(info['exists'])
         self.assertIn(str(path), info['hint'])
-        self.assertIn('WB2API_LOG_FILE', info['hint'])
+        self.assertIn('WB2API_CHAT_LOG_FILE', info['hint'])
 
     def test_native_empty_file_says_so(self) -> None:
         path = Path(self.temp.name) / 'server.err.log'
@@ -83,6 +84,31 @@ class AccountBackfillStatusTest(unittest.TestCase):
             self.addCleanup(p.stop)
         accountlog._last.update(checked_at=123, lines=40, parsed=7, filled=3)
         self.assertEqual(accountlog.status()['hint'], '')
+
+    def test_collect_reads_chat_log_not_business_log(self) -> None:
+        """原生模式必须读对话日志（上游 stdout），不是业务日志（stderr）。
+
+        上游把每请求一行（含账号）`fmt.Fprintf` 到 stdout，签到 / 活跃 / 旅行等
+        编排走 Go log → stderr；原生启动脚本把两路分别重定向到 server.out.log 与
+        server.err.log。读错文件时读到的是业务日志，一条 chat 行都解析不到 ——
+        账号列恒为空，而界面看不出任何异常（#232 长期无法定位就卡在这里）。
+        """
+        chat = Path(self.temp.name) / 'server.out.log'
+        err = Path(self.temp.name) / 'server.err.log'
+        chat.write_text(
+            '| #001 | 13:09:49 | deepseek-v4.1-flash | stream | 200 | u(3a3a19b1)'
+            ' | TTFB=1ms |\n',
+            encoding='utf-8')
+        err.write_text('loaded 16 account(s) from ./auths\n', encoding='utf-8')
+        with mock.patch.object(accountlog.config, 'WB2API_MODE', 'native'), \
+                mock.patch.object(accountlog.config, 'WB2API_CHAT_LOG_FILE', chat), \
+                mock.patch.object(accountlog.config, 'WB2API_LOG_FILE', err), \
+                mock.patch.object(accountlog.db, 'attach_request_accounts', return_value=0):
+            accountlog._collect_once()
+            source = accountlog.status()['source']
+        self.assertEqual(accountlog._last['lines'], 1, '应当读到对话日志的那一行')
+        self.assertEqual(accountlog._last['parsed'], 1, '读错文件会解析出 0 条')
+        self.assertEqual(source, str(chat))
 
     def test_systemd_mode_reports_the_unit_not_docker(self) -> None:
         """新增 systemd 模式后，这里必须按 systemd 报，不能再落到 docker 分支。

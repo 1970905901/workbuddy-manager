@@ -40,8 +40,6 @@ const SEEN_KEY = 'wb.whats-new.seen';
 const REPO_URL = 'https://github.com/ithtelab/workbuddy-manager';
 /** 界面上展示的仓库简写（链接文字用，省略协议与末尾斜杠）。 */
 const REPO_PATH = 'github.com/ithtelab/workbuddy-manager';
-/** Star 入口：直达 stargazers 页，比让用户自己在仓库页找按钮少一步。 */
-const STAR_URL = `${REPO_URL}/stargazers`;
 
 /** 分类色点（与「设置 → 更新日志」同一套语义色） */
 const SECTION_DOT: Record<string, string> = {
@@ -241,8 +239,11 @@ export function WhatsNewDialog() {
               <span className="mx-1 opacity-50">·</span>
               {t('whatsNew.starBody')}
             </p>
+            {/* Star 落点是仓库主页，不是 stargazers 列表页：GitHub 已把该列表
+                收窄为管理员与协作者可见，其他人（含已登录的普通账号）打开一律 404。
+                Star 按钮本来就在仓库页右上角，落到主页即可点，对谁都有效。 */}
             <a
-              href={STAR_URL}
+              href={REPO_URL}
               target="_blank"
               rel="noreferrer"
               className="inline-flex shrink-0 items-center gap-1 rounded-full bg-sky-600 px-2.5 py-1 text-[10.5px] font-medium text-white transition-opacity hover:opacity-90 dark:bg-sky-500"

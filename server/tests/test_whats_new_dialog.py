@@ -69,7 +69,11 @@ class WhatsNewCopyTest(unittest.TestCase):
         self.assertIn('https://github.com/ithtelab/workbuddy-manager', src)
         # 仓库地址只写一份常量：两处各写一份必然会漂移
         self.assertIn('const REPO_URL', src)
-        self.assertIn('stargazers', src, 'Star 按钮应直达 stargazers 页')
+        # GitHub 已把 stargazer / watcher 列表收窄为仓库管理员与协作者可见，
+        # `/stargazers` 对其他人一律 404 —— 已登录 GitHub 的普通账号也一样，
+        # 是权限墙不是登录墙。Star 落点必须是仓库主页。
+        self.assertNotIn('/stargazers', src,
+                         'Star 按钮不能指向 /stargazers：非本仓库协作者访问一律 404')
 
     def test_layout_keeps_header_and_footer_fixed(self) -> None:
         """只有更新内容可以滚 —— 头部、致谢/免责声明、页脚都得固定。

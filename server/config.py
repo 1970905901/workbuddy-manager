@@ -40,7 +40,9 @@ HOST = _env('WB_MANAGER_HOST', '0.0.0.0')
 WB2API_BASE = _env('WB2API_BASE', 'http://127.0.0.1:7863').rstrip('/')
 WB2API_KEY = _env('WB2API_KEY', '')
 WB2API_CONTAINER = _env('WB2API_CONTAINER', 'workbuddy2api')
-WB2API_MODE = _env('WB2API_MODE', 'docker').lower()  # docker | native
+WB2API_MODE = _env('WB2API_MODE', 'docker').lower()  # docker | native | systemd
+# systemd 模式（宿主机直跑上游二进制、由 systemd 托管）下上游的 unit 名
+WB2API_SERVICE = _env('WB2API_SERVICE', 'workbuddy2api')
 
 # 上游数据文件（与 workbuddy2api 共享）
 AUTH_DIR = Path(_env('WB_AUTH_DIR', '/opt/workbuddy2api/auths'))

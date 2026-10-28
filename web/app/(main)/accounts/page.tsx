@@ -77,7 +77,7 @@ import {AccountTaskDialog} from '@/components/common/accounts/AccountTaskDialog'
 import {ReloginQueueDialog} from '@/components/common/accounts/ReloginQueue';
 import {ModelProbeDialog} from '@/components/common/accounts/ModelProbeDialog';
 import {useAuth} from '@/lib/auth-context';
-import {realmLabel, useRealm} from '@/lib/realm-context';
+import {useRealm} from '@/lib/realm-context';
 import {useT} from '@/lib/i18n/provider';
 import {Button} from '@/components/ui/button';
 import {Badge} from '@/components/ui/badge';
@@ -1617,17 +1617,8 @@ export default function AccountsPage() {
                         </div>
                       ) : null}
                     </div>
-                    <Badge
-                      variant="secondary"
-                      className={
-                        'shrink-0 rounded-md px-1.5 py-0 text-[10px] ' +
-                        ((a.realm ?? 'cn') === 'global'
-                          ? 'bg-sky-500/10 text-sky-700 dark:text-sky-400'
-                          : '')
-                      }
-                    >
-                      {realmLabel(a.realm)}
-                    </Badge>
+                    {/* 版本徽章不再逐行重复：账号表本来就按当前版本过滤，每行都是
+                        同一版本，右上角的切换按钮已经说明了这件事（issue #313）。 */}
                   </div>
                 </TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">
@@ -1638,8 +1629,13 @@ export default function AccountsPage() {
                 <TableCell>
                   <div className="flex flex-wrap items-center gap-1.5">
                     {renderStatus(a)}
-                    {renderModelLimit(a)}
                   </div>
+                  {/* 模型限流/缺模的提示放在状态**下面**另起一行：原先它与状态徽章
+                      挤在同一个 flex 行里，长模型名会把这一列撑宽、盖住右侧 UID 列
+                      （issue #313）。整行宽度给它，长名字也能读全。 */}
+                  {renderModelLimit(a) && (
+                    <div className="mt-1 max-w-full">{renderModelLimit(a)}</div>
+                  )}
                 </TableCell>
                 <TableCell>{renderCredits(a)}</TableCell>
                 <TableCell>{renderExpiry(a)}</TableCell>

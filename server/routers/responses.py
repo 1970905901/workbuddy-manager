@@ -1697,6 +1697,12 @@ async def _handle(request: Request) -> JSONResponse | StreamingResponse:
         return _failed('input 为空：Responses 请求必须带 input 或 instructions',
                        400, 'invalid_request_error', 'empty_input')
 
+    # 思考档位（issue #319）：与 chat 路径同口径，把**实际发往上游**的
+    # reasoning_effort 记进请求日志。取转换后的 payload 而不是原始 body ——
+    # Responses 的档位藏在 reasoning.effort 里，转换后才变成 reasoning_effort。
+    effort = payload.get('reasoning_effort')
+    effort = effort.strip()[:16] if isinstance(effort, str) and effort.strip() else None
+
     if mapped:
         payload['model'] = mapped
     if stream:
@@ -1732,7 +1738,7 @@ async def _handle(request: Request) -> JSONResponse | StreamingResponse:
                 key, ip, model, mapped or '', resp.status_code,
                 _as_int(usage.get('prompt_tokens')), _as_int(usage.get('completion_tokens')),
                 latency, ua, None if resp.status_code < 400 else str(data)[:500], False,
-                usage=usage,
+                usage=usage, effort=effort,
             )
             if resp.status_code >= 400:
                 return _failed(_upstream_error_text(data, resp), resp.status_code,
@@ -1887,7 +1893,7 @@ async def _handle(request: Request) -> JSONResponse | StreamingResponse:
                 _as_int(usage.get('prompt_tokens')),
                 _as_int(usage.get('completion_tokens')),
                 latency, ua, error_text, True,
-                usage=usage, first_token=first_token_ms,
+                usage=usage, first_token=first_token_ms, effort=effort,
             )
 
     return StreamingResponse(gen(), status_code=200, media_type='text/event-stream')

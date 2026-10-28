@@ -237,14 +237,16 @@ def status() -> dict:
     「上游换了行格式」「时钟不同步」——处理方式完全不同，却都得靠维护者反复
     索要现场信息。把事实直接摆出来，用户自己就能判断。
     """
-    native = config.WB2API_MODE == 'native'
+    mode = config.WB2API_MODE
     snap = dict(_last)
     info: dict = {
-        'mode': 'native' if native else 'docker',
-        'source': str(config.WB2API_LOG_FILE) if native else config.WB2API_CONTAINER,
+        'mode': mode,
+        'source': (str(config.WB2API_LOG_FILE) if mode == 'native'
+                   else config.WB2API_SERVICE if mode == 'systemd'
+                   else config.WB2API_CONTAINER),
         **snap,
     }
-    if native:
+    if mode == 'native':
         path = config.WB2API_LOG_FILE
         info['exists'] = path.is_file()
         if not info['exists']:
@@ -259,12 +261,23 @@ def status() -> dict:
         if not info['size']:
             info['hint'] = '日志文件是空的：上游还没写过任何请求，或输出没被重定向到这里。'
             return info
+    elif mode == 'systemd':
+        # journalctl 读不到时也返回空列表，和「docker 不可用」一样是静默的；
+        # 这里至少把 unit 名与需要做的事说清楚（journal 权限 / unit 名写错）。
+        info['exists'] = True
+        if not snap['checked_at']:
+            info['hint'] = '采集还没跑过第一轮（启动后最多 15 秒）。稍等再看。'
+        elif not snap['lines']:
+            info['hint'] = (f'journalctl 读不到 {config.WB2API_SERVICE} 的日志：确认 unit 名正确，'
+                            '且面板进程能读 journal（加入 systemd-journal 组，或改用 '
+                            'WB2API_MODE=native + WB2API_LOG_FILE）。')
+        return info
     else:
         info['exists'] = updater.can_control_docker()
         if not info['exists']:
             info['hint'] = ('当前是 docker 模式但读不到 docker（面板进程没有 docker.sock 权限）。'
                             '账号回填依赖 `docker logs`：挂载 socket 与 DOCKER_GID，'
-                            '或改用 WB2API_MODE=native + WB2API_LOG_FILE。')
+                            '或改用 WB2API_MODE=native / systemd。')
             return info
     if not snap['checked_at']:
         info['hint'] = '采集还没跑过第一轮（启动后最多 15 秒）。稍等再看。'

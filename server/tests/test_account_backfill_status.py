@@ -84,6 +84,20 @@ class AccountBackfillStatusTest(unittest.TestCase):
         accountlog._last.update(checked_at=123, lines=40, parsed=7, filled=3)
         self.assertEqual(accountlog.status()['hint'], '')
 
+    def test_systemd_mode_reports_the_unit_not_docker(self) -> None:
+        """新增 systemd 模式后，这里必须按 systemd 报，不能再落到 docker 分支。
+
+        落错分支的表现是：界面说「读不到 docker，改用 native」，而用户其实就在
+        systemd 模式下、该做的是把面板加进 systemd-journal 组或核对 unit 名。
+        """
+        with mock.patch.object(accountlog.config, 'WB2API_MODE', 'systemd'),                 mock.patch.object(accountlog.config, 'WB2API_SERVICE', 'wb2api-test'):
+            accountlog._last.update(checked_at=123, lines=0, parsed=0, filled=0)
+            info = accountlog.status()
+        self.assertEqual(info['mode'], 'systemd')
+        self.assertEqual(info['source'], 'wb2api-test')
+        self.assertNotIn('docker.sock', info['hint'])
+        self.assertIn('systemd-journal', info['hint'])
+
     def test_collect_loop_records_the_error_text(self) -> None:
         # 采集抛异常时，界面要能看到原因，而不是只有一条 warning 埋在后端日志
         lines = ['| #001 | 13:09:49 | m | stream | 200 | u(3a3a19b1) | TTFB=1ms |']

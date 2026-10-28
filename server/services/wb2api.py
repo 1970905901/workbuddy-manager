@@ -1500,7 +1500,8 @@ async def _docker_restart(name: str) -> tuple[bool, str]:
 
 
 def read_container_logs(limit: int = 200, timestamps: bool = True,
-                        with_mtime: bool = False) -> list[str] | tuple[list[str], float | None]:
+                        with_mtime: bool = False,
+                        path: Path | None = None) -> list[str] | tuple[list[str], float | None]:
     """读取上游日志（原生日志文件或 Docker，失败返回空列表）。
 
     默认带 `--timestamps`：docker 会在每行前面加上精确到纳秒的 RFC3339 时间，
@@ -1508,12 +1509,17 @@ def read_container_logs(limit: int = 200, timestamps: bool = True,
 
     `with_mtime=True` 额外返回原生日志文件的 mtime；Docker 模式返回 None。
     账号回填需要它：原生日志行只有 `HH:MM:SS`，没有日期，不能单独还原 epoch。
+
+    `path` 指定原生模式读哪个文件，缺省仍是 `WB2API_LOG_FILE`。账号回填必须传
+    `WB2API_CHAT_LOG_FILE`：上游把对话行写 stdout、业务行写 stderr，原生模式两者
+    是两个文件。Docker 模式忽略它 —— `docker logs` 本来就把两路合并在一起。
     """
     if config.WB2API_MODE == 'native':
+        source = path or config.WB2API_LOG_FILE
         try:
             count = max(1, min(5000, limit))
-            mtime = config.WB2API_LOG_FILE.stat().st_mtime
-            with config.WB2API_LOG_FILE.open('r', encoding='utf-8', errors='replace') as fh:
+            mtime = source.stat().st_mtime
+            with source.open('r', encoding='utf-8', errors='replace') as fh:
                 lines = [ln.rstrip('\r\n') for ln in deque(fh, maxlen=count) if ln.strip()]
             return (lines, mtime) if with_mtime else lines
         except Exception:  # noqa: BLE001

@@ -213,7 +213,13 @@ _last: dict = {
 
 def _collect_once() -> int:
     """读一次上游日志并回填账号。返回回填条数（同步，供 to_thread 调用）。"""
-    lines, mtime = wb2api.read_container_logs(_TAIL, timestamps=True, with_mtime=True)
+    # 必须读**对话日志**那个文件：上游把每请求一行（含账号）写到 stdout，
+    # 签到/活跃/旅行等业务编排走 Go log → stderr，原生模式下是两个文件
+    # （见 config 的 WB2API_CHAT_LOG_FILE）。读错文件时一条 chat 行都解析不到，
+    # 账号列恒为空。Docker 模式这个参数被忽略，`docker logs` 本来就合并两路。
+    lines, mtime = wb2api.read_container_logs(
+        _TAIL, timestamps=True, with_mtime=True, path=config.WB2API_CHAT_LOG_FILE,
+    )
     _last['checked_at'] = int(time.time())
     _last['lines'] = len(lines)
     if not lines:
@@ -241,17 +247,17 @@ def status() -> dict:
     snap = dict(_last)
     info: dict = {
         'mode': mode,
-        'source': (str(config.WB2API_LOG_FILE) if mode == 'native'
+        'source': (str(config.WB2API_CHAT_LOG_FILE) if mode == 'native'
                    else config.WB2API_SERVICE if mode == 'systemd'
                    else config.WB2API_CONTAINER),
         **snap,
     }
     if mode == 'native':
-        path = config.WB2API_LOG_FILE
+        path = config.WB2API_CHAT_LOG_FILE
         info['exists'] = path.is_file()
         if not info['exists']:
-            info['hint'] = (f'日志文件不存在：{path}。确认上游以原生模式运行，'
-                            '并把它的 stderr 重定向到这个文件（.env 的 WB2API_LOG_FILE）。')
+            info['hint'] = (f'对话日志文件不存在：{path}。确认上游以原生模式运行，'
+                            '并把它的 stdout 重定向到这个文件（.env 的 WB2API_CHAT_LOG_FILE）。')
             return info
         try:
             info['size'] = path.stat().st_size

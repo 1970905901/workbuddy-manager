@@ -57,6 +57,16 @@ WB2API_STOP_SCRIPT = Path(_env(
 WB2API_LOG_FILE = Path(_env(
     'WB2API_LOG_FILE', str(UPSTREAM_DIR / 'data' / 'server.err.log'),
 ))
+# 上游把日志**分流**写两个流：每请求一行的对话记录（含实际使用的账号）是
+# `fmt.Fprintf(os.Stdout, ...)`（上游 internal/server/logging.go），签到 / 活跃 /
+# 旅行等业务编排走 Go log → stderr。原生启动脚本（start-workbuddy2api.cmd）把
+# 两路分别重定向到 server.out.log 与 server.err.log。
+#
+# 所以账号回填必须读**对话日志**这个文件：读 WB2API_LOG_FILE 只会拿到业务日志，
+# 一条 chat 行都解析不到，账号列恒为空（Docker 模式不区分，`docker logs` 合并两路）。
+WB2API_CHAT_LOG_FILE = Path(_env(
+    'WB2API_CHAT_LOG_FILE', str(UPSTREAM_DIR / 'data' / 'server.out.log'),
+))
 
 # 本管理端数据
 DATA_DIR = Path(_env('WB_DATA_DIR', str(ROOT / 'data')))

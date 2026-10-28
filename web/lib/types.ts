@@ -1028,6 +1028,8 @@ export interface TaskRunStatus {
 export type ProbeStatus = 'ok' | 'rate' | 'credit' | 'auth' | 'no_model' | 'error';
 
 export interface ProbeModelResult {
+  gateway_synced?: boolean;
+  gateway_sync_message?: string;
   file: string;
   uid: string;
   nickname: string;

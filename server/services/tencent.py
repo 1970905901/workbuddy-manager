@@ -1317,12 +1317,49 @@ async def probe_account(auth: dict, model: str = 'glm-5.2') -> tuple[bool, str]:
                                            '/'.join(paths) + '）—— 账号本身没问题；'
                                            '请先升级到最新版本，仍不行就把这句反馈给维护者')
                         return False, _explain_code(code, msg)
-                    # 读到首个非空数据块即可确认账号可用，无需等流结束
+                    # SSE 心跳、角色预告和 error 帧都不代表模型可用。
+                    # 只在实际输出或正常完成时成功，防止错误探测清掉网关误标。
+                    buffer = b''
                     async for chunk in resp.aiter_bytes():
-                        if chunk:
-                            elapsed = int((_time.time() - started) * 1000)
-                            return True, f'连通正常（{model}，{elapsed}ms）'
-                    return False, '上游未返回任何数据'
+                        buffer += chunk
+                        while b'\n' in buffer:
+                            line, buffer = buffer.split(b'\n', 1)
+                            line = line.strip()
+                            if not line.startswith(b'data:'):
+                                continue
+                            raw_event = line[5:].strip()
+                            if raw_event == b'[DONE]':
+                                return False, '上游流已结束，但未返回有效模型输出'
+                            try:
+                                event = json.loads(raw_event)
+                            except (ValueError, UnicodeDecodeError):
+                                continue
+                            if not isinstance(event, dict):
+                                continue
+                            if event.get('error'):
+                                error = event['error']
+                                if isinstance(error, dict):
+                                    message = str(error.get('message') or error.get('msg') or '')
+                                    try:
+                                        nested = json.loads(message)
+                                        if isinstance(nested, dict):
+                                            error = nested
+                                    except ValueError:
+                                        pass
+                                    return False, _explain_code(error.get('code', 500),
+                                                               str(error.get('msg') or error.get('message') or ''))
+                                return False, str(error)
+                            if event.get('code') not in (None, 0, 200):
+                                return False, _explain_code(event['code'], str(event.get('msg') or ''))
+                            for choice in event.get('choices') or []:
+                                delta = choice.get('delta') or choice.get('message') or {}
+                                if any(delta.get(k) for k in ('content', 'reasoning_content', 'tool_calls')) or \
+                                        choice.get('finish_reason') in ('stop', 'length', 'tool_calls'):
+                                    elapsed = int((_time.time() - started) * 1000)
+                                    return True, f'连通正常（{model}，{elapsed}ms）'
+                        if len(buffer) > 1024 * 1024:
+                            return False, '探测响应格式异常'
+                    return False, '上游未返回有效模型输出'
         return False, '所有候选路径均不可用'
     except Exception as exc:  # noqa: BLE001
         return False, f'请求异常: {err_text(exc)}'

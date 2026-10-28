@@ -1803,6 +1803,7 @@ export default function AccountsPage() {
           accounts={visible}
           upstreamId={groupId}
           realm={realm}
+          onFinished={reloadAll}
         />
       )}
     </div>

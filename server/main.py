@@ -21,7 +21,7 @@ from .routers import (
     proxies, settings, stats, system, tokens, upstreams, watchdog as watchdog_router,
 )
 from .services import (
-    accountlog, cooling, dailyplan, pgsync, renew, tasklog, taskrun, watchdog,
+    accountlog, cooling, dailyplan, modelrecovery, pgsync, renew, tasklog, taskrun, watchdog,
 )
 
 # 最早时刻把标准输出/错误钉成 UTF-8：Windows 中文区域默认按 cp936 编码，日志里
@@ -62,6 +62,7 @@ async def lifespan(app: FastAPI):
     # 强制冷却到期清理：manual_disabled 不会随 until 自动消失，不清理会让
     # 定时冷却变成永久停用（见 services/cooling.py）。
     cooling.start_scheduler()
+    modelrecovery.start_scheduler()
     # 每日任务计划（签到 / 领奖 / 做任务）：管理端自己的调度器，把「一键」动作
     # 做成每天到点自动跑。默认全部关闭，由用户在账号页显式开启（full 有风控风险）。
     dailyplan.start_scheduler()
@@ -81,6 +82,7 @@ async def lifespan(app: FastAPI):
         taskrun.stop_scheduler()
         renew.stop_scheduler()
         cooling.stop_scheduler()
+        modelrecovery.stop_scheduler()
         dailyplan.stop_scheduler()
         accountlog.stop_collector()
         pgsync.stop_scheduler()

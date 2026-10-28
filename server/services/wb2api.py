@@ -16,6 +16,7 @@ import ssl
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 from .. import config
 from .filelock import file_lock
@@ -597,6 +598,15 @@ async def _admin_account_call(uid: str, action: str, *, reason: str = '',
     except Exception:  # noqa: BLE001 —— 回显只是锦上添花，解析不了不算失败
         payload = {}
     return True, '', 'ok', payload if isinstance(payload, dict) else {}
+
+
+async def clear_model_block(uid: str, model: str, *, base_url: str | None = None,
+                            api_key: str | None = None) -> tuple[bool, str]:
+    """成功探测同步到运行中的网关；只清 11102，不清真实模型配额或账号状态。"""
+    action = f'models/{quote(model, safe="")}/available'
+    ok, message, _, _ = await _admin_account_call(
+        uid, action, base_url=base_url, api_key=api_key)
+    return ok, message
 
 
 async def set_manual_disabled(uid: str, disabled: bool, reason: str = '',

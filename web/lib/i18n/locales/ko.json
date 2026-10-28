@@ -569,7 +569,10 @@
     "fullChangelog": "전체 업데이트 내역 보기",
     "starTitle": "GitHub 스타 2k 돌파",
     "starBody": "Star, 이슈, PR로 함께해 주신 모든 분께 감사드립니다. 유용하게 쓰고 계시다면 GitHub에서 Star로 응원해 주세요.",
-    "starLink": "GitHub에서 Star 누르기"
+    "starLink": "GitHub에서 Star 누르기",
+    "titlePlain": "이번 업데이트",
+    "itemCount": "{n}건",
+    "boundaryShort": "본인과 가족이 자발적으로 허용한 계정 전용입니다. 대량 등록, 계정 거래, 인증번호 대행, 도용, 우회, 재판매는 금지됩니다."
   },
   "keys": {
     "title": "API 키",

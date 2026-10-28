@@ -569,7 +569,10 @@
     "fullChangelog": "查看完整更新日志",
     "starTitle": "突破 2k Stars",
     "starBody": "感谢每一位 Star、Issue 与 PR 的支持。觉得好用，欢迎到 GitHub 点个 Star，支持我们继续维护。",
-    "starLink": "去 GitHub 点 Star"
+    "starLink": "去 GitHub 点 Star",
+    "titlePlain": "本次更新",
+    "itemCount": "共 {n} 条",
+    "boundaryShort": "仅限本人及亲属自愿授权的账号；禁止批量注册、账号交易、接码、盗号、绕过平台风控与商业转售。"
   },
   "keys": {
     "title": "API 密钥",

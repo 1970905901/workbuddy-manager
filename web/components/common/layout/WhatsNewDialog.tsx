@@ -2,7 +2,7 @@
 
 import {useEffect, useState} from 'react';
 import {useRouter} from 'next/navigation';
-import {ExternalLink, Megaphone, Sparkles, Star, X} from 'lucide-react';
+import {ArrowUpRight, Megaphone, Sparkles, Star, X} from 'lucide-react';
 import {Button} from '@/components/ui/button';
 import {
   Dialog,
@@ -29,6 +29,10 @@ import type {Changelog, ChangelogItem} from '@/lib/types';
  *     即使同一浏览器里反复刷新；
  *   · 只在**已登录**的面板里弹（挂在主布局，登录页不弹）；
  *   · 拿不到更新日志时不弹 —— 弹窗本身不该成为新的报错来源。
+ *
+ * 版式（2026-10-28 重做）：**只有更新内容滚动**，标题、致谢、免责声明、底部
+ * 按钮都固定。此前是整块内容一起滚，12 条记录把弹窗顶到 774px 高，Star 与免责
+ * 声明要滚到底才看得到，底部按钮还会跟着内容跑出视口。
  */
 const SEEN_KEY = 'wb.whats-new.seen';
 
@@ -39,14 +43,14 @@ const REPO_PATH = 'github.com/ithtelab/workbuddy-manager';
 /** Star 入口：直达 stargazers 页，比让用户自己在仓库页找按钮少一步。 */
 const STAR_URL = `${REPO_URL}/stargazers`;
 
-/** 分类配色（与「设置 → 更新日志」同一套语义色） */
-const SECTION_STYLE: Record<string, string> = {
-  安全: 'bg-rose-500/15 text-rose-600 dark:text-rose-400',
-  新增: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
-  修复: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
-  改进: 'bg-sky-500/15 text-sky-600 dark:text-sky-400',
-  说明: 'bg-muted text-muted-foreground',
-  计划中: 'bg-violet-500/15 text-violet-600 dark:text-violet-400',
+/** 分类色点（与「设置 → 更新日志」同一套语义色） */
+const SECTION_DOT: Record<string, string> = {
+  安全: 'bg-rose-500',
+  新增: 'bg-emerald-500',
+  修复: 'bg-amber-500',
+  改进: 'bg-sky-500',
+  说明: 'bg-muted-foreground/50',
+  计划中: 'bg-violet-500',
 };
 
 const SECTION_LABEL_KEYS: Record<string, string> = {
@@ -98,20 +102,37 @@ function InlineText({text}: {text: string}) {
 
 function ItemList({items}: {items: ChangelogItem[]}) {
   return (
-    <ul className="space-y-1.5">
+    <ul className="space-y-2">
       {items.map((it, i) => (
         <li
           key={i}
           className={
-            'flex gap-2 text-xs leading-5 text-muted-foreground'
-            + (it.level > 0 ? ' ml-3.5 border-l border-border pl-2.5' : '')
+            'text-[12px] leading-[1.75] text-muted-foreground break-words'
+            + (it.level > 0 ? ' mt-1.5 ml-3 border-l border-border pl-3' : '')
           }
         >
-          <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-muted-foreground/60" />
-          <span className="min-w-0 flex-1 break-words"><InlineText text={it.text} /></span>
+          <InlineText text={it.text} />
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * 分区标题：色点 + 名称 + 一条通到右边的细线。
+ *
+ * 以前是胶囊标签，12 条更新记录排下来像一排按钮，视觉噪音大；色点信息量一样、
+ * 安静得多。
+ */
+function SectionHeader({title}: {title: string}) {
+  const {t} = useI18n();
+  const label = SECTION_LABEL_KEYS[title] ? t(SECTION_LABEL_KEYS[title]) : title;
+  return (
+    <div className="mb-2 flex items-center gap-2">
+      <span className={'size-1.5 shrink-0 rounded-full ' + (SECTION_DOT[title] || 'bg-muted-foreground/50')} />
+      <span className="shrink-0 text-[11px] font-medium text-foreground">{label}</span>
+      <span className="h-px flex-1 bg-border" />
+    </div>
   );
 }
 
@@ -147,105 +168,132 @@ export function WhatsNewDialog() {
 
   // 只展示**当前版本**那一节：历史版本用户自己去「更新日志」看。
   //
-  // 版本号必须按去掉 `v` 前缀比：`/api/system/changelog` 的 `current` 是
-  // `v2.11.1`（来自 `.version`），而 CHANGELOG 的段标题是 `[2.11.1]`。严格相等
-  // 会让 find 永远落空 —— 弹窗照常出现，但一条更新内容都不显示（只剩致谢与
-  // 免责声明）。「更新日志」页一直按这个口径归一，这里跟它保持一致。
+  // 版本号一律按去掉 `v` 前缀的形态处理，两个原因：
+  //   1. `/api/system/changelog` 的 `current` 是 `v2.11.1`（来自 `.version`），
+  //      而 CHANGELOG 的段标题是 `[2.11.1]`。严格相等会让 find 永远落空 ——
+  //      弹窗照常出现，但一条更新内容都不显示。「更新日志」页也是按这个口径
+  //      归一的，这里跟它保持一致。
+  //   2. 标题模板只留版本号、`v` 由界面自己加：直接填 `v2.11.1` 会显示成
+  //      `本版更新：vv2.11.1`（截图里就是这个样子）。
   const norm = (v: string) => v.replace(/^v/i, '').trim();
+  const version = norm(data?.current || '');
   const current = data?.versions?.find(
-    (v) => !v.unreleased && norm(v.version) === norm(data?.current || ''));
+    (v) => !v.unreleased && norm(v.version) === version);
   const sections = current?.sections ?? [];
+  const itemCount = sections.reduce((n, s) => n + s.items.length, 0);
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) dismiss(); }}>
-      <DialogContent className="max-h-[86vh] max-w-[620px] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Sparkles className="size-4 text-primary" />
-            {data?.current
-              ? t('whatsNew.title', {version: data.current})
-              : t('whatsNew.titleFallback')}
+      <DialogContent className="flex max-h-[min(600px,calc(100dvh-4rem))] max-w-[540px] flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="gap-1.5 border-b px-5 py-3.5">
+          <DialogTitle className="flex items-center gap-2 pr-7 text-[15px]">
+            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-primary/10">
+              <Sparkles className="size-3.5 text-primary" />
+            </span>
+            <span className="min-w-0 truncate">
+              {version ? t('whatsNew.titlePlain') : t('whatsNew.titleFallback')}
+            </span>
+            {version && (
+              <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 font-mono text-[10px] font-normal text-primary">
+                v{version}
+              </span>
+            )}
+            {itemCount > 0 && (
+              <span className="ml-auto hidden shrink-0 text-[10px] font-normal text-muted-foreground sm:inline">
+                {t('whatsNew.itemCount', {n: itemCount})}
+              </span>
+            )}
           </DialogTitle>
-          <DialogDescription className="pt-1 text-[12px] leading-relaxed">
+          <DialogDescription className="text-[11.5px] leading-relaxed">
             {t('whatsNew.thanks')}
           </DialogDescription>
         </DialogHeader>
 
+        {/* 只有这一段滚动：条目再多也不会把下面的免责声明与按钮挤出视口。
+            这里**刻意不用** DialogBody（Radix ScrollArea）：它的 Viewport 用
+            `size-full` 取高度，在 flex 列里算出的是内容高度（实测 1357px 而非
+            320px），于是整段内容压到页脚上。普通 div 在 flex 里的高度是确定的。 */}
         {sections.length > 0 && (
-          <div className="space-y-3">
-            {sections.map((section) => (
-              <div key={section.title}>
-                <div className="mb-1.5 flex items-center gap-2">
-                  <span
-                    className={
-                      'rounded-full px-2 py-0.5 text-[10px] font-medium '
-                      + (SECTION_STYLE[section.title] || 'bg-muted text-muted-foreground')
-                    }
-                  >
-                    {SECTION_LABEL_KEYS[section.title]
-                      ? t(SECTION_LABEL_KEYS[section.title])
-                      : section.title}
-                  </span>
-                </div>
-                <ItemList items={section.items} />
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            {/* 用 flex 链而不是 h-full：百分比高度在 flex 子项上没有确定基准，
+                实测会退回内容高度（1357px），内容再次压到页脚上。 */}
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:thin]">
+              <div className="space-y-3.5 px-5 py-3.5">
+                {sections.map((section) => (
+                  <div key={section.title}>
+                    <SectionHeader title={section.title} />
+                    <ItemList items={section.items} />
+                  </div>
+                ))}
               </div>
-            ))}
+            </div>
+            {/* 底部渐隐：正文被裁断时提示「下面还有」，否则半句截断看起来像渲染坏了 */}
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-background to-transparent" />
           </div>
         )}
 
-        {/* 2k Stars 里程碑：这是**用户支持**的反馈，和对项目的要求放在一起说，
-            但排在更新内容之后 —— 用户先看到自己关心什么变了。 */}
-        <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-3">
-          <div className="mb-1 flex items-center gap-1.5 text-[12px] font-medium text-sky-700 dark:text-sky-300">
-            <Star className="size-3.5 fill-current" />
-            {t('whatsNew.starTitle')}
-          </div>
-          <p className="text-[11px] leading-relaxed text-sky-800 dark:text-sky-200">
-            {t('whatsNew.starBody')}
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        {/* 固定区：Star 与使用边界各压成一行，不再各占一个色块 */}
+        <div className="space-y-2 border-t px-5 py-3">
+          <div className="flex flex-wrap items-center gap-2.5 rounded-lg bg-sky-500/[0.08] px-3 py-2">
+            <Star className="size-3.5 shrink-0 fill-sky-500 text-sky-500" />
+            <p className="min-w-0 flex-1 text-[11px] leading-snug text-sky-800 dark:text-sky-200">
+              <span className="font-medium">{t('whatsNew.starTitle')}</span>
+              <span className="mx-1 opacity-50">·</span>
+              {t('whatsNew.starBody')}
+            </p>
             <a
               href={STAR_URL}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 rounded-full bg-sky-600 px-2.5 py-1 text-[11px] font-medium text-white transition-opacity hover:opacity-90 dark:bg-sky-500"
+              className="inline-flex shrink-0 items-center gap-1 rounded-full bg-sky-600 px-2.5 py-1 text-[10.5px] font-medium text-white transition-opacity hover:opacity-90 dark:bg-sky-500"
             >
-              <Star className="size-3 fill-current" />
+              <Star className="size-2.5 fill-current" />
               {t('whatsNew.starLink')}
+              <ArrowUpRight className="size-2.5" />
             </a>
-            <a
-              href={REPO_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 font-mono text-[10px] text-sky-700 underline underline-offset-2 hover:text-sky-800 dark:text-sky-300 dark:hover:text-sky-200"
-            >
-              <ExternalLink className="size-3" />
-              {REPO_PATH}
-            </a>
+          </div>
+
+          {/* 使用边界与免责声明：每次升级都重申一次，而不是只在 README 里躺着。
+              文案与 README 首屏一致，避免两处说法漂移。
+
+              窄屏只显示一句摘要 + 全文链接：这段每次内容都一样，在 390px 宽的
+              屏幕上展开会吃掉一半正文区，而正文才是用户这次真正要看的。 */}
+          <div className="flex items-start gap-2.5 rounded-lg bg-amber-500/[0.08] px-3 py-2">
+            <Megaphone className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <p className="min-w-0 flex-1 text-[11px] leading-[1.5] text-amber-800 dark:text-amber-200">
+              <span className="font-medium text-amber-700 dark:text-amber-300">
+                {t('whatsNew.boundaryTitle')}：
+              </span>
+              {/* 窄屏只给一句摘要：这段每次内容都一样，390px 宽时展开会吃掉
+                  一半正文区，而当次更新内容才是用户真正要看的。 */}
+              <span className="sm:hidden">
+                <RichText text={t('whatsNew.boundaryShort')} />
+              </span>
+              <span className="hidden sm:inline">
+                <RichText text={t('whatsNew.boundary')} />
+              </span>{' '}
+              <a
+                href={`${REPO_URL}#使用边界与免责声明`}
+                target="_blank"
+                rel="noreferrer"
+                className="whitespace-nowrap underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-100"
+              >
+                {t('whatsNew.disclaimerLink')}
+              </a>
+            </p>
           </div>
         </div>
 
-        {/* 使用边界与免责声明：每次升级都重申一次，而不是只在 README 里躺着。
-            文案与 README 首屏完全一致，避免两处说法漂移。 */}
-        <div className="mt-1 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
-          <div className="mb-1 flex items-center gap-1.5 text-[12px] font-medium text-amber-700 dark:text-amber-300">
-            <Megaphone className="size-3.5" />
-            {t('whatsNew.boundaryTitle')}
-          </div>
-          <p className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-200">
-            <RichText text={t('whatsNew.boundary')} />
-          </p>
+        <DialogFooter className="items-center border-t px-5 py-3">
           <a
-            href={`${REPO_URL}#使用边界与免责声明`}
+            href={REPO_URL}
             target="_blank"
             rel="noreferrer"
-            className="mt-1.5 inline-block text-[11px] underline underline-offset-2 text-amber-700 hover:text-amber-800 dark:text-amber-300"
+            className="mr-auto hidden items-center gap-1 font-mono text-[10px] text-muted-foreground underline-offset-2 hover:underline sm:inline-flex"
           >
-            {t('whatsNew.disclaimerLink')}
+            {REPO_PATH}
+            <ArrowUpRight className="size-2.5" />
           </a>
-        </div>
-
-        <DialogFooter>
           <Button variant="ghost" size="sm" className="rounded-full" onClick={dismiss}>
             <X className="mr-1 size-3.5" />
             {t('common.close')}

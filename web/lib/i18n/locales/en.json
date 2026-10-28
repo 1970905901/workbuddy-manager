@@ -596,7 +596,10 @@
     "fullChangelog": "Open the full changelog",
     "starTitle": "2k stars on GitHub",
     "starBody": "Thank you to everyone who starred, filed an issue, or sent a pull request. If this project is useful to you, a star on GitHub helps us keep maintaining it.",
-    "starLink": "Star on GitHub"
+    "starLink": "Star on GitHub",
+    "titlePlain": "What's new",
+    "itemCount": "{n} changes",
+    "boundaryShort": "Only for accounts you or your family have authorized; bulk registration, trading, SMS farming, theft, evasion and resale are prohibited."
   },
   "keys": {
     "title": "API keys",

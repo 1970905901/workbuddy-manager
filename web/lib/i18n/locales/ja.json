@@ -569,7 +569,10 @@
     "fullChangelog": "更新履歴の全文を見る",
     "starTitle": "GitHub で 2k スター突破",
     "starBody": "Star、Issue、Pull Request で支えてくださった皆さまに感謝します。役に立っていると感じたら、GitHub でのスターが継続的なメンテナンスの支えになります。",
-    "starLink": "GitHub でスターを付ける"
+    "starLink": "GitHub でスターを付ける",
+    "titlePlain": "今回の更新",
+    "itemCount": "{n} 件",
+    "boundaryShort": "本人および家族が自発的に許可したアカウント専用。一括登録・売買・SMS認証代行・不正取得・回避・転売は禁止です。"
   },
   "keys": {
     "title": "API キー",

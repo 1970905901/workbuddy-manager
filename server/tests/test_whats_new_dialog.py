@@ -71,6 +71,35 @@ class WhatsNewCopyTest(unittest.TestCase):
         self.assertIn('const REPO_URL', src)
         self.assertIn('stargazers', src, 'Star 按钮应直达 stargazers 页')
 
+    def test_layout_keeps_header_and_footer_fixed(self) -> None:
+        """只有更新内容可以滚 —— 头部、致谢/免责声明、页脚都得固定。
+
+        此前是整块内容一起滚：12 条记录把弹窗顶到 774px，Star 与免责声明要滚到
+        底才看得到，页脚按钮还会跟着内容跑出视口。
+        """
+        src = _DIALOG.read_text(encoding='utf-8')
+        # 查实际使用（<DialogBody），注释里解释「为什么不用它」不算
+        self.assertNotIn('<DialogBody', src,
+                         '不能再用 DialogBody(Radix ScrollArea)：它的 Viewport 用 size-full，'
+                         '在 flex 列里会算出内容高度，内容压到页脚上')
+        self.assertIn('overflow-y-auto', src, '更新内容区没有独立滚动')
+        # 三段固定区各自在滚动容器之外，且被 border-t / border-b 分隔
+        self.assertIn('min-h-0 flex-1', src)
+
+    def test_narrow_screen_uses_short_boundary(self) -> None:
+        """窄屏（<640px）只显示免责声明摘要：全文展开会吃掉一半正文区。"""
+        src = _DIALOG.read_text(encoding='utf-8')
+        self.assertIn("t('whatsNew.boundaryShort')", src)
+        self.assertIn('sm:hidden', src)
+        self.assertIn('hidden sm:inline', src)
+
+    def test_title_does_not_double_the_v_prefix(self) -> None:
+        """标题曾经显示成 `vv2.11.2`：current 自带 v，模板里又加了一个。"""
+        src = _DIALOG.read_text(encoding='utf-8')
+        self.assertIn("t('whatsNew.titlePlain')", src,
+                      '标题应使用不含占位 v 的文案，版本号单独渲染')
+        self.assertIn('v{version}', src, '`v` 应由界面加在归一后的版本号前面')
+
     def test_version_match_ignores_v_prefix(self) -> None:
         """`/api/system/changelog` 的 current 是 `v2.11.1`，CHANGELOG 段标题是
         `[2.11.1]` —— 严格相等会让弹窗一条更新内容都不显示。"""

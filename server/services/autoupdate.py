@@ -30,9 +30,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 
-from .. import db, security
+from .. import config, db, security
 from . import updater
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,18 @@ _task: asyncio.Task | None = None
 
 
 # ── 配置 ────────────────────────────────────────────────────────────────
+def unsupported_reason() -> str:
+    """当前部署形态不支持网页一键更新时返回原因；支持时返回空串。
+
+    与 `updater.start_update` 的前置拒绝同口径：Windows 原生部署一键更新
+    本来就不可用，自动更新若照常开启只会每 24 小时失败一次、悄无声息。
+    提前判定，开关直接拒绝开启，巡检也不再尝试。
+    """
+    if os.name == 'nt' and config.WB2API_MODE == 'native':
+        return 'Windows 原生部署暂不支持网页一键更新，因此也不能自动更新'
+    return ''
+
+
 def default_config() -> dict:
     return {
         'enabled': False,
@@ -238,6 +251,11 @@ def run_once(now: float | None = None, *, force: bool = False) -> dict:
     state = get_state()
     now = time.time() if now is None else now
     if not cfg['enabled'] and not force:
+        return state
+    blocked = unsupported_reason()
+    if blocked:
+        state.update(last_action='unsupported', last_message=blocked, pending_version='')
+        _save_state(state)
         return state
 
     # 上一轮自动启动的更新已经落地：清掉失败重试保护

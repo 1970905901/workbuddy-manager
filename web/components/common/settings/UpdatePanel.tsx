@@ -630,10 +630,16 @@ export function UpdatePanel() {
             <Switch
               aria-label={t('updatePanel.autoTitle')}
               checked={autoForm.enabled}
-              disabled={autoBusy}
+              disabled={autoBusy || (!!auto!.unsupported_reason && !autoForm.enabled)}
               onCheckedChange={(v) => void saveAuto({...autoForm, enabled: v})}
             />
           </div>
+          {auto!.unsupported_reason && (
+            <div className="mt-2 flex items-start gap-1.5 text-[11px] leading-4 text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              {t('updatePanel.autoUnsupported')}
+            </div>
+          )}
           <div className="mt-3 grid gap-3 sm:grid-cols-3">
             <div className="space-y-1">
               <Label className="text-[11px] text-muted-foreground">{t('updatePanel.autoInterval')}</Label>

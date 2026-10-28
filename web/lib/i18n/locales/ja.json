@@ -1256,6 +1256,7 @@
     "autoTargetManager": "管理端のみ",
     "autoWindowHint": "時間帯はサーバーのローカル時刻（{tz}）で判定します。開始と終了が同じなら終日更新できます。",
     "autoNoDocker": "この環境では docker を操作できないため、管理端のみ自動更新します。",
+    "autoUnsupported": "Windows ネイティブ配置はワンクリック更新に対応していないため、自動更新は使えません。手動で更新し、windows\\service-tools.ps1 restart を実行してください。",
     "autoLastRun": "前回の確認：{ago} · {msg}",
     "autoSavedOn": "自動更新をオンにしました",
     "autoSavedOff": "自動更新をオフにしました",

@@ -1283,6 +1283,7 @@
     "autoTargetManager": "Manager only",
     "autoWindowHint": "The window uses the server's local time ({tz}); the same start and end means any time of day.",
     "autoNoDocker": "Docker isn't available here, so only the manager will be updated.",
+    "autoUnsupported": "Windows native deployments don't support one-click web updates, so auto-update is unavailable. Update manually, then run windows\\service-tools.ps1 restart.",
     "autoLastRun": "Last check: {ago} · {msg}",
     "autoSavedOn": "Auto update enabled",
     "autoSavedOff": "Auto update disabled",

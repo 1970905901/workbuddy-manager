@@ -204,6 +204,8 @@ def _auto_update_payload() -> dict:
         },
         # 当前环境能否连上游一起更新（不能时 target=auto 会退化成只更新管理端）
         'docker_ok': updater.can_control_docker(),
+        # 部署形态不支持一键更新时（如 Windows 原生）给出原因，前端据此禁用开关
+        'unsupported_reason': autoupdate.unsupported_reason(),
         # 面板显示「服务器本地时间」，时间窗按它算
         'server_tz_offset_minutes': autoupdate.server_tz_offset_minutes(),
     }
@@ -225,6 +227,9 @@ def save_auto_update(body: dict, user: dict = Depends(security.require_session_a
     cfg, err = autoupdate.validate_config(body)
     if cfg is None:
         raise HTTPException(status_code=400, detail=err)
+    blocked = autoupdate.unsupported_reason()
+    if blocked and cfg['enabled']:
+        raise HTTPException(status_code=409, detail=blocked)
     saved = autoupdate.save_config(cfg)
     security.audit(user, 'update_auto_update', '',
                    (f"开启，每 {saved['interval_hours']} 小时检测，"

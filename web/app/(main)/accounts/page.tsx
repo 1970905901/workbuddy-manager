@@ -1359,10 +1359,16 @@ export default function AccountsPage() {
           config.json）；「添加分组」只填名称即可（地址默认沿用默认分组的、
           账号目录自动带出建议路径，其余字段到「设置 → 上游」再调）。
           密钥绑定哪个分组，请求就走那一组的接入点。
-          「账号 / 任务」二级导航与本条同行、靠右——它只有两项，单独占一行
-          太稀疏；与窄的分组切换条互补成一行，页面更紧凑。 */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
+          */}
+      {/* 二级导航（批次 4 ②：本页吸收了「任务记录」——账号是「主体」，
+          任务记录是「这个主体干了什么」，用户在两分钟内必然要一起看）。
+          位置与 /tasks 页保持一致：都紧跟 PageHeader 靠左单独一行 —— 若在
+          本页塞进分组条右侧（justify-between），切到任务页时同一个控件会
+          从右边跳到左边，看起来像按钮错位（issue #337）。
+          本页没有早返回的整页守卫（取不到账号时只在下面给错误态）。 */}
+      <PageSectionTabs />
+
+      <div className="flex flex-wrap items-center gap-2">
           <Button
             variant={groupId == null ? 'default' : 'outline'}
             size="sm"
@@ -1411,11 +1417,6 @@ export default function AccountsPage() {
               }
             />
           )}
-        </div>
-        {/* 二级导航（批次 4 ②：本页吸收了「任务记录」——账号是「主体」，
-            任务记录是「这个主体干了什么」，用户在两分钟内必然要一起看）。
-            本页没有早返回的整页守卫（取不到账号时只在下面给错误态）。 */}
-        <PageSectionTabs />
       </div>
       {groupInfo && !groupInfo.manageable && groupId != null && (
         <p className="px-1 text-[11px] leading-4 text-muted-foreground">

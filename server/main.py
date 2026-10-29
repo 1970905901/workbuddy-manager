@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as _StarletteHTTPException
 
 import json
 import logging
@@ -477,6 +478,23 @@ def _rsc_page_for(full_path: str) -> str | None:
     return f'/{stem}' if stem else '/'
 
 
+@app.exception_handler(_StarletteHTTPException)
+async def _json_http_error(request: Request, exc: _StarletteHTTPException) -> JSONResponse:
+    """`/v1`、`/v2` 下的 404/405 一律回 JSON。
+
+    以前 `GET /v1/chat/completions` 会落到 SPA 兜底、返回整页 HTML（还带 404 的
+    Next 外壳），客户端解析 HTML 只能得到更难排查的错误。其余路径保持原样。
+    """
+    headers = getattr(exc, 'headers', None)
+    if request.url.path.startswith(('/v1/', '/v2/')):
+        code = 'method_not_allowed' if exc.status_code == 405 else 'not_found'
+        return JSONResponse({'error': {'message': str(exc.detail),
+                                       'type': 'invalid_request_error',
+                                       'code': code}},
+                            status_code=exc.status_code, headers=headers)
+    return JSONResponse({'detail': exc.detail}, status_code=exc.status_code, headers=headers)
+
+
 if config.STATIC_DIR.is_dir():
     app.mount('/_next', StaticFiles(directory=str(config.STATIC_DIR / '_next')), name='next-assets')
     if (config.STATIC_DIR / 'favicon.ico').exists():
@@ -490,6 +508,12 @@ if config.STATIC_DIR.is_dir():
 
     @app.get('/{full_path:path}', include_in_schema=False)
     def spa(full_path: str, request: Request):
+        # 网关路径绝不该落到 SPA 外壳：宁可回一条 JSON 404，也不要把首页 HTML
+        # 当成接口响应发给客户端。
+        if full_path.startswith(('v1/', 'v2/')):
+            return JSONResponse({'error': {'message': f'未知的接口路径 /{full_path}',
+                                           'type': 'invalid_request_error',
+                                           'code': 'not_found'}}, status_code=404)
         # 优先命中导出的静态页面 / 资源，否则回退到 404 页面。
         # 所有路径都必须先通过 _safe_static_path（越界即 None → 404）。
         #

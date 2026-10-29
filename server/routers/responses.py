@@ -1493,6 +1493,10 @@ class _StreamTranslator:
             out.append(_event('response.reasoning_summary_text.delta', {
                 'type': 'response.reasoning_summary_text.delta',
                 'output_index': self.reason_index,
+                # summary_index 是规范里的必填字段（summary 为数组，这里恒为第 0 段）。
+                # 缺了它，ai-sdk 的 zod 校验匹配不上任何具名分支，整帧落进
+                # unknown_chunk 兜底并被静默丢弃 —— 客户端只看到空的思考块（issue #348）。
+                'summary_index': 0,
                 'item_id': self.reason_id,
                 'delta': reasoning,
             }))

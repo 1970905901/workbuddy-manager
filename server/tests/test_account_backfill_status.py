@@ -73,7 +73,8 @@ class AccountBackfillStatusTest(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
         accountlog._last.update(checked_at=123, lines=40, parsed=7, filled=0)
-        info = accountlog.status()
+        with mock.patch.object(accountlog, '_has_pending_accounts', return_value=True):
+            info = accountlog.status()
         self.assertIn('时间', info['hint'])
 
     def test_no_hint_when_backfill_is_working(self) -> None:
@@ -84,6 +85,35 @@ class AccountBackfillStatusTest(unittest.TestCase):
             self.addCleanup(p.stop)
         accountlog._last.update(checked_at=123, lines=40, parsed=7, filled=3)
         self.assertEqual(accountlog.status()['hint'], '')
+
+    def test_no_hint_when_nothing_left_to_fill(self) -> None:
+        """全部已回填时 filled 也是 0（它只统计**本轮新填**），不能据此报「对不上」。
+
+        采集每 15 秒读一次同样的日志尾巴，已经填对的行不会再填（`attach_request_accounts`
+        只匹配 `account IS NULL`），稳态下 filled 恒为 0。若只看 filled，提示会在一切
+        正常时长期挂着 —— 用户看到的是一个假的故障，真问题反而被盖住。
+        """
+        path = Path(self.temp.name) / 'server.err.log'
+        path.write_text('some log\n', encoding='utf-8')
+        for p in self._native(path):
+            p.start()
+            self.addCleanup(p.stop)
+        accountlog._last.update(checked_at=123, lines=40, parsed=40, filled=0)
+        with mock.patch.object(accountlog, '_has_pending_accounts', return_value=False):
+            info = accountlog.status()
+        self.assertEqual(info['hint'], '')
+
+    def test_pending_probe_failure_is_not_an_alarm(self) -> None:
+        """查库异常按「没有积压」处理：宁可少报，也不要报一个查不出原因的故障。"""
+        with mock.patch.object(accountlog.db, 'query_one',
+                               side_effect=RuntimeError('db is locked')):
+            self.assertFalse(accountlog._has_pending_accounts(0))
+
+    def test_pending_probe_reports_rows(self) -> None:
+        with mock.patch.object(accountlog.db, 'query_one',
+                               return_value={'1': 1}) as probe:
+            self.assertTrue(accountlog._has_pending_accounts(123))
+        probe.assert_called_once()
 
     def test_collect_reads_chat_log_not_business_log(self) -> None:
         """原生模式必须读对话日志（上游 stdout），不是业务日志（stderr）。

@@ -769,7 +769,7 @@
     "colAccount": "계정",
     "rowAccount": "계정",
     "accountPending": "아직 수집되지 않음(자동으로 채워짐)",
-    "accountBackfillHint": "수집 경로는 {mode}({source})이지만 계정 열이 비어 있습니다: ",
+    "accountBackfillHint": "계정 채우기({mode} · {source}): ",
     "accountBackfillRecheck": "다시 확인",
     "colLatency": "총 소요",
     "streamShort": "스트림",

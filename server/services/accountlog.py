@@ -210,6 +210,31 @@ _last: dict = {
     'checked_at': 0, 'lines': 0, 'parsed': 0, 'filled': 0, 'error': '',
 }
 
+# 判断「回填是不是真的卡住」时回看的窗口（秒）。采集每 15 秒一轮，正常一条请求
+# 在一个窗口内就配上；超过这个时长仍空着，才值得提示用户。
+_PENDING_WINDOW = 300
+
+
+def _has_pending_accounts(since: int) -> bool:
+    """库里是否还有「在这个时刻之后、仍未回填」的请求记录。
+
+    `_last['filled']` 只是**本轮新填**的条数：`attach_request_accounts` 只匹配
+    `account IS NULL` 的行，已经填对的不再重复填，所以采集正常运行时它同样经常
+    是 0。只看 filled 会把「没有需要填的」误判成「填不上」——稳态下提示常驻，
+    真正的问题反而被盖住。
+
+    查库失败按「没有积压」处理：宁可少报一条提示，也不要因为一次查询异常就报
+    一个查不出原因的故障。
+    """
+    try:
+        row = db.query_one(
+            'SELECT 1 FROM request_logs WHERE account IS NULL AND ts >= ? LIMIT 1',
+            (since,),
+        )
+        return row is not None
+    except Exception:  # noqa: BLE001
+        return False
+
 
 def _collect_once() -> int:
     """读一次上游日志并回填账号。返回回填条数（同步，供 to_thread 调用）。"""
@@ -290,9 +315,11 @@ def status() -> dict:
     elif snap['lines'] and not snap['parsed']:
         info['hint'] = ('读到了日志，但没有一行符合上游的请求格式。多半是上游版本变化改了'
                         '日志排版 —— 请把日志里一条 chat 请求的原文贴出来。')
-    elif snap['parsed'] and not snap['filled']:
-        info['hint'] = ('解析出了请求行，但对不上本地请求记录（时间窗口 3 秒、模型名需一致）。'
-                        '常见于上游与面板时钟不同步，或日志里只有更早的请求。')
+    elif snap['parsed'] and not snap['filled'] and _has_pending_accounts(
+            int(time.time()) - _PENDING_WINDOW):
+        info['hint'] = ('解析出了请求行，但在匹配窗口内找不到对应的本地记录'
+                        '（时间窗口 3 秒、模型名需一致）。常见于上游与面板时钟不同步，'
+                        '或日志里只有更早的请求。')
     else:
         info['hint'] = ''
     return info
